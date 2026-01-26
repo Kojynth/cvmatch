@@ -36,11 +36,37 @@ def create_db_and_tables():
     """Crée la base de données et toutes les tables."""
     try:
         SQLModel.metadata.create_all(engine)
+        _ensure_job_application_columns()
         # PATCH-PII: Chemin anonymisé
         logger.info("Base de données créée : %s", safe_database_path_for_log(str(DATABASE_PATH)))
     except Exception as e:
         logger.error(f"Erreur création base de données : {e}")
         raise
+
+
+
+
+def _ensure_job_application_columns() -> None:
+    """Lightweight migration for new job_application JSON columns."""
+    try:
+        from sqlmodel import text
+
+        with engine.connect() as connection:
+            rows = connection.execute(text("PRAGMA table_info(jobapplication)")).fetchall()
+            existing = {row[1] for row in rows}
+
+            for column in (
+                "profile_json",
+                "critic_json",
+                "cv_json_draft",
+                "cv_json_final",
+            ):
+                if column not in existing:
+                    connection.execute(
+                        text(f"ALTER TABLE jobapplication ADD COLUMN {column} TEXT")
+                    )
+    except Exception as exc:
+        logger.warning(f"Schema migration skipped: {exc}")
 
 
 def get_session() -> Session:

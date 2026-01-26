@@ -1,0 +1,43 @@
+{
+  "profile": {
+    "name": "h1.text-heading-xlarge",
+    "headline": "div.text-body-medium",
+    "location": "span.text-body-small.inline"
+  },
+  "about": {
+    "container": "section.about",
+    "text": "div.inline-show-more-text"
+  },
+  "experience": {
+    "container": "section.experience",
+    "item": "li.artdeco-list__item",
+    "title": "span.mr1.t-bold",
+    "company": "span.t-14.t-normal",
+    "dates": "span.t-14.t-normal.t-black--light",
+    "location": "span.t-14.t-normal.t-black--light+span.t-14.t-normal"
+  },
+  "education": {
+    "container": "section.education",
+    "item": "li.artdeco-list__item",
+    "school": "span.mr1.t-bold",
+    "degree": "span.t-14.t-normal",
+    "dates": "span.t-14.t-normal.t-black--light"
+  },
+  "skills": {
+    "container": "section.skills",
+    "item": "span.t-bold",
+    "endorsements": "span.mr1.t-bold"
+  },
+  "languages": {
+    "container": "section.languages",
+    "item": "li.artdeco-list__item",
+    "name": "span.mr1.t-bold",
+    "level": "span.t-14.t-normal"
+  },
+  "recommendations": {
+    "container": "section.recommendations",
+    "item": "li.artdeco-list__item",
+    "author": "span.mr1.t-bold",
+    "text": "div.inline-show-more-text"
+  }
+}

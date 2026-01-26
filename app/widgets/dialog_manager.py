@@ -158,6 +158,97 @@ class DialogManager:
         return msg.exec() == QMessageBox.StandardButton.Yes
 
     @staticmethod
+    def show_extraction_success(
+        title: str,
+        message: str,
+        action_text: str = "Visualiser les détails",
+        parent=None,
+    ) -> tuple:
+        """
+        Affiche un dialogue de succès d'extraction avec bouton d'action optionnel.
+
+        Args:
+            title: Titre du dialogue
+            message: Message principal
+            action_text: Texte du bouton d'action secondaire
+            parent: Widget parent
+
+        Returns:
+            Tuple (result_code, action_requested)
+            action_requested est True si l'utilisateur a cliqué sur le bouton d'action
+        """
+        # Sanitize texts to avoid mojibake/encoding artifacts
+        safe_title = normalize_text_for_ui(title, fix_mojibake=True) if title else ""
+        safe_message = (
+            normalize_text_for_ui(message, fix_mojibake=True) if message else ""
+        )
+        safe_action = (
+            normalize_text_for_ui(action_text, fix_mojibake=True)
+            if action_text
+            else "Visualiser"
+        )
+
+        msg = QMessageBox(parent)
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setWindowTitle(safe_title or "Extraction terminée")
+        msg.setText(safe_message or "")
+
+        # Bouton OK standard
+        ok_button = msg.addButton(QMessageBox.StandardButton.Ok)
+
+        # Bouton d'action personnalisé (Visualiser les détails)
+        action_button = msg.addButton(safe_action, QMessageBox.ButtonRole.AcceptRole)
+
+        msg.setStyleSheet(
+            """
+            QMessageBox {
+                background-color: #2d2d2d;
+                color: white;
+            }
+            QMessageBox QLabel {
+                color: white;
+                font-size: 13px;
+                padding: 8px;
+            }
+            QMessageBox QPushButton {
+                background-color: #6c757d;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                min-width: 80px;
+                font-weight: normal;
+            }
+            QMessageBox QPushButton:hover {
+                background-color: #5a6268;
+            }
+        """
+        )
+
+        # Style spécial pour le bouton d'action (vert, plus visible)
+        action_button.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #2d5f3f;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+                min-width: 120px;
+            }
+            QPushButton:hover {
+                background-color: #1e4f2f;
+            }
+        """
+        )
+
+        result = msg.exec()
+        action_requested = msg.clickedButton() == action_button
+
+        return (result, action_requested)
+
+    @staticmethod
     def show_file_dialog(
         title: str, file_filters: str, directory: str = None, parent=None
     ) -> str:

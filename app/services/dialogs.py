@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Tuple
 
 from app.widgets.dialog_manager import DialogManager
 
@@ -14,6 +14,7 @@ __all__ = [
     "confirm",
     "open_file_dialog",
     "save_file_dialog",
+    "show_extraction_success",
 ]
 
 
@@ -75,5 +76,34 @@ def save_file_dialog(
         default_name=default_name,
         directory=directory,
         parent=parent,
+    )
+
+
+def show_extraction_success(
+    message: str,
+    *,
+    title: str = "Extraction terminée",
+    action_text: str = "Visualiser les détails",
+    parent=None,
+) -> Tuple[int, bool]:
+    """
+    Affiche un dialogue de succès d'extraction avec bouton d'action optionnel.
+
+    Ce dialogue est utilisé après une extraction CV ou LinkedIn pour informer
+    l'utilisateur du succès et lui proposer d'ouvrir immédiatement l'éditeur
+    de détails pour vérifier l'exactitude des données extraites.
+
+    Args:
+        message: Message principal décrivant le résultat de l'extraction
+        title: Titre du dialogue
+        action_text: Texte du bouton d'action (par défaut: "Visualiser les détails")
+        parent: Widget parent
+
+    Returns:
+        Tuple (result_code, action_requested)
+        action_requested est True si l'utilisateur a cliqué sur le bouton d'action
+    """
+    return DialogManager.show_extraction_success(
+        title, message, action_text=action_text, parent=parent
     )
 

@@ -1,0 +1,478 @@
+{
+  "version": "1.0.0",
+  "last_updated": "2025-01-08",
+  "description": "Dictionnaires multi-langues étendus pour mapping sémantique CV",
+  "languages": {
+    "fr": {
+      "contact": [
+        "informations personnelles", "coordonnées", "contact", "adresse", "téléphone", "email", "mail", 
+        "portable", "mobile", "linkedin", "profil", "identité", "nom", "prénom", "né le", "né en",
+        "nationalité", "situation familiale", "permis", "véhicule", "date de naissance", "lieu de naissance",
+        "skype", "whatsapp", "telegram", "twitter", "facebook", "instagram", "github", "gitlab",
+        "portfolio", "site web", "blog", "cv en ligne", "profil numérique", "réseaux sociaux"
+      ],
+      "summary": [
+        "profil", "résumé", "objectif", "synthèse", "présentation", "à propos", "qui suis-je",
+        "profil professionnel", "introduction", "résumé professionnel", "objectifs", "motivations", "projet",
+        "ambition", "vision", "mission", "valeurs", "philosophie", "approche", "expertise", "spécialisation",
+        "domaine de compétence", "secteur d'activité", "expérience en bref", "parcours en résumé"
+      ],
+      "experience": [
+        "expérience professionnelle", "expériences", "parcours professionnel", "carrière", "emplois",
+        "postes occupés", "fonctions", "missions", "depuis", "jusqu'à", "actuellement", "en cours", "présent",
+        "stage", "alternance", "cdd", "cdi", "freelance", "consultant", "intérim", "vacation", "bénévolat",
+        "apprentissage", "formation en entreprise", "projet professionnel", "collaboration", "partenariat",
+        "mission courte", "contrat", "embauche", "poste à pourvoir", "responsabilités", "tâches",
+        "réalisations", "accomplissements", "succès", "projets menés", "équipe managée", "budget géré"
+      ],
+      "education": [
+        "formation", "études", "diplômes", "scolarité", "cursus", "université", "école", "institut", "lycée",
+        "baccalauréat", "licence", "master", "doctorat", "bts", "dut", "cap", "certification", "titre", "niveau",
+        "mention", "formation initiale", "formation continue", "perfectionnement", "spécialisation",
+        "double diplôme", "échange universitaire", "erasmus", "formation en ligne", "mooc", "e-learning",
+        "autodidacte", "cours du soir", "formation professionnelle", "VAE", "validation acquis",
+        "diplôme d'état", "titre professionnel", "qualification", "habilitation"
+      ],
+      "skills": [
+        "compétences", "savoir-faire", "aptitudes", "capacités", "maîtrise", "expertise", "technologies",
+        "outils", "langages", "logiciels", "systèmes", "méthodes", "techniques", "niveau", "connaissances",
+        "savoir-être", "soft skills", "hard skills", "compétences techniques", "compétences transversales",
+        "compétences métier", "domaines de compétence", "spécialités", "points forts", "atouts",
+        "qualités", "talents", "dons", "facilités", "aisance", "expertise reconnue"
+      ],
+      "projects": [
+        "projets", "réalisations", "portfolio", "travaux", "créations", "développement", "conception",
+        "mise en œuvre", "implémentation", "projet personnel", "projet professionnel", "hackathon", "concours",
+        "challenge", "innovation", "recherche", "étude", "prototype", "proof of concept", "poc",
+        "maquette", "démonstration", "présentation", "publication", "article", "livre blanc",
+        "contribution open source", "collaboration", "partenariat projet"
+      ],
+      "languages": [
+        "langues", "langages", "linguistique", "idiomes", "parlé", "écrit", "lu", "bilingue", "trilingue",
+        "natif", "maternel", "courant", "intermédiaire", "notions", "débutant", "avancé", "expert",
+        "langue étrangère", "langue vivante", "langue morte", "dialecte", "accent", "prononciation",
+        "toeic", "toefl", "delf", "dalf", "cecr", "a1", "a2", "b1", "b2", "c1", "c2", "cambridge",
+        "ielts", "bulats", "bright", "linguaskill", "test de langue", "certification linguistique"
+      ],
+      "certifications": [
+        "certifications", "certificats", "qualifications", "agréments", "habilitations", "accréditations",
+        "labels", "attestations", "cisco", "microsoft", "google", "aws", "azure", "oracle", "pmp", "scrum",
+        "agile", "itil", "prince2", "six sigma", "iso", "qualité", "sécurité", "formation certifiante",
+        "badge numérique", "microcredential", "nanodegree", "spécialisation", "endorsement",
+        "reconnaissance professionnelle", "validation compétences", "skill assessment"
+      ],
+      "awards": [
+        "prix", "récompenses", "distinctions", "reconnaissance", "médailles", "trophées", "concours",
+        "classement", "lauréat", "finaliste", "gagnant", "vainqueur", "champion", "mention", "félicitations",
+        "honneur", "mérite", "excellence", "performance", "achievement", "accomplissement", "succès",
+        "victoire", "podium", "palmarès", "titre honorifique", "distinction académique"
+      ],
+      "volunteering": [
+        "bénévolat", "volontariat", "associatif", "solidarité", "engagement", "humanitaire", "social",
+        "caritatif", "ong", "association", "fondation", "entraide", "service civique", "aide",
+        "soutien", "accompagnement", "parrainage", "mentoring", "tutorat", "coaching", "formation",
+        "animation", "encadrement", "responsable bénévole", "mission humanitaire", "action sociale"
+      ],
+      "interests": [
+        "centres d'intérêt", "loisirs", "hobbies", "passions", "activités", "passe-temps", "sport",
+        "culture", "lecture", "voyage", "musique", "cinéma", "art", "cuisine", "jardinage", "bricolage",
+        "collection", "jeux", "technologie", "innovation", "créativité", "détente", "bien-être",
+        "développement personnel", "vie associative", "engagement citoyen", "écologie", "environnement"
+      ],
+      "references": [
+        "références", "recommandations", "contacts", "témoignages", "parrains", "référents", "superviseur",
+        "manager", "collègue", "collaborateur", "partenaire", "client", "fournisseur", "ancien employeur",
+        "professeur", "maître de stage", "tuteur", "mentor", "coach", "conseil", "expert",
+        "disponible sur demande", "fourni si nécessaire", "contactable", "joignable"
+      ]
+    },
+    "en": {
+      "contact": [
+        "personal information", "contact", "address", "phone", "email", "mobile", "cell", "linkedin",
+        "profile", "name", "born", "nationality", "marital status", "driving license", "vehicle",
+        "date of birth", "place of birth", "skype", "whatsapp", "telegram", "twitter", "facebook",
+        "instagram", "github", "gitlab", "portfolio", "website", "blog", "online cv", "digital profile"
+      ],
+      "summary": [
+        "profile", "summary", "objective", "overview", "about", "introduction", "professional summary",
+        "career objective", "personal statement", "goals", "motivation", "vision", "mission", "values",
+        "philosophy", "approach", "expertise", "specialization", "core competencies", "key strengths",
+        "professional background", "career highlights", "executive summary", "professional overview"
+      ],
+      "experience": [
+        "professional experience", "work experience", "employment", "career", "jobs", "positions", "roles",
+        "responsibilities", "since", "until", "currently", "present", "ongoing", "internship", "apprenticeship",
+        "contract", "permanent", "freelance", "consulting", "temporary", "part-time", "full-time",
+        "project work", "collaboration", "partnership", "achievements", "accomplishments", "managed team",
+        "budget responsibility", "key projects", "major initiatives", "leadership roles"
+      ],
+      "education": [
+        "education", "academic background", "qualifications", "degrees", "university", "college", "school",
+        "institute", "bachelor", "master", "phd", "doctorate", "diploma", "certificate", "gpa", "honors",
+        "magna cum laude", "summa cum laude", "academic achievements", "thesis", "dissertation",
+        "coursework", "specialization", "major", "minor", "academic excellence", "dean's list",
+        "scholarship", "exchange program", "study abroad", "continuing education", "professional development"
+      ],
+      "skills": [
+        "skills", "competencies", "abilities", "expertise", "proficiency", "technologies", "tools",
+        "languages", "software", "systems", "methodologies", "frameworks", "platforms", "level",
+        "advanced", "intermediate", "beginner", "expert", "knowledge", "capabilities", "strengths",
+        "technical skills", "soft skills", "hard skills", "core competencies", "key skills",
+        "specialized knowledge", "domain expertise", "transferable skills"
+      ],
+      "projects": [
+        "projects", "portfolio", "work", "developments", "implementations", "creations", "personal projects",
+        "professional projects", "hackathon", "competition", "open source", "github", "innovation",
+        "research", "study", "prototype", "proof of concept", "poc", "demo", "presentation",
+        "publication", "white paper", "case study", "collaboration", "partnership", "contribution"
+      ],
+      "languages": [
+        "languages", "linguistic", "spoken", "written", "read", "bilingual", "trilingual", "native",
+        "mother tongue", "fluent", "intermediate", "basic", "beginner", "advanced", "conversational",
+        "professional", "business level", "foreign language", "second language", "multilingual",
+        "toeic", "toefl", "ielts", "cambridge", "cefr", "a1", "a2", "b1", "b2", "c1", "c2"
+      ],
+      "certifications": [
+        "certifications", "certificates", "qualifications", "credentials", "licenses", "accreditations",
+        "attestations", "cisco", "microsoft", "google", "aws", "azure", "oracle", "pmp", "scrum",
+        "agile", "itil", "prince2", "six sigma", "iso", "quality", "security", "professional certification",
+        "digital badge", "microcredential", "nanodegree", "specialization", "endorsement",
+        "professional recognition", "skill validation", "competency assessment"
+      ],
+      "awards": [
+        "awards", "honors", "achievements", "recognition", "prizes", "medals", "trophies", "competitions",
+        "winner", "finalist", "champion", "distinction", "excellence", "outstanding", "merit",
+        "accomplishment", "success", "victory", "ranking", "honor roll", "academic honors",
+        "professional recognition", "industry awards", "achievement awards", "performance awards"
+      ],
+      "volunteering": [
+        "volunteering", "volunteer work", "community service", "charity", "non-profit", "ngo",
+        "foundation", "social work", "humanitarian", "civic engagement", "community involvement",
+        "social responsibility", "giving back", "mentoring", "tutoring", "coaching", "support",
+        "assistance", "aid work", "mission work", "volunteer leadership", "community outreach"
+      ],
+      "interests": [
+        "interests", "hobbies", "activities", "pastimes", "leisure", "sports", "culture", "reading",
+        "travel", "music", "movies", "art", "cooking", "gardening", "photography", "gaming",
+        "technology", "innovation", "creativity", "wellness", "fitness", "outdoor activities",
+        "personal development", "lifelong learning", "community involvement", "environmental awareness"
+      ],
+      "references": [
+        "references", "recommendations", "contacts", "testimonials", "referees", "supervisors", "managers",
+        "colleagues", "collaborators", "partners", "clients", "former employers", "professors",
+        "mentors", "coaches", "advisors", "experts", "professional contacts", "character references",
+        "available upon request", "provided if needed", "contactable", "can be reached"
+      ]
+    },
+    "es": {
+      "contact": [
+        "información personal", "contacto", "dirección", "teléfono", "email", "correo", "móvil", "celular",
+        "linkedin", "perfil", "nombre", "nacido", "nacionalidad", "estado civil", "carnet", "permiso",
+        "fecha de nacimiento", "lugar de nacimiento", "skype", "whatsapp", "twitter", "facebook",
+        "portfolio", "sitio web", "blog", "perfil digital", "redes sociales"
+      ],
+      "summary": [
+        "perfil", "resumen", "objetivo", "síntesis", "presentación", "acerca de", "quien soy",
+        "perfil profesional", "introducción", "resumen profesional", "objetivos", "motivación",
+        "visión", "misión", "valores", "filosofía", "enfoque", "experiencia", "especialización",
+        "competencias clave", "fortalezas", "antecedentes profesionales", "trayectoria"
+      ],
+      "experience": [
+        "experiencia profesional", "experiencia laboral", "trayectoria", "carrera", "empleos", "puestos",
+        "funciones", "responsabilidades", "desde", "hasta", "actualmente", "presente", "en curso",
+        "prácticas", "becario", "contrato", "indefinido", "freelance", "consultor", "temporal",
+        "medio tiempo", "tiempo completo", "logros", "realizaciones", "equipo dirigido", "presupuesto"
+      ],
+      "education": [
+        "formación", "educación", "estudios", "titulación", "diplomas", "universidad", "colegio",
+        "instituto", "licenciatura", "máster", "doctorado", "grado", "bachillerato", "certificado",
+        "título", "mención", "especialización", "carrera", "materia", "tesis", "investigación",
+        "beca", "intercambio", "formación continua", "desarrollo profesional"
+      ],
+      "skills": [
+        "competencias", "habilidades", "destrezas", "capacidades", "conocimientos", "tecnologías",
+        "herramientas", "idiomas", "software", "sistemas", "metodologías", "nivel", "avanzado",
+        "intermedio", "principiante", "experto", "dominio", "aptitudes", "talentos", "fortalezas",
+        "habilidades técnicas", "habilidades blandas", "competencias transversales"
+      ],
+      "projects": [
+        "proyectos", "portafolio", "trabajos", "desarrollos", "implementaciones", "creaciones",
+        "proyectos personales", "proyectos profesionales", "hackathon", "competencia", "código abierto",
+        "innovación", "investigación", "estudio", "prototipo", "demostración", "publicación",
+        "colaboración", "contribución", "caso de estudio"
+      ],
+      "languages": [
+        "idiomas", "lenguas", "hablado", "escrito", "leído", "bilingüe", "trilingüe", "nativo",
+        "lengua materna", "fluido", "intermedio", "básico", "principiante", "avanzado", "conversacional",
+        "profesional", "lengua extranjera", "segundo idioma", "multilingüe", "certificación de idiomas"
+      ],
+      "certifications": [
+        "certificaciones", "certificados", "cualificaciones", "credenciales", "licencias", "acreditaciones",
+        "cisco", "microsoft", "google", "aws", "azure", "oracle", "pmp", "scrum", "agile", "itil",
+        "six sigma", "iso", "calidad", "seguridad", "certificación profesional", "especialización"
+      ],
+      "awards": [
+        "premios", "honores", "logros", "reconocimiento", "medallas", "trofeos", "competencias",
+        "ganador", "finalista", "campeón", "distinción", "excelencia", "mérito", "logro",
+        "éxito", "victoria", "clasificación", "reconocimiento profesional", "premios de la industria"
+      ],
+      "volunteering": [
+        "voluntariado", "trabajo voluntario", "servicio comunitario", "caridad", "sin ánimo de lucro",
+        "ong", "fundación", "trabajo social", "humanitario", "compromiso cívico", "participación comunitaria",
+        "responsabilidad social", "mentoría", "tutoría", "entrenamiento", "apoyo", "asistencia"
+      ],
+      "interests": [
+        "intereses", "aficiones", "actividades", "pasatiempos", "ocio", "deportes", "cultura", "lectura",
+        "viajes", "música", "películas", "arte", "cocina", "jardinería", "fotografía", "juegos",
+        "tecnología", "innovación", "creatividad", "bienestar", "desarrollo personal"
+      ],
+      "references": [
+        "referencias", "recomendaciones", "contactos", "testimonios", "supervisores", "gerentes",
+        "colegas", "colaboradores", "socios", "clientes", "antiguos empleadores", "profesores",
+        "mentores", "entrenadores", "asesores", "disponible a pedido", "proporcionado si es necesario"
+      ]
+    },
+    "de": {
+      "contact": [
+        "persönliche daten", "kontakt", "adresse", "telefon", "email", "handy", "mobilfunk", "linkedin",
+        "profil", "name", "geboren", "nationalität", "familienstand", "führerschein", "geburtsdatum",
+        "geburtsort", "skype", "whatsapp", "twitter", "facebook", "portfolio", "webseite", "blog"
+      ],
+      "summary": [
+        "profil", "zusammenfassung", "zielsetzung", "überblick", "über mich", "einführung",
+        "berufsprofil", "berufliche zusammenfassung", "ziele", "motivation", "vision", "mission",
+        "werte", "philosophie", "ansatz", "expertise", "spezialisierung", "kernkompetenzen"
+      ],
+      "experience": [
+        "berufserfahrung", "berufliche laufbahn", "tätigkeiten", "karriere", "stellen", "positionen",
+        "aufgaben", "verantwortlichkeiten", "seit", "bis", "derzeit", "aktuell", "gegenwärtig",
+        "praktikum", "ausbildung", "vertrag", "festanstellung", "freiberuflich", "beratung",
+        "erfolge", "leistungen", "teamführung", "budgetverantwortung"
+      ],
+      "education": [
+        "ausbildung", "bildung", "studium", "qualifikationen", "abschlüsse", "universität", "hochschule",
+        "schule", "bachelor", "master", "promotion", "doktor", "diplom", "zertifikat", "zeugnis",
+        "spezialisierung", "hauptfach", "nebenfach", "abschlussarbeit", "forschung", "stipendium"
+      ],
+      "skills": [
+        "fähigkeiten", "kompetenzen", "kenntnisse", "fertigkeiten", "expertise", "technologien",
+        "werkzeuge", "sprachen", "software", "systeme", "methoden", "niveau", "fortgeschritten",
+        "mittelstufe", "anfänger", "experte", "beherrschung", "talente", "stärken"
+      ],
+      "projects": [
+        "projekte", "portfolio", "arbeiten", "entwicklungen", "implementierungen", "kreationen",
+        "persönliche projekte", "berufliche projekte", "hackathon", "wettbewerb", "open source",
+        "innovation", "forschung", "studie", "prototyp", "demonstration", "veröffentlichung"
+      ],
+      "languages": [
+        "sprachen", "linguistisch", "gesprochen", "geschrieben", "gelesen", "zweisprachig",
+        "dreisprachig", "muttersprache", "fließend", "mittelstufe", "grundkenntnisse", "anfänger",
+        "fortgeschritten", "unterhaltung", "beruflich", "fremdsprache", "zweitsprache"
+      ],
+      "certifications": [
+        "zertifizierungen", "zertifikate", "qualifikationen", "nachweise", "lizenzen", "akkreditierungen",
+        "cisco", "microsoft", "google", "aws", "azure", "oracle", "pmp", "scrum", "agile", "itil",
+        "six sigma", "iso", "qualität", "sicherheit", "berufszertifizierung"
+      ],
+      "awards": [
+        "auszeichnungen", "ehrungen", "erfolge", "anerkennung", "preise", "medaillen", "pokale",
+        "wettbewerbe", "gewinner", "finalist", "champion", "auszeichnung", "exzellenz", "verdienst",
+        "leistung", "erfolg", "sieg", "ranking", "berufliche anerkennung"
+      ],
+      "volunteering": [
+        "freiwilligenarbeit", "ehrenamtliche tätigkeit", "gemeinnützige arbeit", "wohltätigkeit",
+        "nonprofit", "ngo", "stiftung", "sozialarbeit", "humanitär", "bürgerschaftliches engagement",
+        "gemeinschaftsbeteiligung", "soziale verantwortung", "mentoring", "nachhilfe", "unterstützung"
+      ],
+      "interests": [
+        "interessen", "hobbys", "aktivitäten", "freizeitbeschäftigungen", "freizeit", "sport",
+        "kultur", "lesen", "reisen", "musik", "filme", "kunst", "kochen", "gärtnern", "fotografie",
+        "spiele", "technologie", "innovation", "kreativität", "wohlbefinden", "persönliche entwicklung"
+      ],
+      "references": [
+        "referenzen", "empfehlungen", "kontakte", "testimonials", "vorgesetzte", "manager", "kollegen",
+        "mitarbeiter", "partner", "kunden", "ehemalige arbeitgeber", "professoren", "mentoren",
+        "berater", "auf anfrage verfügbar", "bei bedarf bereitgestellt"
+      ]
+    },
+    "it": {
+      "contact": [
+        "informazioni personali", "contatto", "indirizzo", "telefono", "email", "cellulare", "linkedin",
+        "profilo", "nome", "nato", "nazionalità", "stato civile", "patente", "data di nascita",
+        "luogo di nascita", "skype", "whatsapp", "portfolio", "sito web", "blog"
+      ],
+      "summary": [
+        "profilo", "riassunto", "obiettivo", "panoramica", "su di me", "introduzione", "profilo professionale",
+        "riassunto professionale", "obiettivi", "motivazione", "visione", "missione", "valori",
+        "filosofia", "approccio", "competenze", "specializzazione", "competenze chiave"
+      ],
+      "experience": [
+        "esperienza professionale", "esperienza lavorativa", "carriera", "lavori", "posizioni", "ruoli",
+        "responsabilità", "dal", "al", "attualmente", "presente", "in corso", "stage", "tirocinio",
+        "contratto", "permanente", "freelance", "consulenza", "risultati", "successi", "team gestito"
+      ],
+      "education": [
+        "formazione", "educazione", "studi", "qualifiche", "diplomi", "università", "collegio",
+        "scuola", "istituto", "laurea", "master", "dottorato", "certificato", "titolo", "specializzazione",
+        "tesi", "ricerca", "borsa di studio", "scambio", "formazione continua"
+      ],
+      "skills": [
+        "competenze", "abilità", "capacità", "esperienza", "tecnologie", "strumenti", "lingue",
+        "software", "sistemi", "metodologie", "livello", "avanzato", "intermedio", "principiante",
+        "esperto", "conoscenza", "talenti", "punti di forza", "competenze tecniche"
+      ],
+      "projects": [
+        "progetti", "portfolio", "lavori", "sviluppi", "implementazioni", "creazioni", "progetti personali",
+        "progetti professionali", "hackathon", "competizione", "open source", "innovazione",
+        "ricerca", "studio", "prototipo", "dimostrazione", "pubblicazione", "collaborazione"
+      ],
+      "languages": [
+        "lingue", "linguistico", "parlato", "scritto", "letto", "bilingue", "trilingue", "madrelingua",
+        "fluente", "intermedio", "base", "principiante", "avanzato", "conversazione", "professionale",
+        "lingua straniera", "seconda lingua", "multilingue"
+      ],
+      "certifications": [
+        "certificazioni", "certificati", "qualifiche", "credenziali", "licenze", "accreditamenti",
+        "cisco", "microsoft", "google", "aws", "azure", "oracle", "pmp", "scrum", "agile", "itil",
+        "six sigma", "iso", "qualità", "sicurezza", "certificazione professionale"
+      ],
+      "awards": [
+        "premi", "onori", "risultati", "riconoscimento", "medaglie", "trofei", "competizioni",
+        "vincitore", "finalista", "campione", "distinzione", "eccellenza", "merito", "successo",
+        "vittoria", "classifica", "riconoscimento professionale"
+      ],
+      "volunteering": [
+        "volontariato", "lavoro volontario", "servizio comunitario", "carità", "no profit", "ong",
+        "fondazione", "lavoro sociale", "umanitario", "impegno civico", "coinvolgimento comunitario",
+        "responsabilità sociale", "mentoring", "tutoraggio", "supporto", "assistenza"
+      ],
+      "interests": [
+        "interessi", "hobby", "attività", "passatempi", "tempo libero", "sport", "cultura", "lettura",
+        "viaggi", "musica", "film", "arte", "cucina", "giardinaggio", "fotografia", "giochi",
+        "tecnologia", "innovazione", "creatività", "benessere", "sviluppo personale"
+      ],
+      "references": [
+        "referenze", "raccomandazioni", "contatti", "testimonianze", "supervisori", "manager",
+        "colleghi", "collaboratori", "partner", "clienti", "ex datori di lavoro", "professori",
+        "mentori", "consulenti", "disponibile su richiesta", "fornito se necessario"
+      ]
+    }
+  },
+  "special_patterns": {
+    "dates": {
+      "current_indicators": {
+        "fr": ["présent", "actuel", "aujourd'hui", "maintenant", "en cours", "actuellement", "à ce jour", "jusqu'à présent", "toujours en poste"],
+        "en": ["present", "current", "now", "today", "ongoing", "currently", "to date", "until now", "still employed"],
+        "es": ["presente", "actual", "hoy", "ahora", "en curso", "actualmente", "hasta la fecha", "hasta ahora", "aún empleado"],
+        "de": ["gegenwart", "aktuell", "heute", "jetzt", "laufend", "derzeit", "bis heute", "bis jetzt", "noch beschäftigt"],
+        "it": ["presente", "attuale", "oggi", "ora", "in corso", "attualmente", "ad oggi", "fino ad ora", "ancora impiegato"]
+      },
+      "month_names": {
+        "fr": ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"],
+        "en": ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"],
+        "es": ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"],
+        "de": ["januar", "februar", "märz", "april", "mai", "juni", "juli", "august", "september", "oktober", "november", "dezember"],
+        "it": ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"]
+      }
+    },
+    "job_titles": {
+      "seniority_indicators": {
+        "senior": ["senior", "sr", "confirmé", "expérimenté", "expert", "principal", "lead", "chef", "head", "director", "manager"],
+        "junior": ["junior", "jr", "débutant", "stagiaire", "apprenti", "trainee", "intern", "associate", "assistant"],
+        "lead": ["lead", "principal", "chef", "head", "director", "manager", "responsable", "coordinateur", "supervisor"]
+      },
+      "categories": {
+        "development": ["développeur", "developer", "programmeur", "programmer", "ingénieur logiciel", "software engineer", "dev", "coder"],
+        "management": ["manager", "chef", "directeur", "director", "responsable", "lead", "head", "supervisor", "coordinateur"],
+        "design": ["designer", "graphiste", "ux", "ui", "design", "créatif", "artistic", "visual"],
+        "consulting": ["consultant", "conseil", "expert", "advisor", "specialist", "spécialiste"],
+        "sales": ["commercial", "vendeur", "sales", "account manager", "business developer", "représentant"],
+        "marketing": ["marketing", "communication", "publicité", "brand", "digital", "content", "social media"],
+        "finance": ["comptable", "financier", "contrôleur", "auditeur", "analyst", "trésorier", "credit"],
+        "hr": ["rh", "ressources humaines", "hr", "human resources", "recruteur", "talent", "people"],
+        "operations": ["opérations", "production", "logistique", "supply chain", "qualité", "process"]
+      }
+    },
+    "company_indicators": {
+      "suffixes": {
+        "fr": ["sa", "sas", "sarl", "eurl", "sci", "scp", "snc", "scs", "gie", "association", "fondation"],
+        "en": ["inc", "ltd", "llc", "corp", "corporation", "company", "co", "plc", "limited", "group"],
+        "es": ["sa", "sl", "scp", "scl", "sociedad", "empresa", "compañía", "corporación"],
+        "de": ["gmbh", "ag", "kg", "ohg", "gbr", "eg", "ev", "stiftung", "gesellschaft"],
+        "it": ["spa", "srl", "snc", "sas", "società", "azienda", "impresa", "gruppo"]
+      },
+      "prefixes": {
+        "all": ["chez", "at", "@", "dans", "pour", "avec", "en tant que", "as", "como", "bei", "presso"]
+      }
+    },
+    "education_indicators": {
+      "degree_levels": {
+        "fr": {
+          "bac": ["baccalauréat", "bac", "terminale"],
+          "bac+2": ["bts", "dut", "deug", "licence 2"],
+          "bac+3": ["licence", "bachelor", "licence professionnelle"],
+          "bac+5": ["master", "msc", "mba", "ingénieur", "diplôme d'ingénieur"],
+          "bac+8": ["doctorat", "phd", "thèse"]
+        },
+        "en": {
+          "high_school": ["high school", "secondary school", "a-levels", "gcse"],
+          "associate": ["associate degree", "community college"],
+          "bachelor": ["bachelor", "ba", "bs", "bsc", "undergraduate"],
+          "master": ["master", "ma", "ms", "msc", "mba", "graduate"],
+          "doctorate": ["phd", "doctorate", "doctoral", "dphil"]
+        }
+      },
+      "institutions": {
+        "types": {
+          "fr": ["université", "école", "institut", "lycée", "collège", "formation", "centre de formation"],
+          "en": ["university", "college", "school", "institute", "academy", "training center"],
+          "es": ["universidad", "colegio", "escuela", "instituto", "centro de formación"],
+          "de": ["universität", "hochschule", "schule", "institut", "akademie", "bildungszentrum"],
+          "it": ["università", "collegio", "scuola", "istituto", "accademia", "centro di formazione"]
+        }
+      }
+    }
+  },
+  "validation_patterns": {
+    "email": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$",
+    "phone": {
+      "fr": "^(?:(?:\\+33|0)[1-9](?:[0-9]{8}))$",
+      "en": "^(?:\\+1)?[2-9]\\d{2}[2-9]\\d{2}\\d{4}$",
+      "international": "^\\+[1-9]\\d{1,14}$"
+    },
+    "urls": {
+      "linkedin": "linkedin\\.com/in/[\\w-]+",
+      "github": "github\\.com/[\\w-]+",
+      "portfolio": "^https?://[\\w.-]+\\.[a-zA-Z]{2,}(/.*)?$"
+    }
+  },
+  "scoring_weights": {
+    "section_importance": {
+      "experiences": 0.35,
+      "personal_info": 0.25,
+      "skills": 0.15,
+      "education": 0.15,
+      "languages": 0.05,
+      "projects": 0.05
+    },
+    "field_weights": {
+      "experience": {
+        "title": 0.25,
+        "company": 0.25,
+        "dates": 0.20,
+        "description": 0.15,
+        "location": 0.10,
+        "achievements": 0.05
+      },
+      "personal_info": {
+        "full_name": 0.25,
+        "email": 0.20,
+        "phone": 0.15,
+        "location": 0.15,
+        "linkedin_url": 0.10,
+        "portfolio_url": 0.10,
+        "github_url": 0.05
+      }
+    }
+  }
+}

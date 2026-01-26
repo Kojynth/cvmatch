@@ -1,0 +1,23 @@
+{
+  "date_patterns": [
+    "\\b\\d{1,2}/\\d{1,2}/\\d{2,4}\\s*[-–—]\\s*\\d{1,2}/\\d{1,2}/\\d{2,4}\\b",
+    "\\b\\d{2}/\\d{4}\\s*[-–—]\\s*\\d{2}/\\d{4}\\b",
+    "\\b\\d{4}\\s*[-–—]\\s*\\d{4}\\b",
+    "(?:de\\s+)?\\d{4}\\s*[àa]\\s*\\d{4}",
+    "\\d{2}/\\d{4}\\s*[-–—]\\s*(?:présent|actuel|en\\s*cours|present|current|now)"
+  ],
+  "months": {
+    "janvier": "01", "february": "02", "mars": "03", "april": "04",
+    "mai": "05", "june": "06", "juillet": "07", "august": "08", 
+    "septembre": "09", "october": "10", "novembre": "11", "december": "12",
+    "january": "01", "février": "02", "march": "03", "avril": "04",
+    "may": "05", "juin": "06", "july": "07", "août": "08",
+    "september": "09", "octobre": "10", "november": "11", "décembre": "12"
+  },
+  "present_indicators": [
+    "présent", "present", "actuel", "current", "en cours", "ongoing",
+    "maintenant", "now", "à ce jour", "today", "jusqu'à présent",
+    "現在", "現在まで", "今", "今まで", "継続中", "在職中",
+    "현재", "현재까지", "지금", "지금까지", "진행중", "진행 중", "재직중", "재직 중"
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "whitelist": [
+    "pix", "toeic", "toefl", "ielts", "cambridge", "bulats",
+    "delf", "dalf", "tcf", "tef", "dele", "siele", "ccse",
+    "goethe", "testdaf", "dsh", "telc", "hsk", "jlpt",
+    "azure", "aws", "amazon web services", "azure fundamentals", "azure associate", "azure expert",
+    "google cloud", "gcp", "google cloud associate", "google cloud professional",
+    "cisco", "ccna", "ccnp", "ccie", "ccda", "ccdp",
+    "comptia", "security+", "network+", "a+", "linux+", "cloud+", "pentest+",
+    "pmp", "project management", "prince2", "capm",
+    "scrum", "csm", "psm", "agile", "safe", "kanban",
+    "itil", "itil foundation", "itil practitioner", "itil expert", "itil master",
+    "six sigma", "lean", "lean six sigma", "green belt", "black belt",
+    "cisa", "cissp", "cism", "crisc", "cgeit",
+    "oracle", "oracle certified", "ocp", "oca", "ocm",
+    "ibm", "salesforce", "salesforce certified", "salesforce administrator", "salesforce developer",
+    "vmware", "vcp", "vcap", "vcdx", "vmware certified",
+    "kubernetes", "cka", "ckad", "cks", "docker", "jenkins",
+    "microsoft", "mcse", "mcsa", "mcsd", "mcp", "azure certified",
+    "red hat", "rhce", "rhcsa", "rhca", "openstack"
+  ],
+  "to_skill": [
+    "pack office", "microsoft office", "office 365", "office",
+    "word", "excel", "powerpoint", "outlook", "access",
+    "teams", "zoom", "skype", "slack", "onedrive", "sharepoint",
+    "windows", "macos", "linux"
+  ]
+}

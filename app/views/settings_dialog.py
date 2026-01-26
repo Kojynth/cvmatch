@@ -916,6 +916,7 @@ class SettingsDialog(QDialog):
                 # 📍 Initialiser les répertoires critiques
                 project_root = Path(__file__).parent.parent.parent
                 cvmatch_dir = Path.home() / ".cvmatch"
+                deferred_paths = [str(DATABASE_PATH)]
                 logger.info(f"🧹 RESET: Répertoire projet = {project_root}")
                 logger.info(f"🧹 RESET: Répertoire utilisateur = {cvmatch_dir}")
 
@@ -932,14 +933,19 @@ class SettingsDialog(QDialog):
                 data_folders = [
                     project_root / "logs",
                     project_root / "exports",
-                    project_root / "CV" / "générés",
+                    project_root / "CV",
+                    project_root / "reports",
                     project_root / "cache",
+                    project_root / ".hf_cache",
                     project_root / "models",
                     project_root / "data",
                     project_root / "datasets" / "user_learning",
                     project_root / "datasets" / "training_ready",
                     project_root / "archive",
                     project_root / "dev_tools" / "debug",
+                    # Dossiers supplémentaires pouvant contenir des PII
+                    project_root / ".debug",  # Fichiers de debug/smoke tests
+                    project_root / "output",  # Fichiers de sortie générés
                     # Dossiers créés dynamiquement (nouvelle organisation)
                     project_root / "runtime" / "processing",
                     project_root / "runtime" / "temp_uploads",
@@ -959,8 +965,10 @@ class SettingsDialog(QDialog):
                     project_root / "test_simple.py",
                     project_root / "test_extraction_logging.py",
                     project_root / "main_fallback.py",
+                    project_root / "reset_operations.log",
+                    project_root / "reset_history.json",
+                    project_root / "reset_cleanup.log",
                     # NE PAS supprimer : CVMatch.bat, CVMatch.sh, cvmatch.sh (fichiers de lancement)
-                    DATABASE_PATH,  # BDD utilisateur principale
                 ]
 
                 # Supprimer tous les fichiers temporaires et BDD
@@ -1062,10 +1070,17 @@ class SettingsDialog(QDialog):
                 if cvmatch_dir.exists():
                     logger.info(f"🧹 RESET: Nettoyage complet de {cvmatch_dir}")
 
-                    # Supprimer le contenu mais garder la structure pour les logs
+                    # Supprimer le contenu complet du dossier utilisateur (logs inclus)
                     for item in cvmatch_dir.iterdir():
                         try:
                             if item.is_file():
+                                if item.name == DATABASE_PATH.name:
+                                    logger.info(
+                                        "RESET: Base de donnees active conservee: %s",
+                                        item.name,
+                                    )
+                                    cvmatch_items_protected += 1
+                                    continue
                                 # 🔄 Retry logic for locked files (Windows-specific)
                                 max_retries = 3
                                 retry_delay = 0.5
@@ -1104,7 +1119,7 @@ class SettingsDialog(QDialog):
                                                     f"⚠️ RESET: Impossible de renommer {item.name} ({rename_err}), sera supprimé à la fermeture"
                                                 )
 
-                            elif item.is_dir() and item.name != "logs":
+                            elif item.is_dir():
                                 shutil.rmtree(item)
                                 cvmatch_dirs_deleted += 1
                                 logger.info(
@@ -1151,9 +1166,47 @@ class SettingsDialog(QDialog):
                         app_path = Path(__file__).parent.parent.parent / "main.py"
                         python_exe = sys.executable
 
-                        # Lancer la nouvelle instance
+                        cleanup_script = r"""
+import sys
+import time
+import pathlib
+import subprocess
+
+paths_arg = sys.argv[1] if len(sys.argv) > 1 else ""
+app_path = sys.argv[2] if len(sys.argv) > 2 else ""
+paths = [p for p in paths_arg.split("|") if p]
+cvmatch_dir = pathlib.Path.home() / ".cvmatch"
+
+def try_delete(path: str) -> bool:
+    try:
+        pathlib.Path(path).unlink()
+        return True
+    except FileNotFoundError:
+        return True
+    except Exception:
+        return False
+
+for _ in range(40):
+    pending = False
+    for path in paths:
+        if not try_delete(path):
+            pending = True
+    if cvmatch_dir.exists():
+        for item in cvmatch_dir.glob("*.locked_reset_*"):
+            try:
+                item.unlink()
+            except Exception:
+                pending = True
+    if not pending:
+        break
+    time.sleep(0.5)
+
+if app_path:
+    subprocess.Popen([sys.executable, app_path], cwd=str(pathlib.Path(app_path).parent))
+"""
+                        paths_arg = "|".join(deferred_paths)
                         subprocess.Popen(
-                            [python_exe, str(app_path)],
+                            [python_exe, "-c", cleanup_script, paths_arg, str(app_path)],
                             cwd=str(app_path.parent),
                             creationflags=(
                                 subprocess.CREATE_NEW_CONSOLE
@@ -1237,7 +1290,7 @@ set "VENV_DIR=%~dp0cvmatch_env"
 if not exist "%VENV_DIR%" python -m venv "%VENV_DIR%"
 call "%VENV_DIR%\\Scripts\\activate.bat" || (echo ERREUR: Activation venv && pause && exit /b 1)
 
-"%VENV_DIR%\\Scripts\\pip.exe" install PySide6 torch transformers loguru selenium beautifulsoup4 --quiet
+"%VENV_DIR%\\Scripts\\pip.exe" install -r "%~dp0requirements_windows.txt" --quiet
 "%VENV_DIR%\\Scripts\\python.exe" main.py
 exit /b %ERRORLEVEL%"""
 
@@ -1254,5 +1307,6 @@ VENV_DIR="./cvmatch_env"
 [[ ! -d "$VENV_DIR" ]] && python3 -m venv "$VENV_DIR"
 source "$VENV_DIR/bin/activate" || { echo "ERREUR: Activation venv"; exit 1; }
 
-"$VENV_DIR/bin/pip" install PySide6 torch transformers loguru selenium beautifulsoup4 --quiet
+"$VENV_DIR/bin/pip" install -r "./requirements_linux.txt" --quiet
 "$VENV_DIR/bin/python" main.py"""
+

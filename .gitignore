@@ -44,6 +44,12 @@ venv.bak/
 *~
 .project_cache/
 .claude/
+.debug/
+.git/
+.hf_cache/
+.project_cache/
+.mypy_cache/
+.pytest_cache/
 
 # =============================================================================
 # 4. ⚠️  CRITICAL: USER DATA & PII (NEVER COMMIT)
@@ -70,6 +76,7 @@ learning_history.db
 *.sqlite.backup*
 
 # CV documents and personal files
+CV/**
 CV/générés/**
 CV/importés/**
 CV/*.pdf
@@ -78,6 +85,7 @@ CV/*.doc
 CV/*.txt
 CV/*.rtf
 CV/*.odt
+!CV/.gitkeep
 !CV/**/.gitkeep
 
 # Generated documents (may contain personal data)
@@ -93,6 +101,48 @@ cover_letters/**
 !job_applications/.gitkeep
 !applications/.gitkeep
 !cover_letters/.gitkeep
+
+# =============================================================================
+# 4.1 ⚠️  SOUS-DOSSIERS PII SPÉCIFIQUES (protection explicite renforcée)
+# =============================================================================
+
+# LinkedIn PDF exports (données personnelles LinkedIn importées)
+reports/linkedin/**
+!reports/linkedin/.gitkeep
+
+# Rapports générés avec données personnelles
+reports/generated/**
+!reports/generated/.gitkeep
+
+# Profile editor checkpoints (snapshots de profil PII en cours d'édition)
+cache/profile_editor/**
+!cache/profile_editor/.gitkeep
+
+# Logs structurés contenant des données PII
+logs/profile_json/**
+logs/cv_json_drafts/**
+logs/extraction/**
+logs/sessionlog/**
+!logs/profile_json/.gitkeep
+!logs/cv_json_drafts/.gitkeep
+!logs/extraction/.gitkeep
+!logs/sessionlog/.gitkeep
+
+# Data directory (stockage utilisateur potentiel)
+data/**
+!data/.gitkeep
+
+# Debug directory (peut contenir des traces PII et rapports)
+.debug/**
+!.debug/.gitkeep
+
+# Archive complet (pas seulement les .log)
+archive/**
+!archive/.gitkeep
+
+# Exports utilisateur (CVs, profils, lettres de motivation)
+exports/**
+!exports/.gitkeep
 
 # =============================================================================
 # 5. 🤖 MODEL & ML CACHES (large auto-downloaded files)
@@ -258,6 +308,11 @@ test_simple.py
 test_extraction_logging.py
 main_fallback.py
 
+# Script output artifacts (may include local paths/PII)
+scripts/*.txt
+scripts/*.json
+!scripts/README.txt
+
 # =============================================================================
 # 11. TEST OUTPUT & COVERAGE
 # =============================================================================
@@ -271,6 +326,8 @@ htmlcov/
 .coverage.*
 coverage.xml
 .hypothesis/
+reports/**
+!reports/**/.gitkeep
 
 # =============================================================================
 # 12. DOCUMENTATION BUILD
@@ -334,6 +391,17 @@ refactoring/
 !refactoring/README.md
 !refactoring/**/*.md
 
+# Legacy installer wrappers (keep local only)
+installer_windows.bat
+installer_AI.bat
+installer_AI.sh
+installation_linux.sh
+install_minimum_windows.bat
+setup/installers/installer_windows.bat
+setup/installers/installation_linux.sh
+requirements_minimum_windows.txt
+requirements_minimum_linux.txt
+
 # =============================================================================
 # 17. OS-SPECIFIC FILES
 # =============================================================================
@@ -346,6 +414,9 @@ ehthumbs.db
 Thumbs.db
 Desktop.ini
 *.lnk
+
+# Windows artifact (nul redirection misinterpreted as file)
+nul
 
 # =============================================================================
 # 18. PIP & INSTALLER LOGS
@@ -398,6 +469,21 @@ tests/
 tests/**
 tools/
 tools/**
+
+# =============================================================================
+# 22.1 SCRIPTS - Fichiers de résultats et debug (peuvent contenir des chemins PII)
+# =============================================================================
+
+# Résultats de validation et audits (chemins, données extraites)
+scripts/*_results.json
+scripts/*_report.json
+scripts/*_report.txt
+scripts/before_*.json
+scripts/after_*.json
+scripts/debug_*.txt
+
+# Fixtures de test LinkedIn (profils HTML sample)
+tests/unit/workers/linkedin/fixtures*.html
 
 # =============================================================================
 # SUMMARY OF PII PROTECTION

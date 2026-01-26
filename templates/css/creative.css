@@ -1,0 +1,136 @@
+:root {
+  --accent: #f97316;
+  --accent-alt: #0ea5e9;
+  --text: #0f172a;
+  --muted: #475569;
+  --border: #e2e8f0;
+  --page: #ffffff;
+  --page-bg: linear-gradient(140deg, #fff7ed 0%, #eff6ff 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 28px;
+  background: var(--page-bg);
+  color: var(--text);
+  font-family: "Poppins", "Trebuchet MS", "Verdana", sans-serif;
+}
+
+.cv-container {
+  max-width: 900px;
+  margin: 0 auto;
+  background: var(--page);
+  border-radius: 22px;
+  border: 1px solid var(--border);
+  box-shadow: 0 26px 40px rgba(15, 23, 42, 0.12);
+  overflow: hidden;
+}
+
+.cv-header {
+  padding: 30px 36px 26px;
+  background: linear-gradient(135deg, rgba(249, 115, 22, 0.85), rgba(14, 165, 233, 0.85));
+  color: #ffffff;
+}
+
+.cv-header .name {
+  margin: 0;
+  font-size: 34px;
+  letter-spacing: 0.5px;
+}
+
+.cv-header .title {
+  margin: 8px 0 0;
+  font-size: 13px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.contact-info {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.contact-item {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.cv-body {
+  padding: 26px 36px 38px;
+}
+
+.section-title {
+  margin: 20px 0 8px;
+  font-size: 12px;
+  letter-spacing: 1.8px;
+  text-transform: uppercase;
+  color: var(--accent);
+  position: relative;
+  padding-left: 16px;
+}
+
+.section-title::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-alt);
+}
+
+.section-content,
+.dynamic-content {
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.section-content h2,
+.section-content h3,
+.dynamic-content h2,
+.dynamic-content h3 {
+  margin: 14px 0 6px;
+  font-size: 16px;
+  color: var(--text);
+}
+
+.section-content li,
+.dynamic-content li {
+  list-style: disc;
+  margin-bottom: 6px;
+}
+
+@media (max-width: 720px) {
+  body {
+    padding: 16px;
+  }
+  .cv-header,
+  .cv-body {
+    padding: 20px;
+  }
+}
+
+@media print {
+  body {
+    padding: 0;
+    background: #ffffff;
+  }
+  .cv-container {
+    box-shadow: none;
+    border-radius: 0;
+  }
+  .contact-item {
+    background: transparent;
+  }
+}

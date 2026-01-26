@@ -1,0 +1,171 @@
+{
+  "experience_extraction": {
+    "enable_early_education_routing": true,
+    "enable_early_certification_routing": true,
+    "early_routing_confidence_threshold": 0.6,
+    "enable_three_gate_validation": true,
+    "enable_pre_filtering": true,
+    "enable_context_validation": true,
+    "enable_temporal_validation": true,
+    "enable_weighted_scoring": true,
+    "employment_keyword_weight": 0.4,
+    "valid_date_span_weight": 0.3,
+    "business_org_weight": 0.2,
+    "not_short_acronym_weight": 0.1,
+    "minimum_confidence_threshold": 0.6,
+    "enable_org_classification": true,
+    "org_classification_confidence_threshold": 0.5,
+    "enable_qa_guardrails": true,
+    "max_demotion_ratio": 0.3,
+    "min_rescue_confidence": 0.4,
+    "diversity_protection_enabled": true,
+    "enable_experience_metrics": true,
+    "enable_pii_safe_logging": true,
+    "enable_debug_sampling": true,
+    "max_debug_samples": 3,
+    "enable_french_date_normalization": true,
+    "enable_automatic_date_swap": true,
+    "enable_temporal_consistency_checks": true,
+    "use_acronym_whitelist": true,
+    "use_employment_keywords_whitelist": true,
+    "context_window_size": 2
+  },
+  "quality_guardrails": {
+    "enabled": false,
+    "rollout_percentage": 0.0,
+    "fallback_on_errors": true,
+    "enable_pattern_diversity_monitoring": true,
+    "enable_overfitting_interventions": true,
+    "enable_demotion_budget_system": true,
+    "enable_section_balance_controls": true,
+    "enable_keep_rate_monitoring": true,
+    "enable_empty_section_recovery": true,
+    "enable_quality_alerts": true,
+    "enable_metrics_logging": true,
+    "phase_1_extraction": true,
+    "phase_2_cleanup": true,
+    "phase_5_mapping": true,
+    "rescue_flow": true,
+    "global_minimum": 0.30,
+    "exp_minimum": 0.30,
+    "edu_minimum": 0.25,
+    "certs_minimum": 0.20,
+    "lang_minimum": 0.20,
+    "soft_minimum": 0.25,
+    "proj_minimum": 0.30,
+    "exp_to_edu_hard_cap": 8,
+    "exp_to_edu_share_cap": 0.25,
+    "exp_to_edu_per_school_cap": 2,
+    "min_evidence_count": 2
+  },
+  "performance": {
+    "enable_pattern_compilation_cache": true,
+    "enable_org_classifier_cache": true,
+    "enable_validation_stats_cache": true,
+    "max_lines_per_section": 1000,
+    "max_patterns_per_line": 10,
+    "validation_timeout_seconds": 5.0,
+    "enable_memory_cleanup": true,
+    "cleanup_interval_items": 100
+  },
+  "enhanced_extraction_pipeline": {
+    "enabled": false,
+    "rollout_percentage": 0.0,
+    "fallback_on_errors": true,
+    "pattern_diversity_enforce": false,
+    "tri_signal_window": 3,
+    "exp_gate_min": 0.55,
+    "enable_metrics_reporting": true
+  },
+  "debugging": {
+    "enable_detailed_rejection_logging": false,
+    "enable_pattern_match_details": false,
+    "enable_confidence_breakdown_logging": false,
+    "enable_qa_decision_logging": true,
+    "enable_synthetic_test_data": false,
+    "force_validation_failure_rate": 0.0,
+    "enable_metrics_export": false,
+    "enable_live_config_reload": false,
+    "enable_feature_flag_override": true
+  },
+  "phases_a_to_h": {
+    "boundary_guards": {
+      "enabled": true,
+      "use_residual_ledger": true,
+      "assert_no_overlap": true,
+      "merge_overlapping": true
+    },
+    "phase1_gating_2tier": {
+      "enabled": true,
+      "use_2tier_policy": true,
+      "soft_gate_min_chars": 80,
+      "min_valid_blocks": 1,
+      "fallback_enabled": true
+    },
+    "projects_v2": {
+      "enabled": true,
+      "use_no_progress_guard": true,
+      "max_pass_limit": 3,
+      "candidate_tracking": true,
+      "explicit_slice_acceptance": true
+    },
+    "french_date_normalization": {
+      "enabled": true,
+      "strict_fr_format": true,
+      "two_digit_year_cutoff": 25,
+      "handle_textual_months": true
+    },
+    "org_sieve_filtering": {
+      "enabled": true,
+      "reject_postal_codes": true,
+      "reject_month_names": true,
+      "french_specific": true
+    },
+    "dedicated_parsers": {
+      "experience_parser_dedicated": {
+        "enabled": true,
+        "strict_validation": true,
+        "role_classification": true,
+        "org_rebinding": true,
+        "quality_scoring": true
+      },
+      "education_parser_dedicated": {
+        "enabled": true,
+        "french_system": true,
+        "degree_classification": true,
+        "institution_validation": true,
+        "timeline_analysis": true
+      }
+    },
+    "soft_skills_v2_conservative": {
+      "enabled": true,
+      "conservative_mode": true,
+      "statistical_validation": true,
+      "false_positive_filtering": true,
+      "quality_threshold": 0.75,
+      "min_confidence": 0.6
+    },
+    "pattern_quality_analysis": {
+      "enabled": true,
+      "fail_fast_enabled": true,
+      "diversity_threshold": 0.7,
+      "min_pattern_coverage": 0.5,
+      "statistical_analysis": true
+    },
+    "unified_reporting_postmapping": {
+      "enabled": true,
+      "post_mapping_validation": true,
+      "cross_section_coherence": true,
+      "timeline_consistency": true,
+      "quality_assurance": true,
+      "consistency_threshold": 0.8
+    }
+  },
+  "reset_logging": {
+    "enabled": true,
+    "persist_across_resets": true,
+    "json_history": true,
+    "metrics_tracking": true,
+    "log_directory": "logs/reset"
+  }
+}

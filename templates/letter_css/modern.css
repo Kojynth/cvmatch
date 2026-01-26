@@ -1,0 +1,87 @@
+:root {
+  --accent: #0f766e;
+  --accent-soft: rgba(15, 118, 110, 0.12);
+  --text: #0f172a;
+  --muted: #64748b;
+  --border: #e2e8f0;
+  --page-bg: #f0fdfa;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 28px;
+  background: var(--page-bg);
+  color: var(--text);
+  font-family: "Montserrat", "Trebuchet MS", sans-serif;
+}
+
+.letter-container {
+  max-width: 820px;
+  margin: 0 auto;
+  background: #ffffff;
+  border-left: 6px solid var(--accent);
+  border-radius: 14px;
+  padding: 30px 34px;
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.12);
+}
+
+.letter-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 16px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sender-name {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.sender-meta {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 6px;
+  background: var(--accent-soft);
+  padding: 6px 10px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.recipient-line {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+}
+
+.letter-subject {
+  font-size: 13px;
+  margin-bottom: 16px;
+  color: var(--accent);
+}
+
+.letter-content p {
+  margin: 0 0 12px;
+  line-height: 1.7;
+}
+
+.letter-footer {
+  margin-top: 24px;
+  font-weight: 600;
+}
+
+@media print {
+  body {
+    padding: 0;
+    background: #ffffff;
+  }
+  .letter-container {
+    box-shadow: none;
+    border-radius: 0;
+  }
+}

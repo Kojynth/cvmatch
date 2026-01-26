@@ -1,0 +1,14 @@
+{
+  "volunteering": [
+    "association", "asso", "club", "ong", "ngo",
+    "humanitaire", "humanitarian",
+    "bénévole", "benevole", "volontaire", "volunteer",
+    "croix-rouge", "red cross", "secours", "rescue",
+    "charité", "charity", "fondation", "foundation",
+    "communauté", "community", "social", "engagement citoyen", "civic engagement"
+  ],
+  "employment": [
+    "stage","stagiaire","alternance","apprenti","apprentissage","internship","trainee","cdd","cdi","freelance","contrat","chez","at","@",
+    "contrat de travail","mission","temps plein","temps partiel","partiel","entreprise"
+  ]
+}

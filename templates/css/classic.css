@@ -1,0 +1,111 @@
+:root {
+  --accent: #1f2937;
+  --text: #111827;
+  --muted: #6b7280;
+  --border: #d1d5db;
+  --page: #ffffff;
+  --page-bg: #fdfaf5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 30px;
+  background: var(--page-bg);
+  color: var(--text);
+  font-family: "Garamond", "Palatino Linotype", "Book Antiqua", serif;
+}
+
+.cv-container {
+  max-width: 880px;
+  margin: 0 auto;
+  background: var(--page);
+  border: 1px solid var(--border);
+  border-top: 6px solid var(--accent);
+  padding: 28px 36px 34px;
+  box-shadow: 0 10px 22px rgba(17, 24, 39, 0.08);
+}
+
+.cv-header {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 18px;
+  margin-bottom: 24px;
+}
+
+.cv-header .name {
+  margin: 0;
+  font-size: 30px;
+  letter-spacing: 0.6px;
+}
+
+.cv-header .title {
+  margin: 8px 0 0;
+  font-size: 13px;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.contact-info {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+}
+
+.cv-section {
+  margin-top: 20px;
+}
+
+.section-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.section-content,
+.dynamic-content {
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.section-content h2,
+.section-content h3,
+.dynamic-content h2,
+.dynamic-content h3 {
+  margin: 14px 0 8px;
+  font-size: 16px;
+}
+
+.section-content li,
+.dynamic-content li {
+  list-style: disc;
+  margin-bottom: 6px;
+}
+
+@media (max-width: 720px) {
+  body {
+    padding: 16px;
+  }
+  .cv-container {
+    padding: 20px;
+  }
+}
+
+@media print {
+  body {
+    padding: 0;
+    background: #ffffff;
+  }
+  .cv-container {
+    box-shadow: none;
+    border: none;
+  }
+}

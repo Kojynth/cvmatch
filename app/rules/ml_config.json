@@ -1,0 +1,131 @@
+{
+  "enabled": true,
+  "use_mock": false,
+  "zero_shot": {
+    "model": "joeddav/xlm-roberta-large-xnli",
+    "device": "auto",
+    "batch_size": 8,
+    "gate_min": 0.3,
+    "gate_soft": 0.2,
+    "langs": [
+      "fr",
+      "en",
+      "multi"
+    ]
+  },
+  "ner": {
+    "device": "auto",
+    "batch_size": 16,
+    "registry": {
+      "fr": "CATIE-AQ/NERmembert-large-3entities",
+      "en": "dslim/bert-base-NER",
+      "multi": "Davlan/xlm-roberta-base-ner-hrl"
+    }
+  },
+  "enable_multilingual_fallback": true,
+  "enable_auto_download": true,
+  "hf_cache_dir": ".hf_cache",
+  "max_total_model_ram_mb": 1800,
+  "eviction_policy": "lru",
+  "lite_switch": {
+    "enabled": false,
+    "zero_shot_model": "MoritzLaurer/mDeBERTa-v3-base-mnli-xnli"
+  },
+  "labels": {
+    "experiences": [
+      "expérience",
+      "experience",
+      "work",
+      "emploi",
+      "stage",
+      "missions"
+    ],
+    "education": [
+      "formation",
+      "diplôme",
+      "education",
+      "study",
+      "school",
+      "université",
+      "école"
+    ],
+    "skills": [
+      "compétences techniques",
+      "skills",
+      "tech stack",
+      "hard skills"
+    ],
+    "soft_skills": [
+      "qualités",
+      "soft skills",
+      "comportementales"
+    ],
+    "languages": [
+      "langues",
+      "languages"
+    ],
+    "projects": [
+      "projets",
+      "projects",
+      "réalisations",
+      "portfolio"
+    ],
+    "certifications": [
+      "certifications",
+      "certification",
+      "certif"
+    ],
+    "publications": [
+      "publications",
+      "articles",
+      "papers"
+    ],
+    "volunteering": [
+      "bénévolat",
+      "volontariat",
+      "associatif",
+      "ngo"
+    ],
+    "interests": [
+      "centres d'intérêt",
+      "loisirs",
+      "intérêts",
+      "hobbies"
+    ],
+    "personal_info": [
+      "informations personnelles",
+      "contact",
+      "coordonnées"
+    ],
+    "awards": [
+      "récompenses",
+      "distinctions",
+      "awards"
+    ],
+    "references": [
+      "références",
+      "references"
+    ],
+    "other": [
+      "autre",
+      "misc",
+      "divers"
+    ]
+  },
+  "snapshot_path": ".debug/ml_snapshot.json",
+  "runtime": {
+    "force_cpu": true,
+    "local_only": false,
+    "cache_dir": ".hf_cache",
+    "batch_overrides": {
+      "cpu": {
+        "zero_shot": 4,
+        "ner": 8
+      },
+      "cuda": {
+        "zero_shot": 8,
+        "ner": 16
+      }
+    }
+  }
+}

@@ -1,0 +1,132 @@
+{
+  "version": "2.0.0",
+  "description": "Configuration centralisée pour l'extraction CV avec corrections déterministes",
+  
+  "ml_gates": {
+    "ml_gate_soft": 0.40,
+    "ml_gate_min": 0.50,
+    "description": "Seuils ML ajustés pour permettre plus d'overrides heuristiques"
+  },
+  
+  "section_window": {
+    "education_max_lines_without_signals": 15,
+    "employment_keywords": [
+      "stagiaire", "stage", "alternance", "apprentissage", "apprenti",
+      "CDI", "CDD", "mission", "projet pro", "consultant",
+      "développeur", "developer", "ingénieur", "engineer",
+      "manager", "chef", "lead", "senior", "junior"
+    ],
+    "required_education_signals": ["degree", "school", "date"],
+    "consecutive_lines_check": 3
+  },
+  
+  "internship_routing": {
+    "default_route": "experience",
+    "demotion_conditions_all_required": {
+      "no_employment_keyword": true,
+      "no_date_interval": true,
+      "description_single_line": true,
+      "school_organization_detected": true
+    },
+    "school_lexicon": [
+      "école", "université", "institut", "lycée", "IUT", "BTS",
+      "school", "university", "college", "institute"
+    ]
+  },
+  
+  "fuzzy_certification": {
+    "max_levenshtein_distance": 2,
+    "known_certifications": {
+      "TOEFL": ["TOEFL", "TOFL", "TOFLE", "TEOFL"],
+      "TOEIC": ["TOEIC", "TOIC", "TOIEC"],
+      "IELTS": ["IELTS", "ILETS", "ILETLS"],
+      "DELF": ["DELF", "DELP"],
+      "DALF": ["DALF", "DALP"]
+    },
+    "routing_conditions": {
+      "max_lines": 2,
+      "min_confidence": 0.7
+    }
+  },
+  
+  "soft_skills_fallback": {
+    "ai_threshold": 0.40,
+    "max_skills_extracted": 20,
+    "required_conditions": {
+      "header_detected": true,
+      "bullet_structure": true
+    },
+    "bullet_patterns": ["•", "-", "+", "*", ";", "·"]
+  },
+  
+  "rescue_mode": {
+    "window_size": 6,
+    "relaxed_threshold": 0.25,
+    "triggers": {
+      "zero_experiences_after_phase1": true,
+      "header_guard_suppressed_threshold": 2,
+      "low_extraction_yield_threshold": 3
+    },
+    "override_thresholds": {
+      "ml_gate_soft": 0.25,
+      "ml_gate_min": 0.30
+    }
+  },
+  
+  "date_parsing": {
+    "unicode_dashes_supported": ["–", "—", "-", "−", "‒"],
+    "ongoing_indicators": [
+      "présent", "present", "actuel", "actuellement", 
+      "à ce jour", "now", "current", "ongoing"
+    ],
+    "month_languages": ["fr", "en"],
+    "ocr_corrections_enabled": true
+  },
+  
+  "override_conditions": {
+    "experience": {
+      "structured_signals_required": 2,
+      "signals": ["date", "title", "org"],
+      "employment_keyword_override": true
+    },
+    "projects": {
+      "title_required": true,
+      "structure_alternatives": {
+        "bullets_present": true,
+        "description_min_length": 80
+      },
+      "url_optional": true
+    }
+  },
+  
+  "logging": {
+    "pii_redaction_enabled": true,
+    "default_verbosity": "INFO",
+    "redaction_patterns": {
+      "email": true,
+      "phone": true,
+      "names": true,
+      "addresses": true,
+      "file_paths": true
+    }
+  },
+  
+  "testing": {
+    "property_based_mutations": {
+      "case_variations": true,
+      "unicode_dash_variants": true,
+      "typo_distance_range": [0, 1, 2],
+      "employment_keyword_mutations": true
+    },
+    "gherkin_scenarios_required": [
+      "education_stops_on_employment",
+      "internship_routing",
+      "project_url_optional", 
+      "certification_fuzzy_match",
+      "soft_skills_fallback",
+      "rescue_expansion",
+      "date_parser_robustness",
+      "pii_logs_redacted"
+    ]
+  }
+}

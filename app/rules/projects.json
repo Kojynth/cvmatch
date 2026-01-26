@@ -1,0 +1,5 @@
+{
+  "bullet_markers": ["–", "-", "•", "*", "·"],
+  "require_title_or_url": true,
+  "project_tokens": ["projet","project","réalisation","développement","site","app","application","portfolio"]
+}

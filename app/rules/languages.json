@@ -1,0 +1,43 @@
+{
+  "languages": [
+    "français|french|francais",
+    "anglais|english", 
+    "espagnol|spanish|castillan",
+    "allemand|german|deutsch",
+    "italien|italian|italiano",
+    "portugais|portuguese",
+    "chinois|chinese|mandarin",
+    "japonais|japanese|nihongo",
+    "arabe|arabic",
+    "russe|russian",
+    "néerlandais|dutch|nederlands",
+    "coréen|korean",
+    "polonais|polish",
+    "tchèque|czech",
+    "hongrois|hungarian",
+    "suédois|swedish",
+    "norvégien|norwegian",
+    "danois|danish",
+    "finnois|finnish",
+    "grec|greek",
+    "turc|turkish",
+    "hébreu|hebrew",
+    "hindi|hindi",
+    "bengali|bengali",
+    "ourdou|urdu",
+    "thaï|thai",
+    "vietnamien|vietnamese"
+  ],
+  "level_mappings": {
+    "natif|native|langue maternelle|mother tongue": "C2",
+    "bilingue|bilingual": "C2",
+    "courant|fluent|couramment": "C1",
+    "avancé|advanced": "C1",
+    "intermédiaire|intermediate": "B2",
+    "conversationnel|conversational": "B2",
+    "débutant|beginner|basic": "A2",
+    "notions|basic notions": "A1",
+    "scolaire|school level": "A1"
+  },
+  "cefr_regex": "\\b(A1|A2|B1|B2|C1|C2)\\b"
+}

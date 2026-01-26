@@ -1,0 +1,7 @@
+{
+  "strong_signals_regex": "doi:\\s*10\\.\\d{4,9}/\\S+|arxiv\\.org|hal\\.archives|researchgate\\.net|pubmed|springer|ieee|acm",
+  "context_words": [
+    "journal", "conférence", "conference", "article", "poster",
+    "présentation", "publication", "paper", "proceedings", "symposium"
+  ]
+}

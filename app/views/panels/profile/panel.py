@@ -31,6 +31,7 @@ from ....models.user_profile import UserProfile
 from ....services.dialogs import (
     confirm,
     show_error,
+    show_extraction_success,
     show_info,
     show_success,
     show_warning,
@@ -613,11 +614,27 @@ class ProfilePanel(QScrollArea):
         self.profile = updated_profile
         self.render_profile(self.profile_coordinator.to_snapshot(updated_profile))
         self.profile_updated.emit(updated_profile)
-        show_success(
-            "Les données du CV ont été extraites avec succès.",
-            title="Extraction terminée",
-            parent=self,
+
+        # Compter les sections extraites
+        sections_count = sum(
+            1
+            for section in [
+                updated_profile.extracted_experiences,
+                updated_profile.extracted_education,
+                updated_profile.extracted_skills,
+                updated_profile.extracted_languages,
+                updated_profile.extracted_projects,
+                updated_profile.extracted_certifications,
+                updated_profile.extracted_publications,
+                updated_profile.extracted_volunteering,
+                updated_profile.extracted_interests,
+                updated_profile.extracted_awards,
+                updated_profile.extracted_references,
+            ]
+            if section
         )
+
+        self._show_extraction_success_dialog(source="CV", sections_count=sections_count)
 
     def _on_extraction_failed(self, error_message: str) -> None:
         logger.error("Extraction CV échouée: %s", error_message)
@@ -633,12 +650,57 @@ class ProfilePanel(QScrollArea):
 
     def _on_linkedin_pdf_worker_completed(self, payload: Dict[str, Any]) -> None:
         try:
-            linkedin_data = payload.get("linkedin_data")
-            if linkedin_data:
-                self.profile.linkedin_data = linkedin_data  # type: ignore[attr-defined]
-                self.profile_updated.emit(self.profile)
-            QMessageBox.information(
-                self, "Extraction LinkedIn (PDF)", "Extraction LinkedIn terminée."
+            # 1. Stocker les données LinkedIn brutes
+            self.profile.linkedin_data = payload  # type: ignore[attr-defined]
+            self.profile.linkedin_last_sync = datetime.now()
+            self.profile.linkedin_sync_status = "success"
+
+            # 2. Convertir et appliquer aux champs extracted_*
+            from ....controllers.profile_extractor import (
+                convert_linkedin_payload_to_extracted,
+            )
+
+            extracted_data = convert_linkedin_payload_to_extracted(payload)
+            sections_count = self._apply_linkedin_extracted_data(extracted_data)
+
+            try:
+                from ....utils.profile_json import (
+                    has_profile_json_content,
+                    normalize_profile_json,
+                    save_profile_json,
+                    save_profile_json_cache,
+                )
+
+                normalized = normalize_profile_json(extracted_data)
+                if has_profile_json_content(normalized):
+                    save_profile_json(normalized, "linkedin")
+                    if getattr(self.profile, "id", None):
+                        save_profile_json_cache(self.profile.id, normalized)
+            except Exception as exc:
+                logger.warning("Unable to save LinkedIn JSON export: %s", exc)
+
+            # 3. Sauvegarder en base
+            if self.profile_coordinator:
+                from ....models.database import get_session
+
+                with get_session() as session:
+                    session.add(self.profile)
+                    session.commit()
+                    session.refresh(self.profile)
+
+            # 4. Émettre le signal de mise à jour
+            self.profile_updated.emit(self.profile)
+
+            # 5. Afficher le dialogue de succès avec option d'ouvrir l'éditeur
+            self._show_extraction_success_dialog(
+                source="LinkedIn (PDF)", sections_count=sections_count
+            )
+        except Exception as e:
+            logger.error(f"Erreur traitement extraction LinkedIn PDF: {e}")
+            show_error(
+                f"Erreur lors du traitement des données LinkedIn:\n{e}",
+                title="Erreur",
+                parent=self,
             )
         finally:
             self.linkedin_pdf_worker = None
@@ -661,6 +723,38 @@ class ProfilePanel(QScrollArea):
         try:
             self.profile.linkedin_data = linkedin_data  # type: ignore[attr-defined]
             self.profile.linkedin_last_sync = datetime.now()
+            extracted_data = None
+            try:
+                from ....utils.profile_json import (
+                    has_profile_json_content,
+                    normalize_profile_json,
+                    save_profile_json,
+                    save_profile_json_cache,
+                )
+
+                if isinstance(linkedin_data, dict):
+                    profile_json = linkedin_data.get("profile_json")
+                    if isinstance(profile_json, dict):
+                        normalized = normalize_profile_json(profile_json)
+                        if has_profile_json_content(normalized):
+                            extracted_data = normalized
+
+                if extracted_data is None:
+                    from ....controllers.profile_extractor import (
+                        convert_linkedin_payload_to_extracted,
+                    )
+
+                    extracted_data = convert_linkedin_payload_to_extracted(linkedin_data)
+
+                if extracted_data:
+                    self._apply_linkedin_extracted_data(extracted_data)
+                    normalized = normalize_profile_json(extracted_data)
+                    if has_profile_json_content(normalized):
+                        save_profile_json(normalized, "linkedin")
+                        if getattr(self.profile, "id", None):
+                            save_profile_json_cache(self.profile.id, normalized)
+            except Exception as exc:
+                logger.warning("LinkedIn extraction mapping failed: %s", exc)
             self.profile_updated.emit(self.profile)
             QMessageBox.information(
                 self,
@@ -689,7 +783,14 @@ class ProfilePanel(QScrollArea):
             return
 
         try:
-            # Create the editor with the current profile
+            # Rafraîchir le profil depuis la DB pour avoir les dernières données extraites
+            from ....models.database import get_session
+            with get_session() as session:
+                session.add(self.profile)
+                session.refresh(self.profile)
+            logger.debug("Profile refreshed from DB before opening editor")
+
+            # Create the editor with the refreshed profile
             editor = ProfileDetailsEditor(self.profile, parent=self)
 
             # Connect the profile_updated signal to our callback
@@ -736,6 +837,135 @@ class ProfilePanel(QScrollArea):
         self.profile = updated_profile
         self.render_profile(self.profile_coordinator.to_snapshot(updated_profile))
         self.profile_updated.emit(updated_profile)
+
+    # ---- Extraction helpers --------------------------------------------
+    def _apply_linkedin_extracted_data(self, extracted_data: Dict[str, Any]) -> int:
+        """
+        Applique les données LinkedIn converties aux champs extracted_*.
+
+        Crée de nouvelles entrées si les champs sont vides, sinon fusionne.
+
+        Args:
+            extracted_data: Dictionnaire des données LinkedIn converties
+
+        Returns:
+            Nombre de sections remplies
+        """
+        mapping = {
+            "personal_info": "extracted_personal_info",
+            "experiences": "extracted_experiences",
+            "education": "extracted_education",
+            "skills": "extracted_skills",
+            "languages": "extracted_languages",
+            "projects": "extracted_projects",
+            "certifications": "extracted_certifications",
+            "publications": "extracted_publications",
+            "volunteering": "extracted_volunteering",
+            "interests": "extracted_interests",
+            "awards": "extracted_awards",
+            "references": "extracted_references",
+        }
+
+        sections_filled = 0
+
+        for source_key, profile_field in mapping.items():
+            linkedin_data = extracted_data.get(source_key)
+            if not linkedin_data:
+                continue
+
+            existing_data = getattr(self.profile, profile_field, None)
+
+            if existing_data:
+                # Fusionner: ajouter les éléments LinkedIn qui n'existent pas dans le CV
+                if isinstance(existing_data, list) and isinstance(linkedin_data, list):
+                    # Pour les listes, ajouter les éléments non dupliqués
+                    # Note: Vérifier contre merged (pas existing_data) pour éviter doublons intra-batch
+                    merged = list(existing_data)
+                    for item in linkedin_data:
+                        if not self._is_duplicate_item(item, merged):
+                            merged.append(item)
+                            logger.debug(f"Ajout élément LinkedIn à {profile_field}")
+                    setattr(self.profile, profile_field, merged)
+                elif isinstance(existing_data, dict) and isinstance(linkedin_data, dict):
+                    # Pour les dicts (skills par catégorie), fusionner les clés
+                    merged = dict(existing_data)
+                    for key, value in linkedin_data.items():
+                        if key not in merged:
+                            merged[key] = value
+                    setattr(self.profile, profile_field, merged)
+                else:
+                    # Autres cas: garder l'existant
+                    pass
+            else:
+                # Créer: utiliser directement les données LinkedIn
+                setattr(self.profile, profile_field, linkedin_data)
+
+            sections_filled += 1
+
+        logger.info(f"Appliqué données LinkedIn: {sections_filled} sections remplies")
+        return sections_filled
+
+    def _is_duplicate_item(self, item: Dict[str, Any], existing_list: list) -> bool:
+        """Vérifie si un élément existe déjà dans la liste (comparaison basique)."""
+        if not isinstance(item, dict):
+            return item in existing_list
+
+        # Pour les expériences: comparer titre + entreprise
+        if "title" in item and "company" in item:
+            for existing in existing_list:
+                if isinstance(existing, dict):
+                    if (
+                        existing.get("title", "").lower() == item.get("title", "").lower()
+                        and existing.get("company", "").lower()
+                        == item.get("company", "").lower()
+                    ):
+                        return True
+
+        # Pour l'éducation: comparer école + diplôme
+        if "school" in item or "institution" in item:
+            for existing in existing_list:
+                if isinstance(existing, dict):
+                    school_match = existing.get("school", existing.get("institution", "")).lower() == item.get(
+                        "school", item.get("institution", "")
+                    ).lower()
+                    degree_match = existing.get("degree", "").lower() == item.get("degree", "").lower()
+                    if school_match and degree_match:
+                        return True
+
+        # Pour les compétences/langues: comparer le nom
+        if "name" in item:
+            for existing in existing_list:
+                if isinstance(existing, dict) and existing.get("name", "").lower() == item.get("name", "").lower():
+                    return True
+                if isinstance(existing, str) and existing.lower() == item.get("name", "").lower():
+                    return True
+
+        return False
+
+    def _show_extraction_success_dialog(self, source: str, sections_count: int) -> None:
+        """
+        Affiche le dialogue de succès avec option d'ouvrir l'éditeur de détails.
+
+        Args:
+            source: Source de l'extraction (ex: "CV", "LinkedIn (PDF)")
+            sections_count: Nombre de sections extraites/remplies
+        """
+        message = (
+            f"Les données ont été extraites avec succès depuis {source}.\n\n"
+            f"Sections remplies: {sections_count}\n\n"
+            "Il est important de vérifier l'exactitude des données extraites.\n"
+            "Souhaitez-vous visualiser et éditer les détails maintenant?"
+        )
+
+        _, open_editor = show_extraction_success(
+            message,
+            title="Extraction terminée",
+            action_text="Visualiser les détails",
+            parent=self,
+        )
+
+        if open_editor:
+            self.show_extracted_details()
 
     # ---- ML helpers (minimal stubs) ------------------------------------
     def _ensure_ml_progress_dialog(self) -> MLProgressDialog:

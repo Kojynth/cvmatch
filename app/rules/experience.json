@@ -1,0 +1,8 @@
+{
+  "company_patterns": {
+    "allow_acronyms": true,
+    "allow_apostrophe_names": true,
+    "two_capitalized_words": true,
+    "legal_suffixes": ["SAS","SASU","SARL","SA","EURL","Inc","Corp","LLC","Ltd","GmbH","AG"]
+  }
+}

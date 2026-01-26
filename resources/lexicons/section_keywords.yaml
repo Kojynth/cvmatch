@@ -1,0 +1,352 @@
+# Lexiques multilingues pour classification sections CV
+
+experience:
+  fr:
+    positive:
+      - "expérience professionnelle"
+      - "parcours professionnel"
+      - "emplois"
+      - "postes occupés"
+      - "carrière"
+      - "cdi"
+      - "cdd"
+      - "contrat"
+      - "salaire"
+      - "rémunération"
+      - "employeur"
+      - "entreprise"
+    negative:
+      - "bénévolat"
+      - "volontariat"
+      - "stage"
+      - "projet personnel"
+  en:
+    positive:
+      - "work experience"
+      - "professional experience"
+      - "employment history"
+      - "career"
+      - "job"
+      - "position"
+      - "contract"
+      - "salary"
+      - "employer"
+      - "company"
+    negative:
+      - "volunteer"
+      - "internship"
+      - "personal project"
+  es:
+    positive:
+      - "experiencia profesional"
+      - "experiencia laboral"
+      - "empleos"
+      - "carrera profesional"
+      - "contrato"
+      - "salario"
+      - "empleador"
+      - "empresa"
+    negative:
+      - "voluntariado"
+      - "prácticas"
+      - "proyecto personal"
+  de:
+    positive:
+      - "berufserfahrung"
+      - "berufliche laufbahn"
+      - "beschäftigung"
+      - "arbeitsstelle"
+      - "vertrag"
+      - "gehalt"
+      - "arbeitgeber"
+      - "unternehmen"
+    negative:
+      - "ehrenamt"
+      - "praktikum"
+      - "persönliches projekt"
+  it:
+    positive:
+      - "esperienza professionale"
+      - "carriera professionale"
+      - "impieghi"
+      - "posizioni lavorative"
+      - "contratto"
+      - "stipendio"
+      - "datore di lavoro"
+      - "azienda"
+    negative:
+      - "volontariato"
+      - "tirocinio"
+      - "progetto personale"
+
+volunteer:
+  fr:
+    positive:
+      - "bénévolat"
+      - "volontariat"
+      - "activités bénévoles"
+      - "engagement associatif"
+      - "service civique"
+      - "mission humanitaire"
+      - "ong"
+      - "association"
+      - "croix-rouge"
+      - "secours populaire"
+    negative:
+      - "rémunération"
+      - "salaire"
+      - "contrat de travail"
+  en:
+    positive:
+      - "volunteer work"
+      - "volunteering"
+      - "community service"
+      - "charity work"
+      - "ngo"
+      - "non-profit"
+      - "red cross"
+      - "salvation army"
+    negative:
+      - "paid"
+      - "salary"
+      - "employment contract"
+  es:
+    positive:
+      - "voluntariado"
+      - "trabajo voluntario"
+      - "servicio comunitario"
+      - "ong"
+      - "organización benéfica"
+      - "cruz roja"
+    negative:
+      - "remunerado"
+      - "salario"
+      - "contrato laboral"
+  de:
+    positive:
+      - "ehrenamt"
+      - "freiwilligenarbeit"
+      - "gemeinnützige arbeit"
+      - "ngo"
+      - "wohltätigkeitsorganisation"
+      - "rotes kreuz"
+    negative:
+      - "bezahlt"
+      - "gehalt"
+      - "arbeitsvertrag"
+  it:
+    positive:
+      - "volontariato"
+      - "lavoro volontario"
+      - "servizio alla comunità"
+      - "ong"
+      - "organizzazione benefica"
+      - "croce rossa"
+    negative:
+      - "retribuito"
+      - "stipendio"
+      - "contratto di lavoro"
+
+projects:
+  fr:
+    positive:
+      - "projets personnels"
+      - "projets étudiants"
+      - "open-source"
+      - "github"
+      - "gitlab"
+      - "projet solo"
+      - "développement personnel"
+      - "side project"
+      - "contributions open-source"
+    negative:
+      - "entreprise"
+      - "employeur"
+      - "contrat"
+      - "salaire"
+  en:
+    positive:
+      - "personal projects"
+      - "student projects"
+      - "open-source"
+      - "github"
+      - "gitlab"
+      - "side projects"
+      - "hobby projects"
+      - "open-source contributions"
+    negative:
+      - "company"
+      - "employer"
+      - "contract"
+      - "salary"
+  es:
+    positive:
+      - "proyectos personales"
+      - "proyectos estudiantiles"
+      - "código abierto"
+      - "github"
+      - "gitlab"
+      - "proyectos paralelos"
+    negative:
+      - "empresa"
+      - "empleador"
+      - "contrato"
+      - "salario"
+  de:
+    positive:
+      - "persönliche projekte"
+      - "studienprojekte"
+      - "open-source"
+      - "github"
+      - "gitlab"
+      - "nebenprojekte"
+    negative:
+      - "unternehmen"
+      - "arbeitgeber"
+      - "vertrag"
+      - "gehalt"
+  it:
+    positive:
+      - "progetti personali"
+      - "progetti studenteschi"
+      - "open-source"
+      - "github"
+      - "gitlab"
+      - "progetti collaterali"
+    negative:
+      - "azienda"
+      - "datore di lavoro"
+      - "contratto"
+      - "stipendio"
+
+memberships:
+  fr:
+    positive:
+      - "membre"
+      - "adhérent"
+      - "adhésion"
+      - "ieee"
+      - "acm"
+      - "association professionnelle"
+      - "ordre professionnel"
+      - "cotisation"
+    negative:
+      - "certification"
+      - "diplôme"
+      - "examen"
+  en:
+    positive:
+      - "member"
+      - "membership"
+      - "ieee"
+      - "acm"
+      - "professional association"
+      - "professional society"
+      - "membership fee"
+    negative:
+      - "certification"
+      - "certificate"
+      - "exam"
+  es:
+    positive:
+      - "miembro"
+      - "membresía"
+      - "ieee"
+      - "acm"
+      - "asociación profesional"
+      - "colegio profesional"
+    negative:
+      - "certificación"
+      - "certificado"
+      - "examen"
+  de:
+    positive:
+      - "mitglied"
+      - "mitgliedschaft"
+      - "ieee"
+      - "acm"
+      - "berufsverband"
+      - "fachverband"
+    negative:
+      - "zertifizierung"
+      - "zertifikat"
+      - "prüfung"
+  it:
+    positive:
+      - "membro"
+      - "appartenenza"
+      - "ieee"
+      - "acm"
+      - "associazione professionale"
+      - "ordine professionale"
+    negative:
+      - "certificazione"
+      - "certificato"
+      - "esame"
+
+personal:
+  fr:
+    positive:
+      - "année sabbatique"
+      - "congé sabbatique"
+      - "gap year"
+      - "tour du monde"
+      - "voyage personnel"
+      - "disponibilité"
+      - "mobilité"
+      - "permis de conduire"
+      - "nationalité"
+    negative:
+      - "professionnel"
+      - "travail"
+      - "emploi"
+  en:
+    positive:
+      - "sabbatical year"
+      - "gap year"
+      - "world travel"
+      - "personal travel"
+      - "availability"
+      - "mobility"
+      - "driving license"
+      - "nationality"
+    negative:
+      - "professional"
+      - "work"
+      - "employment"
+  es:
+    positive:
+      - "año sabático"
+      - "año de pausa"
+      - "viaje mundial"
+      - "viaje personal"
+      - "disponibilidad"
+      - "movilidad"
+    negative:
+      - "profesional"
+      - "trabajo"
+      - "empleo"
+  de:
+    positive:
+      - "sabbatjahr"
+      - "auszeit"
+      - "weltreise"
+      - "persönliche reise"
+      - "verfügbarkeit"
+      - "mobilität"
+    negative:
+      - "beruflich"
+      - "arbeit"
+      - "beschäftigung"
+  it:
+    positive:
+      - "anno sabbatico"
+      - "pausa dall'attività"
+      - "viaggio mondiale"
+      - "viaggio personale"
+      - "disponibilità"
+      - "mobilità"
+    negative:
+      - "professionale"
+      - "lavoro"
+      - "impiego"
