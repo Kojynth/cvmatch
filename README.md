@@ -28,7 +28,7 @@ Le seul moment où une connexion internet est requise est au moment de l'install
 - **Pilotes NVIDIA** : à jour (pour que PyTorch puisse détecter CUDA).
   - Le projet référence des builds PyTorch **CUDA 12.1 (cu121)** : avoir ses driver à jours NVIDIA c'est important.
 
-> Note : CVMatch peut fonctionner **sans GPU** (mode CPU), mais ce sera plus lent et certains modèles seront inadaptés.
+> Note : CVMatch peut fonctionner **sans GPU** (mode CPU), mais ce sera plus lent et certains modèles seront inadaptés et surtout vous risquez d'user plus vite votre CPU.
 
 ## Prérequis “fonctionnels” selon les features (optionnels)
 
