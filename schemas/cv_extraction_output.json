@@ -1,0 +1,434 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cvmatch.com/schemas/cv-extraction-output-v1.json",
+  "title": "Enhanced CV Extraction Pipeline Output Schema",
+  "description": "Comprehensive schema for CV extraction pipeline output including metadata, quality metrics, and internationalization support",
+  "type": "object",
+  "required": ["document_metadata", "extraction_results", "quality_metrics"],
+  "properties": {
+    "document_metadata": {
+      "type": "object",
+      "required": ["document_id", "extraction_timestamp", "pipeline_version", "extraction_mode"],
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Unique identifier for the document"
+        },
+        "extraction_timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of extraction"
+        },
+        "pipeline_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "description": "Semantic version of the extraction pipeline"
+        },
+        "extraction_mode": {
+          "type": "string",
+          "enum": ["AI_STRICT", "AI_FIRST", "HYBRID_FUSION", "HEURISTIC_ONLY"],
+          "description": "AI operation mode used for extraction"
+        },
+        "document_properties": {
+          "type": "object",
+          "properties": {
+            "filename": {"type": "string"},
+            "file_size_bytes": {"type": "number", "minimum": 0},
+            "page_count": {"type": "number", "minimum": 1},
+            "language_detected": {
+              "type": "string",
+              "pattern": "^[a-z]{2}$",
+              "description": "ISO 639-1 language code"
+            },
+            "primary_script": {
+              "type": "string",
+              "enum": ["LATIN", "ARABIC", "HEBREW", "CJK", "CYRILLIC", "MIXED", "UNKNOWN"]
+            },
+            "text_direction": {
+              "type": "string",
+              "enum": ["LTR", "RTL", "TTB", "MIXED"]
+            },
+            "reading_order_hint": {
+              "type": "string",
+              "enum": ["natural", "reverse", "vertical", "mixed_lines"]
+            }
+          }
+        }
+      }
+    },
+    "extraction_results": {
+      "type": "object",
+      "required": ["sections"],
+      "properties": {
+        "sections": {
+          "type": "array",
+          "minItems": 0,
+          "items": {
+            "$ref": "#/$defs/section"
+          }
+        }
+      }
+    },
+    "quality_metrics": {
+      "type": "object",
+      "required": ["overall_quality_score", "success_criteria_met"],
+      "properties": {
+        "overall_quality_score": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "association_rate": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "experience_coverage": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "education_keep_rate": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "boundary_overlap_count": {
+          "type": "number",
+          "minimum": 0
+        },
+        "extraction_warnings": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "success_criteria_met": {
+          "type": "boolean"
+        },
+        "robustness_score": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        }
+      }
+    },
+    "processing_metadata": {
+      "type": "object",
+      "properties": {
+        "total_processing_time_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "ai_gate_health_score": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "heuristic_fallback_triggered": {
+          "type": "boolean"
+        },
+        "sections_quarantined": {
+          "type": "number",
+          "minimum": 0
+        },
+        "items_normalized": {
+          "type": "number",
+          "minimum": 0
+        },
+        "routing_decisions": {
+          "type": "object",
+          "properties": {
+            "experience_to_education": {"type": "number", "minimum": 0},
+            "experience_to_certifications": {"type": "number", "minimum": 0},
+            "internship_rebindings": {"type": "number", "minimum": 0}
+          }
+        }
+      }
+    },
+    "internationalization": {
+      "type": "object",
+      "properties": {
+        "detected_languages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["language_code", "confidence", "script_type"],
+            "properties": {
+              "language_code": {
+                "type": "string",
+                "pattern": "^[a-z]{2}$"
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 1.0
+              },
+              "script_type": {
+                "type": "string",
+                "enum": ["LATIN", "ARABIC", "HEBREW", "CJK", "CYRILLIC"]
+              },
+              "text_samples": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 100
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "section": {
+      "type": "object",
+      "required": ["section_type", "section_id", "confidence", "items"],
+      "properties": {
+        "section_type": {
+          "type": "string",
+          "enum": [
+            "experience", "education", "skills", "languages", "projects",
+            "certifications", "awards", "publications", "references",
+            "interests", "volunteering", "contact", "personal_info", "summary"
+          ]
+        },
+        "section_id": {
+          "type": "string",
+          "description": "Unique identifier for the section"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "bounding_box": {
+          "$ref": "#/$defs/bounding_box"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/item"
+          }
+        },
+        "structure_flags": {
+          "type": "object",
+          "properties": {
+            "is_sidebar": {"type": "boolean"},
+            "is_timeline": {"type": "boolean"},
+            "column_id": {"type": "number"},
+            "reading_order": {
+              "type": "string",
+              "enum": ["ltr", "rtl", "ttb"]
+            },
+            "is_quarantined": {"type": "boolean"},
+            "merge_candidate": {"type": "boolean"}
+          }
+        },
+        "normalization_applied": {
+          "type": "object",
+          "properties": {
+            "date_normalization": {"type": "boolean"},
+            "language_normalization": {"type": "boolean"},
+            "field_contamination_cleaning": {"type": "boolean"}
+          }
+        }
+      }
+    },
+    "item": {
+      "type": "object",
+      "required": ["item_id", "item_type", "confidence", "fields"],
+      "properties": {
+        "item_id": {
+          "type": "string",
+          "description": "Unique identifier for the item"
+        },
+        "item_type": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "fields": {
+          "type": "object",
+          "description": "Dynamic fields based on item type"
+        },
+        "triad_scores": {
+          "type": "object",
+          "properties": {
+            "date_confidence": {
+              "type": "number",
+              "minimum": 0.0,
+              "maximum": 1.0
+            },
+            "role_confidence": {
+              "type": "number",
+              "minimum": 0.0,
+              "maximum": 1.0
+            },
+            "organization_confidence": {
+              "type": "number",
+              "minimum": 0.0,
+              "maximum": 1.0
+            },
+            "association_score": {
+              "type": "number",
+              "minimum": 0.0,
+              "maximum": 1.0
+            }
+          }
+        },
+        "normalization_details": {
+          "type": "object",
+          "properties": {
+            "date_normalization": {
+              "type": "object",
+              "properties": {
+                "original": {"type": "string"},
+                "normalized": {"type": "string"},
+                "format_type": {
+                  "type": "string",
+                  "enum": ["iso_month", "iso_date", "present", "range", "unchanged"]
+                },
+                "is_present": {"type": "boolean"}
+              }
+            },
+            "field_cleaning": {
+              "type": "object",
+              "properties": {
+                "title_cleaned": {"type": "boolean"},
+                "organization_cleaned": {"type": "boolean"},
+                "contamination_removed": {
+                  "type": "array",
+                  "items": {"type": "string"}
+                }
+              }
+            }
+          }
+        },
+        "routing_metadata": {
+          "type": "object",
+          "properties": {
+            "original_section": {"type": "string"},
+            "routing_reason": {"type": "string"},
+            "internship_rebinding": {
+              "type": "object",
+              "properties": {
+                "applied": {"type": "boolean"},
+                "original_organization": {"type": "string"},
+                "rebind_target": {"type": "string"},
+                "rebind_confidence": {
+                  "type": "number",
+                  "minimum": 0.0,
+                  "maximum": 1.0
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "bounding_box": {
+      "type": "object",
+      "required": ["page", "x", "y", "width", "height"],
+      "properties": {
+        "page": {
+          "type": "number",
+          "minimum": 1
+        },
+        "x": {
+          "type": "number",
+          "minimum": 0
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0
+        },
+        "width": {
+          "type": "number",
+          "minimum": 0
+        },
+        "height": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "experience_fields": {
+      "type": "object",
+      "properties": {
+        "title": {"type": "string"},
+        "organization": {"type": "string"},
+        "location": {"type": "string"},
+        "start_date": {"type": "string"},
+        "end_date": {"type": "string"},
+        "date_range": {"type": "string"},
+        "description": {"type": "string"},
+        "responsibilities": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "achievements": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "technologies": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "employment_type": {
+          "type": "string",
+          "enum": ["full_time", "part_time", "contract", "internship", "volunteer"]
+        }
+      }
+    },
+    "education_fields": {
+      "type": "object",
+      "properties": {
+        "degree": {"type": "string"},
+        "field_of_study": {"type": "string"},
+        "institution": {"type": "string"},
+        "location": {"type": "string"},
+        "start_date": {"type": "string"},
+        "end_date": {"type": "string"},
+        "gpa": {"type": "string"},
+        "honors": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "relevant_coursework": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "thesis_title": {"type": "string"}
+      }
+    },
+    "language_fields": {
+      "type": "object",
+      "required": ["language", "cefr_level"],
+      "properties": {
+        "language": {"type": "string"},
+        "proficiency_description": {"type": "string"},
+        "cefr_level": {
+          "type": "string",
+          "enum": ["A1", "A2", "B1", "B2", "C1", "C2", "NATIVE"]
+        },
+        "cefr_confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "skills": {
+          "type": "object",
+          "properties": {
+            "speaking": {"type": "string"},
+            "writing": {"type": "string"},
+            "reading": {"type": "string"},
+            "listening": {"type": "string"}
+          }
+        }
+      }
+    }
+  }
+}

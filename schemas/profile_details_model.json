@@ -1,0 +1,103 @@
+{
+  "schema_version": "profile.v1",
+  "personal_info": {
+    "full_name": "",
+    "email": "",
+    "phone": "",
+    "linkedin_url": "",
+    "location": ""
+  },
+  "experiences": [
+    {
+      "title": "",
+      "company": "",
+      "start_date": "",
+      "end_date": "",
+      "location": "",
+      "description": "",
+      "source": ""
+    }
+  ],
+  "education": [
+    {
+      "school": "",
+      "degree": "",
+      "field_of_study": "",
+      "start_date": "",
+      "end_date": "",
+      "grade": "",
+      "source": ""
+    }
+  ],
+  "skills": [
+    {
+      "name": "",
+      "level": ""
+    }
+  ],
+  "soft_skills": [
+    {
+      "name": "",
+      "level": ""
+    }
+  ],
+  "languages": [
+    {
+      "language": "",
+      "proficiency": ""
+    }
+  ],
+  "projects": [
+    {
+      "name": "",
+      "url": "",
+      "technologies": "",
+      "description": ""
+    }
+  ],
+  "certifications": [
+    {
+      "name": "",
+      "organization": "",
+      "date": "",
+      "url": ""
+    }
+  ],
+  "publications": [
+    {
+      "title": "",
+      "authors": "",
+      "journal": "",
+      "date": "",
+      "url": ""
+    }
+  ],
+  "volunteering": [
+    {
+      "organization": "",
+      "role": "",
+      "period": "",
+      "description": ""
+    }
+  ],
+  "awards": [
+    {
+      "name": "",
+      "organization": "",
+      "date": "",
+      "description": ""
+    }
+  ],
+  "references": [
+    {
+      "name": "",
+      "title": "",
+      "company": "",
+      "email": "",
+      "phone": ""
+    }
+  ],
+  "interests": [
+    ""
+  ]
+}

@@ -1,0 +1,161 @@
+﻿<!doctype html>
+<html lang="{{ language if language is defined and language else 'en' }}">
+<head>
+  <meta charset="utf-8">
+  <title>{{ name }} - CV</title>
+  <link rel="stylesheet" href="css/classic.css">
+</head>
+<body>
+  <div class="cv-container">
+    <header class="cv-header">
+      <div class="header-content">
+        <h1 class="name">{{ name }}</h1>
+        {% if job_title %}<p class="title">{{ job_title }}</p>{% endif %}
+        <div class="contact-info">
+          {% if email %}<span class="contact-item">{{ email }}</span>{% endif %}
+          {% if phone %}<span class="contact-item">{{ phone }}</span>{% endif %}
+          {% if linkedin_url %}<span class="contact-item">{{ linkedin_url }}</span>{% endif %}
+          {% if location %}<span class="contact-item">{{ location }}</span>{% endif %}
+        </div>
+      </div>
+    </header>
+
+    <main class="cv-body">
+      {% if profile_summary %}
+      <section class="cv-section">
+        <h2 class="section-title">{{ labels.profile if labels is defined and labels.profile is defined else 'Profile' }}</h2>
+        <div class="section-content">{{ profile_summary | replace('\n', '<br>') | safe }}</div>
+      </section>
+      {% endif %}
+
+      {% if experience %}
+      <section class="cv-section">
+        <h2 class="section-title">{{ labels.experience if labels is defined and labels.experience is defined else 'Experience' }}</h2>
+        <div class="section-content">
+          {% for exp in experience %}
+          <div class="entry">
+            <h3>{{ exp.title }}</h3>
+            {% set meta_parts = [] %}
+            {% if exp.company %}{% set _ = meta_parts.append(exp.company) %}{% endif %}
+            {% if exp.start_date or exp.end_date %}
+              {% set date_part = exp.start_date %}
+              {% if exp.end_date %}{% set date_part = date_part ~ ' - ' ~ exp.end_date %}{% endif %}
+              {% set _ = meta_parts.append(date_part) %}
+            {% endif %}
+            {% if exp.location %}{% set _ = meta_parts.append(exp.location) %}{% endif %}
+            {% if meta_parts %}<p class="meta">{{ meta_parts | join(' | ') }}</p>{% endif %}
+            {% if exp.description %}
+            <ul>
+              {% for item in exp.description %}
+              <li>{{ item }}</li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </section>
+      {% endif %}
+
+      {% if skills %}
+      <section class="cv-section">
+        <h2 class="section-title">{{ labels.skills if labels is defined and labels.skills is defined else 'Skills' }}</h2>
+        <div class="section-content">
+          {% for block in skills %}
+          <div class="skill-block">
+            <h3>{{ block.category }}</h3>
+            {% if block.skills_list %}
+            <ul>
+              {% for skill in block.skills_list %}
+              <li>{{ skill.name }}{% if skill.level %} ({{ skill.level }}){% endif %}</li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </section>
+      {% endif %}
+
+      {% if education %}
+      <section class="cv-section">
+        <h2 class="section-title">{{ labels.education if labels is defined and labels.education is defined else 'Education' }}</h2>
+        <div class="section-content">
+          {% for edu in education %}
+          <div class="entry">
+            <h3>{{ edu.degree }}</h3>
+            {% set meta_parts = [] %}
+            {% if edu.institution %}{% set _ = meta_parts.append(edu.institution) %}{% endif %}
+            {% if edu.year %}{% set _ = meta_parts.append(edu.year) %}{% endif %}
+            {% if meta_parts %}<p class="meta">{{ meta_parts | join(' | ') }}</p>{% endif %}
+            {% if edu.description %}
+            <ul>
+              {% for item in edu.description %}
+              <li>{{ item }}</li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </section>
+      {% endif %}
+
+      {% if projects %}
+      <section class="cv-section">
+        <h2 class="section-title">{{ labels.projects if labels is defined and labels.projects is defined else 'Projects' }}</h2>
+        <div class="section-content">
+          {% for proj in projects %}
+          <div class="entry">
+            <h3>{{ proj.name }}</h3>
+            {% if proj.technologies %}<p class="meta">{{ proj.technologies }}</p>{% endif %}
+            {% if proj.description %}<p>{{ proj.description }}</p>{% endif %}
+            {% if proj.url %}<p><a href="{{ proj.url }}">{{ proj.url }}</a></p>{% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </section>
+      {% endif %}
+
+      {% if languages %}
+      <section class="cv-section">
+        <h2 class="section-title">{{ labels.languages if labels is defined and labels.languages is defined else 'Languages' }}</h2>
+        <div class="section-content">
+          <ul>
+            {% for lang in languages %}
+            <li>{{ lang.name }}{% if lang.level %}: {{ lang.level }}{% endif %}</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </section>
+      {% endif %}
+
+      {% if certifications %}
+      <section class="cv-section">
+        <h2 class="section-title">{{ labels.certifications if labels is defined and labels.certifications is defined else 'Certifications' }}</h2>
+        <div class="section-content">
+          <ul>
+            {% for cert in certifications %}
+            <li>
+              {{ cert.name }}
+              {% if cert.organization %} - {{ cert.organization }}{% endif %}
+              {% if cert.date %} ({{ cert.date }}){% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+      </section>
+      {% endif %}
+
+      {% if interests %}
+      <section class="cv-section">
+        <h2 class="section-title">{{ labels.interests if labels is defined and labels.interests is defined else 'Interests' }}</h2>
+        <div class="section-content">
+          {{ interests | join(', ') }}
+        </div>
+      </section>
+      {% endif %}
+    </main>
+  </div>
+</body>
+</html>

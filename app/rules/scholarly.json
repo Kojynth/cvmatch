@@ -1,0 +1,4 @@
+{
+  "domains": ["doi.org","arxiv.org","hal.archives-ouvertes.fr","researchgate.net","acm.org","ieee.org","springer.com","nature.com","sciencedirect.com"],
+  "context_words": ["journal","revue","conférence","conference","article","poster","proceedings","publication","paper"]
+}

@@ -1,0 +1,308 @@
+{
+  "categories": {
+    "development": {
+      "emoji": "💻",
+      "label": "Développement",
+      "patterns": [
+        "python|java|javascript|typescript|c\\+\\+|c#|php|ruby|go|rust|swift|kotlin|scala|programming|développement",
+        "react|angular|vue|django|flask|spring|laravel|express|nodejs|framework|frontend|backend|fullstack",
+        "html|css|sass|scss|bootstrap|tailwind|web|site|application"
+      ]
+    },
+    "data_ai": {
+      "emoji": "📊",
+      "label": "Data & IA",
+      "patterns": [
+        "mysql|postgresql|mongodb|redis|elasticsearch|sql|nosql|database|bdd|base de données",
+        "pandas|numpy|scipy|tensorflow|pytorch|keras|scikit-learn|machine learning|ai|ml|data science|ia|intelligence artificielle",
+        "tableau|power bi|excel|analytics|analyse|statistiques|big data|data mining|visualisation"
+      ]
+    },
+    "cloud_devops": {
+      "emoji": "☁️",
+      "label": "Cloud & DevOps",
+      "patterns": [
+        "docker|kubernetes|jenkins|git|ansible|terraform|aws|azure|gcp|cloud|devops|ci/cd|gitlab|github",
+        "linux|unix|bash|shell|serveur|infrastructure|réseau|network|administration système"
+      ]
+    },
+    "cybersecurity": {
+      "emoji": "🔒",
+      "label": "Cybersécurité",
+      "patterns": [
+        "cybersécurité|sécurité informatique|pentest|firewall|cryptographie|hacking|ethical hacking|iso 27001|rgpd",
+        "antivirus|malware|phishing|intrusion|audit sécurité|forensic|incident response"
+      ]
+    },
+    "mobile_gaming": {
+      "emoji": "📱",
+      "label": "Mobile & Gaming",
+      "patterns": [
+        "ios|android|flutter|react native|xamarin|mobile|app|application mobile|swift|kotlin",
+        "unity|unreal|game|jeu|jeux vidéo|gaming|3d|animation|réalité virtuelle|vr|ar"
+      ]
+    },
+    "design_ux": {
+      "emoji": "🎨",
+      "label": "Design & UX",
+      "patterns": [
+        "figma|sketch|photoshop|illustrator|ui|ux|design|interface|wireframe|maquette|graphisme|création graphique",
+        "indesign|after effects|cinema 4d|blender|maya|3ds max|zbrush|substance|design graphique"
+      ]
+    },
+    "audiovisual": {
+      "emoji": "📺",
+      "label": "Audiovisuel",
+      "patterns": [
+        "montage|réalisation|photo|vidéo|caméra|production|post-production|final cut|premiere|avid",
+        "son|audio|mixage|mastering|podcast|radio|télévision|streaming|broadcast"
+      ]
+    },
+    "writing_editing": {
+      "emoji": "✍️",
+      "label": "Rédaction & Édition",
+      "patterns": [
+        "rédaction|copywriting|journalisme|correction|édition|contenu|content|blogging|seo writing",
+        "traduction|interprétation|linguistique|révision|proofreading|écriture|storytelling"
+      ]
+    },
+    "digital_marketing": {
+      "emoji": "📢",
+      "label": "Marketing Digital",
+      "patterns": [
+        "seo|sem|google ads|facebook ads|marketing digital|réseaux sociaux|social media|community management",
+        "email marketing|automation|crm|analytics|conversion|e-commerce|shopify|wordpress|webmarketing"
+      ]
+    },
+    "arts_entertainment": {
+      "emoji": "🎭",
+      "label": "Arts & Spectacle",
+      "patterns": [
+        "théâtre|musique|danse|spectacle|scène|concert|festival|événementiel|animation|dj",
+        "chant|instrument|composition|chorégraphie|mise en scène|production artistique"
+      ]
+    },
+    "business_strategy": {
+      "emoji": "📈",
+      "label": "Business & Stratégie",
+      "patterns": [
+        "management|gestion|direction|stratégie|consulting|business plan|entrepreneuriat|startup",
+        "leadership|équipe|team management|project management|scrum|agile|kanban"
+      ]
+    },
+    "finance_accounting": {
+      "emoji": "💰",
+      "label": "Finance & Comptabilité",
+      "patterns": [
+        "comptabilité|finance|audit|fiscalité|contrôle de gestion|budget|trésorerie|banque",
+        "trading|investissement|bourse|risque|assurance|crédit|financement|sage|sap"
+      ]
+    },
+    "sales": {
+      "emoji": "🤝",
+      "label": "Commercial & Vente",
+      "patterns": [
+        "vente|commercial|négociation|prospection|relation client|crm|salesforce|pipeline",
+        "business development|account management|key account|grands comptes|b2b|b2c"
+      ]
+    },
+    "hr_recruitment": {
+      "emoji": "👥",
+      "label": "RH & Recrutement",
+      "patterns": [
+        "ressources humaines|rh|recrutement|formation|paie|droit du travail|sirh|talent acquisition",
+        "coaching|développement personnel|onboarding|performance|évaluation|compensation"
+      ]
+    },
+    "legal_compliance": {
+      "emoji": "⚖️",
+      "label": "Juridique & Compliance",
+      "patterns": [
+        "droit|juridique|contrat|compliance|réglementation|avocat|notaire|juriste|contentieux",
+        "propriété intellectuelle|fiscal|social|commercial|pénal|civil|administratif"
+      ]
+    },
+    "crafts_construction": {
+      "emoji": "🔨",
+      "label": "Artisanat & Construction",
+      "patterns": [
+        "maçonnerie|plomberie|électricité|menuiserie|carrelage|peinture|construction|bâtiment|btp",
+        "charpente|couverture|isolation|chauffage|climatisation|rénovation|gros œuvre|second œuvre"
+      ]
+    },
+    "mechanics_maintenance": {
+      "emoji": "🔧",
+      "label": "Mécanique & Maintenance",
+      "patterns": [
+        "mécanique|automobile|réparation|maintenance|dépannage|diagnostic|carrosserie|pneumatique",
+        "hydraulique|pneumatique|usinage|tournage|fraisage|soudure|métallurgie|maintenance industrielle"
+      ]
+    },
+    "electricity_electronics": {
+      "emoji": "⚡",
+      "label": "Électricité & Électronique",
+      "patterns": [
+        "électricien|installation électrique|tableau électrique|domotique|éclairage|câblage",
+        "électronique|circuit|composant|automation|robotique|capteur|microcontrôleur|arduino"
+      ]
+    },
+    "industry_production": {
+      "emoji": "🏭",
+      "label": "Industrie & Production",
+      "patterns": [
+        "production|fabrication|qualité|iso|lean|six sigma|amélioration continue|process",
+        "logistique|supply chain|stock|entrepôt|manutention|picking|expédition|transport"
+      ]
+    },
+    "agriculture_environment": {
+      "emoji": "🌱",
+      "label": "Agriculture & Environnement",
+      "patterns": [
+        "agriculture|élevage|cultures|tracteur|irrigation|pesticide|bio|permaculture|maraîchage",
+        "environnement|écologie|déchets|recyclage|énergie renouvelable|développement durable|rse"
+      ]
+    },
+    "health_medical": {
+      "emoji": "🏥",
+      "label": "Santé & Médical",
+      "patterns": [
+        "médecin|infirmier|aide soignant|pharmacie|kinésithérapeute|dentaire|vétérinaire|santé",
+        "urgences|bloc opératoire|radiologie|laboratoire|anesthésie|cardiologie|pédiatrie"
+      ]
+    },
+    "social_education": {
+      "emoji": "👶",
+      "label": "Social & Éducatif",
+      "patterns": [
+        "éducation|enseignement|professeur|instituteur|formation|pédagogie|animation|petite enfance",
+        "social|éducateur|assistant social|aide à domicile|handicap|insertion|accompagnement"
+      ]
+    },
+    "domestic_services": {
+      "emoji": "🏠",
+      "label": "Services Domestiques",
+      "patterns": [
+        "ménage|nettoyage|entretien|garde d'enfants|baby sitting|aide ménagère|femme de ménage",
+        "jardinage|bricolage|aide à domicile|personne âgée|assistance|services à la personne"
+      ]
+    },
+    "wellness_sports": {
+      "emoji": "💆",
+      "label": "Bien-être & Sport",
+      "patterns": [
+        "massage|kinésithérapie|ostéopathie|réflexologie|spa|bien-être|relaxation|thérapie",
+        "sport|fitness|musculation|yoga|pilates|coaching sportif|nutrition|diététique",
+        "esthétique|beauté|coiffure|onglerie|maquillage|cosmétique|soins"
+      ]
+    },
+    "animals": {
+      "emoji": "🐾",
+      "label": "Animaux",
+      "patterns": [
+        "vétérinaire|toilettage|dressage|éducation canine|élevage|animalerie|garde d'animaux",
+        "comportement animal|zoologie|faune|protection animale|refuge|pension"
+      ]
+    },
+    "transport_delivery": {
+      "emoji": "🚛",
+      "label": "Transport & Livraison",
+      "patterns": [
+        "conduite|permis|chauffeur|livreur|taxi|vtc|uber|transport|logistique|expedition",
+        "poids lourd|bus|car|transport en commun|marchandises|colis|coursier|livraison"
+      ]
+    },
+    "aeronautics_naval": {
+      "emoji": "✈️",
+      "label": "Aéronautique & Naval",
+      "patterns": [
+        "pilote|aviation|aéronautique|maintenance aéronautique|contrôle aérien|aéroport",
+        "maritime|naval|navigation|capitaine|marin|port|cargo|ferry|yacht|bateau"
+      ]
+    },
+    "cooking_catering": {
+      "emoji": "🍳",
+      "label": "Cuisine & Restauration",
+      "patterns": [
+        "cuisine|cuisinier|chef|pâtisserie|boulangerie|restauration|service|serveur|bar",
+        "gastronomie|menu|recette|brigade|commis|sous chef|pizzaiolo|crêperie|food truck"
+      ]
+    },
+    "hospitality_tourism": {
+      "emoji": "🏨",
+      "label": "Hôtellerie & Tourisme",
+      "patterns": [
+        "hôtel|réception|accueil|concierge|gouvernante|femme de chambre|tourisme|guide",
+        "voyage|agence de voyage|tour operator|animation|club|resort|camping|gîte"
+      ]
+    },
+    "oenology_gastronomy": {
+      "emoji": "🍷",
+      "label": "Œnologie & Gastronomie",
+      "patterns": [
+        "vin|œnologie|sommelier|cave|dégustation|viticulture|vignoble|spiritueux",
+        "traiteur|banquet|événementiel|cocktail|buffet|catering|organisation"
+      ]
+    },
+    "security_surveillance": {
+      "emoji": "🛡️",
+      "label": "Sécurité & Surveillance",
+      "patterns": [
+        "sécurité|surveillance|gardiennage|agent de sécurité|vigile|protection|sûreté",
+        "vidéosurveillance|alarme|contrôle d'accès|sécurité privée|bodyguard|protection rapprochée"
+      ]
+    },
+    "law_enforcement": {
+      "emoji": "🚨",
+      "label": "Forces de l'Ordre",
+      "patterns": [
+        "police|gendarmerie|pompier|secours|urgence|intervention|investigation|enquête",
+        "prévention|maintien de l'ordre|circulation|brigade|patrouille|commissariat"
+      ]
+    },
+    "defense_military": {
+      "emoji": "⚔️",
+      "label": "Défense & Militaire",
+      "patterns": [
+        "armée|militaire|défense|stratégie militaire|renseignement|sécurité nationale|géopolitique",
+        "opérations|logistique militaire|commandement|tactique|formation militaire"
+      ]
+    },
+    "soft_skills": {
+      "emoji": "🤝",
+      "label": "Soft Skills",
+      "patterns": [
+        "communication|leadership|équipe|présentation|négociation|empathie|créativité|innovation",
+        "organisation|rigueur|autonomie|adaptabilité|esprit d'équipe|prise d'initiative|problem solving"
+      ]
+    },
+    "languages": {
+      "emoji": "🌍",
+      "label": "Langues",
+      "patterns": [
+        "français|anglais|espagnol|allemand|italien|chinois|japonais|arabe|langue|multilingue|bilingue",
+        "traduction|interprétariat|fle|linguistique|phonétique|dialecte"
+      ]
+    },
+    "training_pedagogy": {
+      "emoji": "📚",
+      "label": "Formation & Pédagogie",
+      "patterns": [
+        "formation|pédagogie|enseignement|tutorat|e-learning|digital learning|lms|moodle",
+        "animation|formateur|instructeur|évaluation|certification|programme|curriculum"
+      ]
+    },
+    "research_analysis": {
+      "emoji": "🔍",
+      "label": "Recherche & Analyse",
+      "patterns": [
+        "recherche|analyse|méthodologie|enquête|étude|statistiques|data analysis|veille",
+        "bibliothèque|documentation|archivage|classification|base documentaire|knowledge management"
+      ]
+    },
+    "other": {
+      "emoji": "🔧",
+      "label": "Autres",
+      "patterns": []
+    }
+  }
+}

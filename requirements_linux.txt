@@ -1,0 +1,85 @@
+# CVMatch Requirements - Version Linux (avec toutes les optimisations)
+# Core GUI Framework
+PySide6>=6.8.0
+qtawesome>=1.3.0
+
+# Database & Models
+sqlmodel>=0.0.16
+sqlite-utils>=3.36.0
+alembic>=1.13.0
+
+# Document Processing & Web Scraping
+pypdf>=3.17.0
+python-docx>=1.1.0
+beautifulsoup4>=4.12.0
+pymupdf>=1.26.0
+selenium>=4.15.0
+
+# Export & PDF
+weasyprint>=60.2
+jinja2>=3.1.3
+
+# HTTP & Web
+requests>=2.31.0
+aiohttp>=3.9.0
+
+# Data Processing
+pandas>=2.1.4
+numpy>=1.26.0
+pillow>=10.1.0
+
+# Utils
+python-dotenv>=1.0.0
+pydantic>=2.5.0
+click>=8.1.7
+rich>=13.7.0
+loguru>=0.7.2
+tqdm>=4.66.0
+
+# Development dependencies
+pytest>=7.4.3
+pytest-qt>=4.2.0
+pytest-asyncio>=0.21.1
+pytest-mock>=3.12.0
+black>=23.11.0
+flake8>=6.1.0
+mypy>=1.7.1
+isort>=5.13.0
+
+# AI/ML - Configuration complète pour Linux
+transformers>=4.46.0
+torch>=2.2.0
+torchvision>=0.17.0
+torchaudio>=2.2.0
+accelerate>=0.27.0
+bitsandbytes>=0.43.0
+sentence-transformers>=3.0.0
+optimum>=1.17.0
+safetensors>=0.4.2
+tokenizers>=0.15.0
+protobuf>=4.25.0
+sentencepiece>=0.2.0
+faiss-cpu>=1.8.0
+psutil>=5.9.0
+lm-format-enforcer>=0.10.0
+
+# Hugging Face Hub avec optimisations
+huggingface_hub[hf_xet]>=0.32.0
+hf_xet>=0.5.0
+
+# Optimisations ultra-rapides Linux
+flash-attn>=2.5.0  # FlashAttention-2 pour attention 9x plus rapide
+vllm>=0.6.0  # Engine d'inférence ultra-optimisé
+xformers>=0.0.26  # Optimisations mémoire transformers
+
+# Optimisations avancées PyTorch
+torch-tensorrt>=2.5.0  # TensorRT integration
+onnx>=1.16.0
+onnxruntime-gpu>=1.18.0
+
+# Quantification avancée
+auto-gptq>=0.7.0  # Quantification GPTQ
+exllamav2>=0.1.0  # Engine ultra-rapide pour modèles quantifiés
+ctranslate2>=4.4.0  # Inférence optimisée C++
+
+# Note: Toutes les optimisations sont disponibles sur Linux

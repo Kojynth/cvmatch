@@ -1,0 +1,204 @@
+# Table de précédence pour classification des sections CV
+# Poids plus élevé = priorité plus haute
+
+section_precedence:
+  experience:
+    weight: 100
+    description: "Emploi rémunéré avec contrat/entreprise"
+    required_signals:
+      - job_title
+      - company_name
+      - employment_dates
+    
+  education:
+    weight: 90
+    description: "Formation diplômante officielle"
+    
+  volunteer:
+    weight: 80
+    description: "Activités bénévoles/associatives"
+    
+  projects:
+    weight: 70
+    description: "Projets personnels/étudiants/open-source"
+    
+  certifications:
+    weight: 60
+    description: "Certifications techniques/professionnelles"
+    
+  memberships:
+    weight: 50
+    description: "Adhésions associations/organisations"
+    
+  awards:
+    weight: 40
+    description: "Prix/récompenses/compétitions"
+    
+  skills:
+    weight: 30
+    description: "Compétences techniques/linguistiques"
+    
+  personal:
+    weight: 20
+    description: "Informations personnelles/disponibilité"
+    
+  other:
+    weight: 10
+    description: "Autres informations non classées"
+
+# Règles négatives obligatoires (interdictions de classification)
+negative_rules:
+  R-VOL-01:
+    name: "Bénévolat interdit en Experience"
+    triggers:
+      - "bénévole"
+      - "volontariat" 
+      - "volunteer"
+      - "bénévolat"
+      - "ong"
+      - "ngo"
+      - "service civique"
+      - "mission humanitaire"
+      - "association étudiants"
+      - "président association"
+    action: "force_reclassify"
+    target_section: "volunteer"
+    confidence_threshold: 0.8
+    
+  R-GAP-01:
+    name: "Année sabbatique interdite en Experience"
+    triggers:
+      - "année sabbatique"
+      - "sabbatical"
+      - "gap year"
+      - "tour du monde"
+      - "voyage personnel"
+      - "congé sabbatique"
+    action: "force_reclassify"
+    target_section: "personal"
+    confidence_threshold: 0.9
+    
+  R-OSS-01:
+    name: "Open-source sans entité légale vers Projects"
+    triggers:
+      - "github"
+      - "gitlab"
+      - "open-source"
+      - "open source"
+      - "mainteneur"
+      - "contributor"
+      - "projet personnel"
+    anti_signals:
+      - "siren"
+      - "siret"
+      - "llc"
+      - "gmbh"
+      - "ltd"
+      - "contrat"
+      - "salaire"
+    action: "force_reclassify"
+    target_section: "projects"
+    confidence_threshold: 0.7
+    
+  R-STARTUP-01:
+    name: "Startup personnelle sans statut légal vers Projects"
+    triggers:
+      - "fondateur"
+      - "founder"
+      - "co-fondateur"  
+      - "auto-financé"
+      - "bootstrap"
+      - "projet solo"
+      - "tests marché"
+      - "pivot avant"
+      - "pas de société"
+      - "aucun siren"
+      - "abandon avant statut"
+      - "founder startup"
+      - "pas de société créée"
+      - "développement mvp"
+    anti_signals:
+      - "numéro siren obtenu"
+      - "numéro siret obtenu"
+      - "société créée avec succès"
+      - "incorporation réussie"
+      - "statut légal obtenu"
+      - "employés embauchés"
+      - "salariés déclarés"
+      - "contrat cdi"
+      - "contrat de travail"
+      - "siret attribué"
+      - "enregistrement légal"
+    action: "force_reclassify"
+    target_section: "projects"
+    confidence_threshold: 0.75
+    
+  R-CLIENT-01:
+    name: "Liste clients ne pas éclater"
+    triggers:
+      - "clients:"
+      - "portfolio clients"
+      - "clients principaux"
+      - "références clients"
+    pattern: "clients?\\s*:.*?(\\w+,\\s*){2,}"
+    action: "consolidate_as_one"
+    target_section: "experience"
+    confidence_threshold: 0.8
+    
+  R-HACK-01:
+    name: "Hackathons vers Awards pas Experience"
+    triggers:
+      - "hackathon"
+      - "1er prix hackathon"
+      - "finaliste hackathon"
+      - "prix hackathon"
+      - "compétition programmation"
+      - "48h développement"
+      - "station f"
+    action: "force_reclassify"
+    target_section: "awards"
+    confidence_threshold: 0.8
+
+  R-MEM-01:
+    name: "Memberships vers Memberships pas Certifications"
+    triggers:
+      - "membre ieee"
+      - "member ieee"
+      - "adhérent acm"
+      - "adhésion ieee"
+      - "membership ieee"
+      - "ieee computer society"
+      - "acm association"
+      - "international association of engineers"
+      - "member international association"
+      - "membership fee"
+      - "cotisation annuelle"
+      - "pas de certification délivrée"
+    anti_signals:
+      - "certification obtenue"
+      - "certified professional"
+      - "diplôme délivré"
+      - "examen réussi"
+      - "bénévole"
+      - "volontariat"
+      - "service civique"
+    action: "force_reclassify"
+    target_section: "memberships"
+    confidence_threshold: 0.85
+
+# Seuils de scoring
+scoring_thresholds:
+  strong_positive: 0.8
+  weak_positive: 0.4
+  neutral: 0.0
+  weak_negative: -0.4
+  strong_negative: -0.8
+  
+  reclassification_threshold: -0.5  # En dessous, reclasser
+  ambiguity_threshold: 0.2  # Zone d'incertitude
+
+# Configuration OCR
+ocr_config:
+  corruption_tolerance: 0.3
+  preserve_negative_rules: true
+  fallback_heuristics: true

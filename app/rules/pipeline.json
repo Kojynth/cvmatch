@@ -1,0 +1,7 @@
+{
+  "core_sections": ["experiences", "education", "projects", "publications", "certifications", "volunteering", "awards"],
+  "secondary_sections": ["skills", "soft_skills", "interests", "languages", "references"],
+  "use_structure_first": true,
+  "ml_gate_min": 0.30,
+  "ml_gate_soft": 0.20
+}

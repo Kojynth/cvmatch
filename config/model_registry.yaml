@@ -1,0 +1,129 @@
+profiles:
+  qwen2-7b:
+    display_name: "Qwen2.5-7B Instruct (default)"
+    model_id: "Qwen/Qwen2.5-7B-Instruct"
+    loader: "transformers"
+    quantization: "nf4"
+    min_vram_gb: 6
+    min_ram_gb: 16
+    quality_stars: 4
+    speed_rating: 3
+    description: "Default single-model profile for strict JSON pipeline (FR/EN)."
+    tags: ["gpu", "default"]
+    role_params:
+      extractor:
+        temperature: 0.0
+        top_p: 0.9
+        top_k: 50
+        max_input_tokens: 3000
+        max_new_tokens: 700
+        max_total_tokens: 3700
+      critic:
+        temperature: 0.2
+        top_p: 0.9
+        top_k: 50
+        max_input_tokens: 2800
+        max_new_tokens: 900
+        max_total_tokens: 3700
+      generator:
+        temperature: 0.3
+        top_p: 0.9
+        top_k: 50
+        max_input_tokens: 2400
+        max_new_tokens: 2200
+        max_total_tokens: 5200
+  mistral-7b:
+    display_name: "Mistral-7B v0.3 (CV - recommande)"
+    model_id: "mistralai/Mistral-7B-Instruct-v0.3"
+    loader: "transformers"
+    quantization: "gptq"
+    min_vram_gb: 6
+    min_ram_gb: 16    # 7B params en mode CPU
+    quality_stars: 4
+    speed_rating: 3
+    description: "Meilleur compromis FR/EN pour generation de CV, instruction-following solide."
+    tags: ["gpu", "default"]
+  qwen2-3b:
+    display_name: "Qwen2.5-3B (Compact)"
+    model_id: "Qwen/Qwen2.5-3B-Instruct"
+    loader: "transformers"
+    quantization: "int8"
+    min_vram_gb: 0
+    min_ram_gb: 8     # 3B params en mode CPU
+    quality_stars: 4
+    speed_rating: 3
+    description: "Fallback CPU/GPU raisonnable pour CV, multilingue."
+    tags: ["cpu", "gpu", "multilingual"]
+  qwen2-1.5b:
+    display_name: "Qwen2.5-1.5B (CPU leger)"
+    model_id: "Qwen/Qwen2.5-1.5B-Instruct"
+    loader: "transformers"
+    quantization: "int8"
+    min_vram_gb: 0
+    min_ram_gb: 4     # 1.5B params en mode CPU
+    quality_stars: 3
+    speed_rating: 3
+    description: "Option CPU legere, suffisante pour CV simples."
+    tags: ["cpu", "multilingual"]
+  qwen2-0.5b:
+    display_name: "Qwen2.5-0.5B (Ultra leger)"
+    model_id: "Qwen/Qwen2.5-0.5B-Instruct"
+    loader: "transformers"
+    quantization: "int4"
+    min_vram_gb: 0
+    min_ram_gb: 1.5   # 0.5B params
+    quality_stars: 3
+    speed_rating: 3
+    description: "Ultime fallback pour machines limitees."
+    tags: ["cpu", "fallback", "multilingual"]
+  mistral-7b-gguf-q4:
+    display_name: "Mistral-7B v0.3 (GGUF Q4 - llama.cpp)"
+    model_id: "cache/gguf_models/Mistral-7B-Instruct-v0.3.Q4_K_M.gguf"
+    loader: "llama_cpp"
+    quantization: "gguf_q4"
+    min_vram_gb: 0
+    min_ram_gb: 8
+    quality_stars: 4
+    speed_rating: 2
+    description: "Modele GGUF quantifie pour CPU via llama.cpp. Necessite llama-server + fichier GGUF local."
+    tags: ["cpu", "gguf", "llama_cpp"]
+
+hardware_tiers:
+  cpu_minimal:
+    label: "CPU minimal"
+    min_vram_gb: 0
+    min_ram_gb: 1.5
+    default_model: "qwen2-0.5b"
+    fallback_models: ["qwen2-1.5b", "qwen2-0.5b"]
+  cpu_basic:
+    label: "CPU leger"
+    min_vram_gb: 0
+    min_ram_gb: 4
+    default_model: "qwen2-1.5b"
+    fallback_models: ["qwen2-0.5b", "qwen2-3b"]
+  cpu_power:
+    label: "CPU avance"
+    min_vram_gb: 0
+    min_ram_gb: 12
+    default_model: "qwen2-3b"
+    fallback_models: ["qwen2-1.5b", "qwen2-0.5b"]
+  gpu_entry:
+    label: "GPU 4-6GB"
+    min_vram_gb: 4
+    default_model: "qwen2-7b"
+    fallback_models: ["qwen2-3b"]
+  gpu_mid:
+    label: "GPU 8-12GB"
+    min_vram_gb: 8
+    default_model: "qwen2-7b"
+    fallback_models: ["qwen2-3b"]
+  gpu_high:
+    label: "GPU 16GB+"
+    min_vram_gb: 16
+    default_model: "qwen2-7b"
+    fallback_models: ["qwen2-3b"]
+  gpu_extreme:
+    label: "GPU 24GB+"
+    min_vram_gb: 24
+    default_model: "qwen2-7b"
+    fallback_models: ["qwen2-3b"]

@@ -1,0 +1,327 @@
+{
+  "meta": {
+    "version": "1.0.0",
+    "description": "Enhanced certification rules for Phase 1 extraction with normalization",
+    "last_updated": "2025-01-29"
+  },
+  
+  "language_certifications": {
+    "english": {
+      "toefl": {
+        "canonical_name": "TOEFL",
+        "full_name": "Test of English as a Foreign Language",
+        "aliases": ["tofl", "toefl ibt", "toefl pbt", "toefl test", "test of english"],
+        "issuer": {
+          "canonical": "ETS",
+          "full_name": "Educational Testing Service",
+          "aliases": ["ets", "educational testing"]
+        },
+        "score_range": {
+          "ibt": {"min": 0, "max": 120},
+          "pbt": {"min": 310, "max": 677}
+        },
+        "patterns": {
+          "title": ["toefl", "test of english", "tofl"],
+          "score": ["score\\s*[:=]?\\s*(\\d{1,3})", "(\\d{1,3})\\s*/\\s*120", "band\\s*[:=]?\\s*(\\d{1,3})"],
+          "validity": ["valid\\s+until", "expires?\\s+on", "issued\\s+on"]
+        },
+        "normalization": {
+          "tofl": "TOEFL",
+          "test of english": "TOEFL",
+          "toefl ibt": "TOEFL iBT",
+          "toefl pbt": "TOEFL PBT"
+        }
+      },
+      
+      "ielts": {
+        "canonical_name": "IELTS",
+        "full_name": "International English Language Testing System",
+        "aliases": ["ielts", "ielt", "international english language"],
+        "issuer": {
+          "canonical": "British Council/IDP",
+          "full_name": "British Council and IDP Education",
+          "aliases": ["british council", "idp", "cambridge assessment"]
+        },
+        "score_range": {"min": 0.0, "max": 9.0, "step": 0.5},
+        "patterns": {
+          "title": ["ielts", "international english language"],
+          "score": ["band\\s*[:=]?\\s*(\\d\\.?\\d?)", "score\\s*[:=]?\\s*(\\d\\.?\\d?)", "(\\d\\.?\\d?)\\s*/\\s*9"],
+          "level": ["overall\\s*(\\d\\.?\\d?)", "general\\s+training", "academic"]
+        },
+        "normalization": {
+          "ielt": "IELTS",
+          "international english language": "IELTS"
+        }
+      },
+      
+      "cambridge": {
+        "canonical_name": "Cambridge English",
+        "full_name": "Cambridge Assessment English",
+        "aliases": ["cambridge english", "cambridge assessment", "cambridge exam"],
+        "issuer": {
+          "canonical": "Cambridge Assessment English",
+          "full_name": "Cambridge Assessment English",
+          "aliases": ["cambridge", "cambridge university"]
+        },
+        "levels": {
+          "ket": {"level": "A2", "canonical": "Cambridge A2 Key (KET)"},
+          "pet": {"level": "B1", "canonical": "Cambridge B1 Preliminary (PET)"},
+          "fce": {"level": "B2", "canonical": "Cambridge B2 First (FCE)"},
+          "cae": {"level": "C1", "canonical": "Cambridge C1 Advanced (CAE)"},
+          "cpe": {"level": "C2", "canonical": "Cambridge C2 Proficiency (CPE)"}
+        },
+        "patterns": {
+          "title": ["cambridge", "fce", "cae", "cpe", "pet", "ket", "first certificate", "advanced", "proficiency"],
+          "level": ["([abc][12])", "(ket|pet|fce|cae|cpe)", "first", "advanced", "proficiency", "key", "preliminary"]
+        },
+        "normalization": {
+          "cambrigde": "Cambridge",
+          "cambridge b2": "Cambridge B2 First",
+          "cambridge c1": "Cambridge C1 Advanced", 
+          "cambridge c2": "Cambridge C2 Proficiency",
+          "first certificate": "Cambridge B2 First (FCE)",
+          "certificate in advanced english": "Cambridge C1 Advanced (CAE)"
+        }
+      },
+      
+      "toeic": {
+        "canonical_name": "TOEIC",
+        "full_name": "Test of English for International Communication",
+        "aliases": ["toeic", "test of english international", "test of english for international communication"],
+        "issuer": {
+          "canonical": "ETS",
+          "full_name": "Educational Testing Service"
+        },
+        "score_range": {
+          "listening_reading": {"min": 10, "max": 990},
+          "speaking_writing": {"min": 0, "max": 400}
+        },
+        "patterns": {
+          "title": ["toeic", "test of english international"],
+          "score": ["score\\s*[:=]?\\s*(\\d{1,3})", "(\\d{1,3})\\s*/\\s*990"]
+        },
+        "normalization": {
+          "test of english international": "TOEIC"
+        }
+      }
+    },
+    
+    "french": {
+      "delf_dalf": {
+        "canonical_name": "DELF/DALF",
+        "full_name": "Diplôme d'Études en Langue Française / Diplôme Approfondi de Langue Française",
+        "aliases": ["delf", "dalf", "diplome etudes langue francaise", "diplome approfondi langue francaise"],
+        "issuer": {
+          "canonical": "France Éducation International",
+          "full_name": "France Éducation International (ex-CIEP)",
+          "aliases": ["ciep", "france education international"]
+        },
+        "levels": ["A1", "A2", "B1", "B2", "C1", "C2"],
+        "patterns": {
+          "title": ["delf", "dalf", "diplome.*langue.*francaise"],
+          "level": ["([abc][12])", "a1", "a2", "b1", "b2", "c1", "c2"]
+        },
+        "normalization": {
+          "diplome etudes langue francaise": "DELF",
+          "diplome approfondi langue francaise": "DALF"
+        }
+      },
+      
+      "tcf": {
+        "canonical_name": "TCF",
+        "full_name": "Test de Connaissance du Français",
+        "aliases": ["tcf", "test connaissance francais", "test de connaissance francais"],
+        "issuer": {
+          "canonical": "France Éducation International",
+          "full_name": "France Éducation International"
+        },
+        "score_range": {"min": 100, "max": 699},
+        "patterns": {
+          "title": ["tcf", "test.*connaissance.*francais"],
+          "score": ["score\\s*[:=]?\\s*(\\d{3})", "(\\d{3})\\s*/\\s*699"]
+        }
+      }
+    },
+    
+    "german": {
+      "goethe": {
+        "canonical_name": "Goethe-Zertifikat",
+        "full_name": "Goethe-Zertifikat German Language Certificate",
+        "aliases": ["goethe", "goethe zertifikat", "goethe institut", "zertifikat deutsch"],
+        "issuer": {
+          "canonical": "Goethe-Institut",
+          "full_name": "Goethe-Institut e.V."
+        },
+        "levels": ["A1", "A2", "B1", "B2", "C1", "C2"],
+        "patterns": {
+          "title": ["goethe", "zertifikat.*deutsch"],
+          "level": ["([abc][12])", "a1", "a2", "b1", "b2", "c1", "c2"]
+        }
+      }
+    },
+    
+    "japanese": {
+      "jlpt": {
+        "canonical_name": "JLPT",
+        "full_name": "Japanese Language Proficiency Test",
+        "aliases": ["jlpt", "japanese language proficiency", "nihongo noryoku shiken"],
+        "issuer": {
+          "canonical": "JEES",
+          "full_name": "Japan Educational Exchanges and Services"
+        },
+        "levels": ["N1", "N2", "N3", "N4", "N5"],
+        "patterns": {
+          "title": ["jlpt", "japanese.*proficiency", "nihongo.*noryoku"],
+          "level": ["(n[1-5])", "level\\s*([1-5])", "n([1-5])"]
+        }
+      }
+    },
+    
+    "chinese": {
+      "hsk": {
+        "canonical_name": "HSK",
+        "full_name": "Hanyu Shuiping Kaoshi (Chinese Proficiency Test)",
+        "aliases": ["hsk", "hanyu shuiping", "chinese proficiency test"],
+        "issuer": {
+          "canonical": "Hanban",
+          "full_name": "Confucius Institute Headquarters (Hanban)"
+        },
+        "levels": ["HSK1", "HSK2", "HSK3", "HSK4", "HSK5", "HSK6"],
+        "patterns": {
+          "title": ["hsk", "hanyu.*shuiping", "chinese.*proficiency"],
+          "level": ["hsk\\s*([1-6])", "level\\s*([1-6])", "([1-6])"]
+        }
+      }
+    }
+  },
+  
+  "technical_certifications": {
+    "cloud": {
+      "aws": {
+        "canonical_name": "AWS",
+        "full_name": "Amazon Web Services",
+        "aliases": ["aws", "amazon web services", "amazon cloud"],
+        "issuer": {
+          "canonical": "Amazon",
+          "full_name": "Amazon Web Services"
+        },
+        "levels": {
+          "cloud_practitioner": "AWS Cloud Practitioner",
+          "solutions_architect_associate": "AWS Solutions Architect Associate",
+          "solutions_architect_professional": "AWS Solutions Architect Professional",
+          "developer_associate": "AWS Developer Associate",
+          "sysops_associate": "AWS SysOps Administrator Associate",
+          "devops_professional": "AWS DevOps Engineer Professional"
+        },
+        "patterns": {
+          "title": ["aws", "amazon.*web.*services", "amazon.*cloud"],
+          "level": ["practitioner", "associate", "professional", "solutions.*architect", "developer", "sysops", "devops"]
+        }
+      },
+      
+      "azure": {
+        "canonical_name": "Microsoft Azure",
+        "full_name": "Microsoft Azure Certifications",
+        "aliases": ["azure", "microsoft azure", "azure certified"],
+        "issuer": {
+          "canonical": "Microsoft",
+          "full_name": "Microsoft Corporation"
+        },
+        "levels": {
+          "fundamentals": "Azure Fundamentals",
+          "associate": "Azure Associate",
+          "expert": "Azure Solutions Architect Expert"
+        },
+        "patterns": {
+          "title": ["azure", "microsoft.*azure"],
+          "level": ["fundamentals", "associate", "expert", "architect", "developer", "administrator"]
+        }
+      }
+    },
+    
+    "project_management": {
+      "pmp": {
+        "canonical_name": "PMP",
+        "full_name": "Project Management Professional",
+        "aliases": ["pmp", "project management professional"],
+        "issuer": {
+          "canonical": "PMI",
+          "full_name": "Project Management Institute"
+        },
+        "patterns": {
+          "title": ["pmp", "project.*management.*professional"]
+        }
+      }
+    }
+  },
+  
+  "negative_patterns": {
+    "education_context": [
+      "bachelor.*cambridge",
+      "master.*cambridge", 
+      "university.*cambridge",
+      "studying.*at.*cambridge",
+      "semester.*at.*cambridge",
+      "exchange.*at.*cambridge",
+      "degree.*from.*cambridge",
+      "coursework.*cambridge",
+      "module.*cambridge",
+      "licence.*toefl",
+      "master.*toefl",
+      "course.*ielts",
+      "workshop.*ielts"
+    ],
+    
+    "section_headers": [
+      "^activities$",
+      "^extra.*curricular$",
+      "^other.*activities$",
+      "^miscellaneous$",
+      "^divers$",
+      "^autres$"
+    ],
+    
+    "context_guards": [
+      "université",
+      "école",
+      "lycée", 
+      "bachelor",
+      "master",
+      "licence",
+      "coursework",
+      "module",
+      "semester",
+      "exchange",
+      "studying"
+    ]
+  },
+  
+  "extraction_hints": {
+    "date_keywords": [
+      "obtained", "passed", "achieved", "earned", "completed",
+      "issued", "awarded", "certified", "valid until", "expires",
+      "obtenu", "passé", "réussi", "certifié", "valable jusqu"
+    ],
+    
+    "score_keywords": [
+      "score", "result", "band", "level", "grade", "points",
+      "résultat", "note", "niveau", "points"
+    ],
+    
+    "issuer_keywords": [
+      "by", "from", "issued by", "certified by", "administered by",
+      "par", "délivré par", "certifié par"
+    ]
+  },
+  
+  "confidence_weights": {
+    "exact_name_match": 0.4,
+    "alias_match": 0.3,
+    "issuer_present": 0.2,
+    "level_score_present": 0.15,
+    "date_present": 0.1,
+    "context_positive": 0.1,
+    "negative_context_penalty": -0.5,
+    "minimum_threshold": 0.5
+  }
+}

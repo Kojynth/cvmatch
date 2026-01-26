@@ -1,3 +1,326 @@
+<<<<<<< HEAD
+# =============================================================================
+# CVMatch .gitignore - Fichiers sensibles et auto-generés à ignorer
+# =============================================================================
+# CRITICAL: This file protects PII and sensitive user data from being committed
+# ⚠️  PII DATA: name, email, phone, LinkedIn, CV content, job applications
+# =============================================================================
+
+# =============================================================================
+# 1. PYTHON COMPILED & CACHES (auto-generated)
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+MANIFEST
+
+# =============================================================================
+# 2. VIRTUAL ENVIRONMENTS
+# =============================================================================
+.venv/
+venv/
+cvmatch_env/
+ENV/
+env.bak/
+venv.bak/
+
+# =============================================================================
+# 3. IDE & EDITOR CONFIGURATION (local user settings)
+# =============================================================================
+.vscode/
+.idea/
+.cursor/
+.fleet/
+.zed/
+.windsurf/
+.debug/
+*.swp
+*.swo
+*~
+.project_cache/
+.claude/
+.debug/
+.git/
+.hf_cache/
+.project_cache/
+.mypy_cache/
+.pytest_cache/
+
+# =============================================================================
+# 4. ⚠️  CRITICAL: USER DATA & PII (NEVER COMMIT)
+# =============================================================================
+
+# User profiles directory (contains name, email, phone, LinkedIn, CV content, etc.)
+.cvmatch/
+~/.cvmatch/
+%USERPROFILE%/.cvmatch/
+%APPDATA%/cvmatch/
+%LOCALAPPDATA%/cvmatch/
+
+# Database files (store all PII and learning data)
+*.db
+*.sqlite
+*.sqlite3
+cvmatch.db
+profiles.db
+applications.db
+learning_history.db
+
+# Backup databases (may contain PII)
+*.db.backup*
+*.sqlite.backup*
+
+# CV documents and personal files
+CV/**
+CV/générés/**
+CV/importés/**
+CV/*.pdf
+CV/*.docx
+CV/*.doc
+CV/*.txt
+CV/*.rtf
+CV/*.odt
+!CV/.gitkeep
+!CV/**/.gitkeep
+
+# Generated documents (may contain personal data)
+exports/**
+output/**
+!exports/.gitkeep
+!output/.gitkeep
+
+# Job applications and cover letters (contain personalized CVs)
+job_applications/**
+applications/**
+cover_letters/**
+!job_applications/.gitkeep
+!applications/.gitkeep
+!cover_letters/.gitkeep
+
+# =============================================================================
+# 4.1 ⚠️  SOUS-DOSSIERS PII SPÉCIFIQUES (protection explicite renforcée)
+# =============================================================================
+
+# LinkedIn PDF exports (données personnelles LinkedIn importées)
+reports/linkedin/**
+!reports/linkedin/.gitkeep
+
+# Rapports générés avec données personnelles
+reports/generated/**
+!reports/generated/.gitkeep
+
+# Profile editor checkpoints (snapshots de profil PII en cours d'édition)
+cache/profile_editor/**
+!cache/profile_editor/.gitkeep
+
+# Logs structurés contenant des données PII
+logs/profile_json/**
+logs/cv_json_drafts/**
+logs/extraction/**
+logs/sessionlog/**
+!logs/profile_json/.gitkeep
+!logs/cv_json_drafts/.gitkeep
+!logs/extraction/.gitkeep
+!logs/sessionlog/.gitkeep
+
+# Data directory (stockage utilisateur potentiel)
+data/**
+!data/.gitkeep
+
+# Debug directory (peut contenir des traces PII et rapports)
+.debug/**
+!.debug/.gitkeep
+
+# Archive complet (pas seulement les .log)
+archive/**
+!archive/.gitkeep
+
+# Exports utilisateur (CVs, profils, lettres de motivation)
+exports/**
+!exports/.gitkeep
+
+# =============================================================================
+# 5. 🤖 MODEL & ML CACHES (large auto-downloaded files)
+# =============================================================================
+models/*
+!models/.gitkeep
+.hf_cache/
+.huggingface/
+.transformers/
+.torch/
+transformers_cache/
+torch_cache/
+cache/*
+cache/hf_models/**
+.cache/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.black/
+.isort/
+huggingface_cache/
+onnx_cache/
+model_cache/
+.model_cache/
+.tensorboard/
+.wandb/
+.mlflow/
+.dvc/
+!.dvc/config
+.optuna/
+.lightning_logs/
+
+# =============================================================================
+# 6. RUNTIME GENERATED DATA (user-specific & session data)
+# =============================================================================
+runtime/*
+runtime/datasets/
+runtime/models/
+runtime/checkpoints/
+runtime/model_outputs/
+runtime/cache/
+runtime/data/
+runtime/extracted_text/
+runtime/parsed_documents/
+runtime/exports/
+runtime/training_logs/
+runtime/output/
+runtime/processing/
+runtime/temp_uploads/
+
+# Processing & temporary files
+processing/*
+temp_uploads/*
+parsed_documents/*
+extracted_text/*
+checkpoints/*
+training_logs/*
+model_outputs/*
+!processing/.gitkeep
+!temp_uploads/.gitkeep
+!parsed_documents/.gitkeep
+!extracted_text/.gitkeep
+!checkpoints/.gitkeep
+!training_logs/.gitkeep
+!model_outputs/.gitkeep
+
+# Learning & training data (may contain personal CVs)
+datasets/user_learning/*
+datasets/training_ready/*
+fine_tuned_models/
+user_models/
+custom_models/
+personalized_data/
+fine_tuning_data/
+lora_adapters/
+training_history.json
+learning_history.json
+!datasets/user_learning/.gitkeep
+!datasets/training_ready/.gitkeep
+!datasets/base_pretrained/.gitkeep
+
+# =============================================================================
+# 7. 📋 LOGS (may contain PII in paths or user info despite redaction)
+# =============================================================================
+logs/*
+*.log
+debug.log
+error.log
+reset_operations.log
+reset_history.json
+*session*.log
+logs/sessionlog/
+archive/*.log
+!logs/.gitkeep
+!archive/.gitkeep
+
+# =============================================================================
+# 8. 🔐 ENVIRONMENT & SECRETS (CRITICAL PII)
+# =============================================================================
+.env
+.env.local
+.env.*.local
+.env.production
+.env.staging
+.env.development
+.env.test
+*.secrets.*
+*.secret
+api_keys.json
+credentials.json
+auth_tokens.json
+.secrets
+.anthropic
+.openai
+.huggingface
+token.txt
+*.key.json
+.token
+
+# =============================================================================
+# 9. CONFIGURATION WITH PERSONAL DATA
+# =============================================================================
+config.local.json
+config.ini
+user_preferences.json
+personalized_settings.json
+user_settings.json
+profile_settings.json
+personal_config.json
+*.local.json
+*.personal.json
+user_data.json
+user_data/
+
+# User sessions (may contain authentication & personal info)
+session.json
+user_session.json
+login_session.json
+auth_session.json
+
+# LinkedIn & personal data files
+linkedin_profiles/
+linkedin_data/
+personal_cv_data/
+extracted_cv_content/
+
+# =============================================================================
+# 10. TEMPORARY & DEBUG FILES
+# =============================================================================
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+temp/
+tmp/
+installed_packages.tmp
+*.debug.bat
+test_lancement_debug.bat
+test_basic.py
+test_simple.py
+test_extraction_logging.py
+main_fallback.py
+
+# Script output artifacts (may include local paths/PII)
+scripts/*.txt
+scripts/*.json
+!scripts/README.txt
+
+# =============================================================================
+# 11. TEST OUTPUT & COVERAGE
+# =============================================================================
+test_outputs/
+test_data/
+*.test
+=======
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -37,11 +360,189 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # Unit test / coverage reports
+>>>>>>> origin/main
 htmlcov/
 .tox/
 .nox/
 .coverage
 .coverage.*
+<<<<<<< HEAD
+coverage.xml
+.hypothesis/
+reports/**
+!reports/**/.gitkeep
+
+# =============================================================================
+# 12. DOCUMENTATION BUILD
+# =============================================================================
+docs/_build/
+docs/build/
+
+# =============================================================================
+# 13. JUPYTER NOTEBOOKS
+# =============================================================================
+.ipynb_checkpoints/
+
+# =============================================================================
+# 14. PACKAGE FILES (large, auto-installable)
+# =============================================================================
+*.tar.gz
+*.zip
+*.rar
+*.7z
+*.iso
+
+# Model files
+*.bin
+*.safetensors
+*.gguf
+*.ggml
+*.pt
+*.pth
+*.onnx
+*.pkl
+*.joblib
+*.sav
+
+# PyInstaller
+*.manifest
+*.spec
+
+# =============================================================================
+# 15. SECURITY CERTIFICATES & KEYS
+# =============================================================================
+*.pem
+*.key
+*.crt
+*.cert
+*.p12
+*.pfx
+certificates/
+ssl/
+
+# =============================================================================
+# 16. DEVELOPMENT & LEGACY CODE
+# =============================================================================
+legacy/
+legacy/*.py
+!legacy/README.md
+dev_tools/
+dev_tools/debug/
+development/
+development/**
+refactoring/
+!refactoring/README.md
+!refactoring/**/*.md
+
+# Legacy installer wrappers (keep local only)
+installer_windows.bat
+installer_AI.bat
+installer_AI.sh
+installation_linux.sh
+install_minimum_windows.bat
+setup/installers/installer_windows.bat
+setup/installers/installation_linux.sh
+requirements_minimum_windows.txt
+requirements_minimum_linux.txt
+
+# =============================================================================
+# 17. OS-SPECIFIC FILES
+# =============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+*.lnk
+
+# Windows artifact (nul redirection misinterpreted as file)
+nul
+
+# =============================================================================
+# 18. PIP & INSTALLER LOGS
+# =============================================================================
+pip-log.txt
+pip-delete-this-directory.txt
+=*
+
+# =============================================================================
+# 19. MEDIA FILES (may contain personal screenshots/images)
+# =============================================================================
+screenshots/
+screen_captures/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.webp
+!templates/previews/*.png
+!templates/css/*.png
+!docs/images/*.png
+
+# =============================================================================
+# 20. BUILD & FORMAT CACHES
+# =============================================================================
+.build_cache/
+.lint_cache/
+.format_cache/
+.type_cache/
+.bandit/
+
+# =============================================================================
+# 21. MISC PERSONAL FILES
+# =============================================================================
+notes/
+personal_notes/
+todo.md
+ideas.txt
+INDEX_FICHIERS.md
+HF_XET_INFO.md
+FINAL_CLEANUP_REPORT.md
+CLEANUP_SUMMARY.md
+Prompt\ initial.txt
+
+# =============================================================================
+# 22. TESTS & TOOLS (development-only)
+# =============================================================================
+tests/
+tests/**
+tools/
+tools/**
+
+# =============================================================================
+# 22.1 SCRIPTS - Fichiers de résultats et debug (peuvent contenir des chemins PII)
+# =============================================================================
+
+# Résultats de validation et audits (chemins, données extraites)
+scripts/*_results.json
+scripts/*_report.json
+scripts/*_report.txt
+scripts/before_*.json
+scripts/after_*.json
+scripts/debug_*.txt
+
+# Fixtures de test LinkedIn (profils HTML sample)
+tests/unit/workers/linkedin/fixtures*.html
+
+# =============================================================================
+# SUMMARY OF PII PROTECTION
+# =============================================================================
+# ✅ User Data: .cvmatch/ (personal info, CVs, LinkedIn exports)
+# ✅ Databases: *.db, *.sqlite (all PII stored here)
+# ✅ Logs: logs/ (filtered for PII but excluded for safety)
+# ✅ Secrets: .env, api_keys.json, credentials.json
+# ✅ Documents: CV/, exports/ (user CV files)
+# ✅ Learning Data: datasets/user_learning/, training_history.json
+# ✅ Temp Files: temp_*, processing/, uploads (may contain personal docs)
+# ✅ Models: models/, .hf_cache/ (large auto-generated files)
+#
+# This ensures NO personal data will be committed to the repository.
+# =============================================================================
+=======
 .cache
 nosetests.xml
 coverage.xml
@@ -205,3 +706,4 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+>>>>>>> origin/main

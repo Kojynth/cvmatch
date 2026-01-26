@@ -1,0 +1,292 @@
+# Education Organization Lexicon
+# =============================
+# Comprehensive list of education-related terms that should NOT be treated as companies
+# Format: one term per line, case-insensitive matching
+# Lines starting with # are comments
+
+# === FRENCH EDUCATION INSTITUTIONS ===
+# Universities
+université
+université de paris
+université paris
+sorbonne
+paris descartes
+paris diderot
+université lyon
+université toulouse
+université bordeaux
+université grenoble
+université montpellier
+université lille
+
+# Grandes Écoles
+école polytechnique  
+école normale supérieure
+ens
+hec
+essec
+edhec
+escp
+insead
+sciences po
+école centrale
+centrale
+mines paristech
+ponts paristech
+supélec
+télécom paristech
+
+# Engineering Schools
+insa
+ensta
+ensam
+polytech
+esiee
+epita
+epitech
+esme
+efrei
+supinfo
+isep
+isima
+utc
+utbm
+utcl
+
+# Art & Design Schools
+epsaa
+école des beaux-arts
+beaux-arts
+école supérieure d'art
+école d'architecture
+les gobelins
+supinfocom
+école boulle
+
+# Business Schools
+ieseg
+edhec
+emlyon
+audencia
+grenoble école de management
+toulouse business school
+neoma
+skema
+
+# Technical Schools
+bts
+iut
+dut
+cnam
+conservatoire national des arts et métiers
+école 42
+simplon
+wild code school
+openclassrooms
+
+# === DEGREE LEVELS & TYPES ===
+bachelor
+bachelor of science
+bachelor of arts
+licence
+licence professionnelle
+master
+master 1
+master 2
+master of science
+master of arts
+mba
+mastère
+mastère spécialisé
+doctorat
+phd
+doctorate
+diplôme d'ingénieur
+diplôme
+certification
+certificat
+
+# === HIGH SCHOOL LEVELS ===
+baccalauréat
+bac
+bac pro
+bac professionnel
+bac stmg
+bac s
+bac es
+bac l
+bac sms
+bac sti
+bac std2a
+cap
+bep
+
+# === CERTIFICATIONS (often mistaken for companies) ===
+toefl
+toeic
+ielts
+cambridge
+cambridge certificate
+cambridge english
+voltaire
+pix
+mooc
+coursera
+edx
+udacity
+linkedin learning
+pluralsight
+
+# === GENERIC EDUCATION TERMS ===
+école
+ecole
+école supérieure
+ecole superieure
+école professionnelle
+ecole professionnelle
+lycée
+lycee
+collège
+college
+institut
+institution
+formation
+studies
+étude
+etude
+études
+etudes
+academic
+académique
+academique
+educational
+éducatif
+educatif
+scolaire
+scholaire
+student
+étudiant
+etudiant
+élève
+eleve
+apprentissage
+stage académique
+stage etudiant
+mémoire
+memoire
+thèse
+these
+projet étudiant
+projet etudiant
+cours
+course
+program
+programme
+curriculum
+cursus
+semestre
+trimestre
+année scolaire
+annee scolaire
+
+# === SPECIFIC PROBLEMATIC INSTITUTIONS ===
+# These frequently appear in CVs and get misclassified as companies
+léonard de vinci
+leonard de vinci
+pole universitaire leonard de vinci
+esgi
+supinfo international university
+epitech european institute of technology
+epita école d'ingénieur
+school of visual arts
+parsons school of design
+royal college of art
+central saint martins
+
+# === ADMINISTRATIVE/ACADEMIC UNITS ===
+faculté
+faculte
+department
+département
+departement
+laboratoire
+laboratory
+lab
+research center
+centre de recherche
+centre de formation
+ufr
+unité de formation et de recherche
+unite de formation et de recherche
+chaire
+chair
+équipe de recherche
+equipe de recherche
+
+# === PROBLEMATIC ACRONYMS ===
+# These are often education-related but appear as company names
+epsaa
+dasco
+aepcr
+tofl
+esitc
+istc
+estaca
+esigelec
+esiea
+esaip
+esilv
+devinci
+
+# === INTERNATIONAL EDUCATION TERMS ===
+# English
+university
+college
+school
+institute
+academy
+high school
+elementary school
+graduate school
+undergraduate
+graduate
+bachelor's degree
+master's degree
+doctorate degree
+phd program
+mfa
+continuing education
+
+# German
+universität
+hochschule
+fachhochschule
+gymnasium
+
+# Spanish
+universidad
+colegio
+instituto
+bachillerato
+
+# Italian
+università
+istituto
+liceo
+
+# === EXAM/CERTIFICATION NAMES ===
+dele
+dalf
+delf
+tcf
+bright
+bulats
+linguaskill
+gmat
+gre
+sat
+act
+ap
+ib
+international baccalaureate
+abitur

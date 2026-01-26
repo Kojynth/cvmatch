@@ -1,0 +1,30 @@
+{
+  "profile": {
+    "name": "profile.name",
+    "headline": "profile.headline",
+    "location": "profile.location"
+  },
+  "experience": {
+    "title": "experience.title",
+    "company": "experience.company",
+    "dates": "experience.dates",
+    "location": "experience.location"
+  },
+  "education": {
+    "school": "education.school",
+    "degree": "education.degree",
+    "dates": "education.dates"
+  },
+  "skills": {
+    "name": "skills.name",
+    "endorsements": "skills.endorsements"
+  },
+  "languages": {
+    "name": "languages.name",
+    "level": "languages.level"
+  },
+  "recommendations": {
+    "author": "recommendations.author",
+    "text": "recommendations.text"
+  }
+}

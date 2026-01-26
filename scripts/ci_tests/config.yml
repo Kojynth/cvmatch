@@ -1,0 +1,4 @@
+suites:
+  gui:
+    description: "Qt GUI smoke"
+    command: "python -m pytest -m gui tests/ui"

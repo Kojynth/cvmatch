@@ -1,0 +1,6 @@
+{
+  "degree_tokens": ["bachelor","licence","but","bts","dut","master","msc","maitrise","maîtrise","doctorat","phd","mba","cap","bac"],
+  "school_tokens": ["universite","université","ecole","école","lycee","lycée","iut","insa","ut","grande ecole","faculty","university","school","institute"],
+  "ban_address": true,
+  "ban_duration": true
+}

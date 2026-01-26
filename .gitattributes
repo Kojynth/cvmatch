@@ -1,0 +1,104 @@
+# Encoding and line endings for CVMatch project
+# Prevent mojibake issues by enforcing UTF-8 and consistent line endings
+
+# Default behavior for all text files
+* text=auto eol=lf
+
+# Python files - UTF-8, no BOM, LF line endings
+*.py text eol=lf encoding=utf-8
+*.pyx text eol=lf encoding=utf-8
+*.pyi text eol=lf encoding=utf-8
+
+# Configuration files
+*.json text eol=lf encoding=utf-8
+*.yaml text eol=lf encoding=utf-8
+*.yml text eol=lf encoding=utf-8
+*.toml text eol=lf encoding=utf-8
+*.cfg text eol=lf encoding=utf-8
+*.ini text eol=lf encoding=utf-8
+*.conf text eol=lf encoding=utf-8
+
+# Documentation
+*.md text eol=lf encoding=utf-8
+*.rst text eol=lf encoding=utf-8
+*.txt text eol=lf encoding=utf-8
+
+# Web files
+*.html text eol=lf encoding=utf-8
+*.htm text eol=lf encoding=utf-8
+*.css text eol=lf encoding=utf-8
+*.js text eol=lf encoding=utf-8
+*.jsx text eol=lf encoding=utf-8
+*.ts text eol=lf encoding=utf-8
+*.tsx text eol=lf encoding=utf-8
+
+# Shell scripts
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Windows batch files (keep CRLF for compatibility)
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files - explicitly marked to prevent text processing
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.gif binary
+*.ico binary
+*.svg binary
+*.pdf binary
+*.zip binary
+*.tar binary
+*.gz binary
+*.7z binary
+*.rar binary
+
+# Python compiled files
+*.pyc binary
+*.pyo binary
+*.pyd binary
+*.so binary
+*.dll binary
+*.dylib binary
+
+# Data files that should remain binary
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+*.pkl binary
+*.pickle binary
+*.npy binary
+*.npz binary
+
+# Model files
+*.pt binary
+*.pth binary
+*.bin binary
+*.onnx binary
+*.h5 binary
+*.hdf5 binary
+
+# Jupyter notebooks - special handling
+*.ipynb text eol=lf encoding=utf-8
+
+# Requirements files
+requirements*.txt text eol=lf encoding=utf-8
+pyproject.toml text eol=lf encoding=utf-8
+setup.py text eol=lf encoding=utf-8
+setup.cfg text eol=lf encoding=utf-8
+
+# Git configuration
+.gitignore text eol=lf encoding=utf-8
+.gitattributes text eol=lf encoding=utf-8
+
+# IDE and editor configuration
+*.code-workspace text eol=lf encoding=utf-8
+.vscode/* text eol=lf encoding=utf-8
+.editorconfig text eol=lf encoding=utf-8
+
+# Prevent whitespace issues in critical directories
+app/** text eol=lf encoding=utf-8
+cvextractor/** text eol=lf encoding=utf-8
+scripts/** text eol=lf encoding=utf-8
+tests/** text eol=lf encoding=utf-8

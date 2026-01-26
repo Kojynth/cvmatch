@@ -1,0 +1,43 @@
+{
+  "levels": {
+    "passionate": {
+      "emoji": "🔥",
+      "label": "Passionné",
+      "patterns": [
+        "passionné|passionate|expert|adore|love"
+      ]
+    },
+    "knowledgeable": {
+      "emoji": "❤️",
+      "label": "Amateur éclairé",
+      "patterns": [
+        "amateur éclairé|knowledgeable|experienced amateur"
+      ]
+    },
+    "interested": {
+      "emoji": "👍",
+      "label": "Intéressé",
+      "patterns": [
+        "intéressé|interested|aime|like"
+      ]
+    },
+    "curious": {
+      "emoji": "🔍",
+      "label": "Curieux",
+      "patterns": [
+        "curieux|curious|découverte|explore"
+      ]
+    },
+    "beginner": {
+      "emoji": "🌱",
+      "label": "Débutant",
+      "patterns": [
+        "débutant|beginner|commence|start"
+      ]
+    }
+  },
+  "default": {
+    "emoji": "👍",
+    "label": "Intéressé"
+  }
+}

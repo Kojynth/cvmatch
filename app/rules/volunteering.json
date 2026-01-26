@@ -1,0 +1,8 @@
+{
+  "section_keywords": ["bénévolat","benevolat","volunteer","volontaire","engagement","association","associatif"],
+  "trigger_tokens": ["bénévole","benevole","volontaire","association","asso","ong","ngo","croix-rouge","red cross","caritatif","charity","fondation","foundation","humanitaire","humanitarian","collecte","don","soutien scolaire","mentorat","mentoring","community","civic"],
+  "action_verbs": ["aider","accompagner","organiser","animer","collecter","sensibiliser","participer","soutenir","encadrer","former","coordonner","gérer","assister","supporter","mentor","coach"],
+  "organization_hints": ["association","asso","ong","club","fondation","croix-rouge","secours populaire","restos du coeur","banque alimentaire","équipe","collectif","comité","fédération"],
+  "min_tokens_line": 4,
+  "merge_threshold": 0.8
+}

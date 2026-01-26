@@ -1,0 +1,115 @@
+:root {
+  --accent: #0f172a;
+  --accent-soft: rgba(15, 23, 42, 0.08);
+  --text: #111827;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  --page: #ffffff;
+  --page-bg: #f8fafc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 32px;
+  background: var(--page-bg);
+  color: var(--text);
+  font-family: "Avenir Next", "Optima", "Candara", sans-serif;
+}
+
+.cv-container {
+  max-width: 860px;
+  margin: 0 auto;
+  background: var(--page);
+  border: 1px solid var(--border);
+  padding: 32px 36px 38px;
+}
+
+.cv-header {
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cv-header .name {
+  margin: 0;
+  font-size: 28px;
+  letter-spacing: 0.4px;
+}
+
+.cv-header .title {
+  margin: 6px 0 0;
+  font-size: 12px;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.contact-info {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.cv-section {
+  margin-top: 18px;
+}
+
+.section-title {
+  margin: 0 0 8px;
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--accent);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--accent-soft);
+}
+
+.section-content,
+.dynamic-content {
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.section-content h2,
+.section-content h3,
+.dynamic-content h2,
+.dynamic-content h3 {
+  margin: 14px 0 6px;
+  font-size: 15px;
+}
+
+.section-content li,
+.dynamic-content li {
+  list-style: circle;
+  margin-bottom: 6px;
+}
+
+@media (max-width: 720px) {
+  body {
+    padding: 16px;
+  }
+  .cv-container {
+    padding: 20px;
+  }
+  .contact-info {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+@media print {
+  body {
+    padding: 0;
+    background: #ffffff;
+  }
+  .cv-container {
+    border: none;
+    padding: 0;
+  }
+}

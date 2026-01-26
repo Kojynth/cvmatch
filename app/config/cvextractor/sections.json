@@ -1,0 +1,202 @@
+{
+  "personal_info": {
+    "summary_keywords": [
+      "profil",
+      "resume",
+      "summary",
+      "about",
+      "a propos"
+    ],
+    "name_exclusion_keywords": [
+      "email",
+      "courriel",
+      "tel",
+      "phone",
+      "mobile",
+      "rue",
+      "avenue",
+      "boulevard"
+    ],
+    "max_name_scan_lines": 5,
+    "website_exclusions": [
+      "linkedin.com"
+    ]
+  },
+  "contact": {
+    "scan_header_lines": 10,
+    "separator_tokens": [
+      "|",
+      "•",
+      "·",
+      "/",
+      ";"
+    ],
+    "label_keywords": [
+      "email",
+      "courriel",
+      "tel",
+      "phone",
+      "mobile",
+      "site",
+      "linkedin"
+    ]
+  },
+  "headline": {
+    "max_scan_lines": 12,
+    "stop_keywords": [
+      "profil",
+      "résumé",
+      "resume",
+      "summary",
+      "about"
+    ],
+    "min_words": 2,
+    "max_words": 16
+  },
+  "interests": {
+    "section_keywords": [
+      "interets",
+      "interests",
+      "centre d'interet",
+      "centres d'interet",
+      "hobbies",
+      "loisirs",
+      "passions"
+    ],
+    "split_tokens": [
+      ",",
+      "•",
+      ";",
+      "|",
+      "-"
+    ],
+    "max_items": 12
+  },
+  "languages": {
+    "keywords": [
+      "langues",
+      "languages",
+      "idiomas",
+      "sprach",
+      "language"
+    ],
+    "level_markers": [
+      "native",
+      "fluent",
+      "courant",
+      "bilingue",
+      "intermediate",
+      "debutant"
+    ],
+    "delimiter_tokens": [
+      ",",
+      "•",
+      "-",
+      "|"
+    ]
+  },
+  "skills": {
+    "keywords": [
+      "skills",
+      "competences",
+      "competence",
+      "habilidades",
+      "technologies"
+    ],
+    "delimiter_tokens": [
+      ",",
+      "•",
+      "-",
+      ";",
+      "|"
+    ]
+  },
+  "certifications": {
+    "keywords": [
+      "certification",
+      "certifications",
+      "certificat",
+      "accreditation",
+      "certified"
+    ],
+    "important_terms": [
+      "aws",
+      "azure",
+      "pmp",
+      "scrum",
+      "toeic",
+      "toefl",
+      "ielts",
+      "voltaire"
+    ],
+    "delimiter_tokens": [
+      ",",
+      "•",
+      "-",
+      ";",
+      "|"
+    ]
+  },
+  "projects": {
+    "keywords": [
+      "projet",
+      "projects",
+      "realisation",
+      "realisations",
+      "proyectos"
+    ],
+    "bullet_tokens": [
+      "-",
+      "•",
+      "*"
+    ],
+    "max_items": 8
+  },
+  "experience": {
+    "section_keywords": [
+      "experience",
+      "experiences",
+      "work history",
+      "experience professionnelle"
+    ],
+    "stop_keywords": [
+      "education",
+      "formations",
+      "skills",
+      "competences",
+      "languages"
+    ],
+    "date_window": 2,
+    "min_date_confidence": 0.4,
+    "min_description_tokens": 3,
+    "max_items": 12,
+    "bullet_tokens": [
+      "-",
+      "•",
+      "*"
+    ]
+  },
+  "education": {
+    "section_keywords": [
+      "education",
+      "formations",
+      "etudes",
+      "education and training"
+    ],
+    "stop_keywords": [
+      "experience",
+      "experiences",
+      "skills",
+      "competences",
+      "projects"
+    ],
+    "date_window": 2,
+    "min_date_confidence": 0.35,
+    "max_items": 6,
+    "bullet_tokens": [
+      "-",
+      "•",
+      "*"
+    ]
+  }
+}

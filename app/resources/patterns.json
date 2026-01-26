@@ -1,0 +1,208 @@
+{
+  "version": "1.0.0",
+  "description": "Patterns regex et heuristiques pour extraction CV multi-langues",
+  "date_patterns": {
+    "formats": [
+      "\\d{1,2}/\\d{1,2}/\\d{4}",
+      "\\d{1,2}\\.\\d{1,2}\\.\\d{4}",
+      "\\d{1,2}-\\d{1,2}-\\d{4}",
+      "\\d{4}-\\d{1,2}-\\d{1,2}",
+      "\\d{1,2}/\\d{4}",
+      "\\d{1,2}\\.\\d{4}",
+      "\\d{4}",
+      "\\b(janvier|february|marzo|januar|gennaio)\\s+\\d{4}\\b",
+      "\\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\\.?\\s+\\d{4}\\b",
+      "\\d{4}\\s*[-–—]\\s*\\d{4}",
+      "\\d{1,2}/\\d{4}\\s*[-–—]\\s*\\d{1,2}/\\d{4}"
+    ],
+    "separators": ["-", "–", "—", " à ", " to ", " till ", " until ", " hasta ", " bis ", " fino a "],
+    "current_patterns": {
+      "fr": "\\b(présent|actuel|aujourd'hui|maintenant|en cours|actuellement|à ce jour)\\b",
+      "en": "\\b(present|current|now|today|ongoing|currently|to date)\\b",
+      "es": "\\b(presente|actual|hoy|ahora|en curso|actualmente|hasta la fecha)\\b",
+      "de": "\\b(gegenwart|aktuell|heute|jetzt|laufend|derzeit|bis heute)\\b",
+      "it": "\\b(presente|attuale|oggi|ora|in corso|attualmente|ad oggi)\\b"
+    }
+  },
+  "company_patterns": {
+    "indicators": [
+      "(?:chez|at|@|dans|pour|avec|bei|presso)\\s+([A-Z][a-zA-Z\\s&\\.]+)",
+      "([A-Z][a-zA-Z\\s&\\.]+)\\s*(?:inc|ltd|llc|sa|sas|sarl|gmbh|corp|spa|srl)\\.?",
+      "^([A-Z][a-zA-Z\\s&\\.]{2,50})$"
+    ],
+    "suffixes": {
+      "legal_entities": ["sa", "sas", "sarl", "eurl", "inc", "ltd", "llc", "corp", "gmbh", "ag", "spa", "srl"],
+      "common_words": ["company", "corporation", "société", "enterprise", "group", "groupe", "international", "global"]
+    },
+    "exclusions": ["stage", "internship", "formation", "training", "école", "school", "université", "university"]
+  },
+  "job_title_patterns": {
+    "indicators": [
+      "(?:poste|titre|position|role|cargo|puesto|stelle|posizione)\\s*[:;]\\s*(.+)",
+      "^((?:senior|junior|lead|principal|chef|director|manager|développeur|developer|ingénieur|engineer|consultant|analyst|specialist)\\s*[a-zA-Z\\s]+)",
+      "^([A-Z][a-zA-Z\\s]{3,50})(?:\\s*[-–]\\s*[A-Z][a-zA-Z\\s&\\.]+)?$"
+    ],
+    "seniority_markers": {
+      "senior": ["senior", "sr\\.?", "confirmé", "expérimenté", "expert", "principal", "lead", "chef", "head", "director"],
+      "junior": ["junior", "jr\\.?", "débutant", "stagiaire", "apprenti", "trainee", "intern", "associate", "assistant"],
+      "management": ["manager", "chef", "directeur", "director", "responsable", "lead", "head", "supervisor", "coordinateur"]
+    },
+    "common_roles": [
+      "développeur", "developer", "programmeur", "ingénieur", "engineer", "consultant", "manager",
+      "directeur", "director", "responsable", "chef", "analyst", "specialist", "designer",
+      "commercial", "sales", "marketing", "comptable", "rh", "human resources"
+    ]
+  },
+  "location_patterns": {
+    "formats": [
+      "([A-Za-z\\s]+),\\s*([A-Za-z\\s]+)",
+      "([A-Za-z\\s]+)\\s*\\(([A-Za-z\\s]+)\\)",
+      "^([A-Za-z\\s]+)$"
+    ],
+    "country_indicators": {
+      "fr": ["france", "paris", "lyon", "marseille", "toulouse", "nice", "nantes", "strasbourg", "montpellier", "bordeaux"],
+      "en": ["usa", "uk", "canada", "australia", "new york", "london", "toronto", "sydney", "chicago", "boston"],
+      "es": ["españa", "madrid", "barcelona", "valencia", "sevilla", "bilbao", "málaga", "murcia"],
+      "de": ["deutschland", "berlin", "münchen", "hamburg", "köln", "frankfurt", "stuttgart", "düsseldorf"],
+      "it": ["italia", "roma", "milano", "napoli", "torino", "palermo", "genova", "bologna", "firenze"]
+    },
+    "remote_indicators": [
+      "remote", "télétravail", "distancia", "remoto", "fernarbeit", "da remoto", "home office",
+      "à distance", "trabajo remoto", "homeoffice", "lavoro da casa"
+    ]
+  },
+  "contact_patterns": {
+    "email": "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b",
+    "phone": {
+      "international": "\\+[1-9]\\d{1,14}",
+      "fr": "(?:\\+33|0)[1-9](?:[0-9]{8})",
+      "us": "(?:\\+1)?[2-9]\\d{2}[2-9]\\d{2}\\d{4}",
+      "uk": "(?:\\+44|0)[1-9]\\d{8,9}",
+      "de": "(?:\\+49|0)[1-9]\\d{6,11}",
+      "es": "(?:\\+34|0)[6-9]\\d{8}",
+      "it": "(?:\\+39|0)[3]\\d{8,9}"
+    },
+    "social_media": {
+      "linkedin": "linkedin\\.com/in/[\\w-]+/?",
+      "github": "github\\.com/[\\w-]+/?",
+      "twitter": "twitter\\.com/[\\w-]+/?",
+      "portfolio": "https?://[\\w.-]+\\.[a-zA-Z]{2,}(?:/.*)?",
+      "skype": "skype:([\\w.-]+)",
+      "whatsapp": "(?:whatsapp|wa\\.me)[:/]+([\\d+]+)"
+    }
+  },
+  "skills_patterns": {
+    "technical_indicators": [
+      "compétences techniques", "technical skills", "hard skills", "technologies",
+      "outils", "tools", "langages", "languages", "frameworks", "software"
+    ],
+    "soft_indicators": [
+      "compétences relationnelles", "soft skills", "savoir-être", "qualités",
+      "aptitudes", "leadership", "communication", "team work", "management"
+    ],
+    "level_indicators": {
+      "expert": ["expert", "avancé", "advanced", "experto", "fortgeschritten", "esperto"],
+      "intermediate": ["intermédiaire", "intermediate", "intermedio", "mittelstufe", "intermedio"],
+      "beginner": ["débutant", "beginner", "principiante", "anfänger", "principiante"],
+      "proficient": ["maîtrise", "proficient", "competente", "beherrschung", "competente"]
+    },
+    "common_tech_skills": [
+      "python", "java", "javascript", "react", "angular", "vue", "node", "php", "c#", "c++",
+      "sql", "mysql", "postgresql", "mongodb", "redis", "docker", "kubernetes", "aws", "azure",
+      "git", "github", "jenkins", "ci/cd", "agile", "scrum", "devops", "linux", "windows"
+    ]
+  },
+  "education_patterns": {
+    "degree_indicators": [
+      "diplôme", "degree", "título", "abschluss", "diploma", "certification", "formation"
+    ],
+    "institution_indicators": [
+      "université", "university", "universidad", "universität", "università",
+      "école", "school", "escuela", "schule", "scuola",
+      "institut", "institute", "instituto", "institut", "istituto"
+    ],
+    "grade_patterns": [
+      "mention\\s+(très\\s+bien|bien|assez\\s+bien)",
+      "cum\\s+laude", "magna\\s+cum\\s+laude", "summa\\s+cum\\s+laude",
+      "gpa[\\s:]*([\\d.]+)", "note[\\s:]*([\\d.,]+)/([\\d.,]+)",
+      "moyenne[\\s:]*([\\d.,]+)/([\\d.,]+)"
+    ]
+  },
+  "section_headers": {
+    "variants": {
+      "experience": {
+        "fr": ["expérience professionnelle", "expériences", "parcours professionnel", "carrière", "emplois"],
+        "en": ["professional experience", "work experience", "employment", "career", "work history"],
+        "es": ["experiencia profesional", "experiencia laboral", "trayectoria", "carrera"],
+        "de": ["berufserfahrung", "berufliche laufbahn", "tätigkeiten", "karriere"],
+        "it": ["esperienza professionale", "esperienza lavorativa", "carriera", "lavoro"]
+      },
+      "education": {
+        "fr": ["formation", "études", "diplômes", "scolarité", "cursus"],
+        "en": ["education", "academic background", "qualifications", "degrees"],
+        "es": ["formación", "educación", "estudios", "titulación"],
+        "de": ["ausbildung", "bildung", "studium", "qualifikationen"],
+        "it": ["formazione", "educazione", "studi", "qualifiche"]
+      },
+      "skills": {
+        "fr": ["compétences", "savoir-faire", "aptitudes", "capacités"],
+        "en": ["skills", "competencies", "abilities", "expertise"],
+        "es": ["competencias", "habilidades", "destrezas", "capacidades"],
+        "de": ["fähigkeiten", "kompetenzen", "kenntnisse", "fertigkeiten"],
+        "it": ["competenze", "abilità", "capacità", "conoscenze"]
+      }
+    },
+    "formatting": {
+      "markers": ["●", "•", "◦", "▪", "▫", "→", "►", "✓", "✗", "-", "*", "o"],
+      "numbering": ["1\\.", "2\\.", "3\\.", "a\\)", "b\\)", "c\\)", "i\\.", "ii\\.", "iii\\."],
+      "emphasis": ["\\*\\*(.+?)\\*\\*", "__(.+?)__", "\\*(.+?)\\*", "_(.+?)_"]
+    }
+  },
+  "layout_detection": {
+    "column_indicators": {
+      "gap_threshold": 30,
+      "alignment_tolerance": 10,
+      "min_column_width": 100
+    },
+    "sidebar_indicators": {
+      "width_ratio_threshold": 0.3,
+      "position_threshold": 0.2
+    },
+    "header_footer": {
+      "header_zone": 0.1,
+      "footer_zone": 0.9,
+      "content_indicators": ["cv", "curriculum vitae", "resume", "page", "confidentiel", "confidential"]
+    }
+  },
+  "quality_indicators": {
+    "text_quality": {
+      "min_chars_per_block": 3,
+      "max_chars_per_block": 1000,
+      "reasonable_line_length": [10, 200],
+      "ocr_confidence_threshold": 0.7
+    },
+    "structure_quality": {
+      "min_sections": 3,
+      "max_sections": 15,
+      "section_balance_threshold": 0.8
+    }
+  },
+  "normalization": {
+    "date_formats": {
+      "target_format": "YYYY-MM-DD",
+      "month_mappings": {
+        "fr": {"jan": "01", "fév": "02", "mar": "03", "avr": "04", "mai": "05", "juin": "06", "juil": "07", "août": "08", "sep": "09", "oct": "10", "nov": "11", "déc": "12"},
+        "en": {"jan": "01", "feb": "02", "mar": "03", "apr": "04", "may": "05", "jun": "06", "jul": "07", "aug": "08", "sep": "09", "oct": "10", "nov": "11", "dec": "12"}
+      }
+    },
+    "phone_formats": {
+      "target_format": "E.164",
+      "country_codes": {"fr": "+33", "en": "+1", "es": "+34", "de": "+49", "it": "+39"}
+    },
+    "name_standardization": {
+      "title_case": true,
+      "remove_extra_spaces": true,
+      "handle_particles": ["de", "du", "des", "von", "van", "da", "della", "del"]
+    }
+  }
+}

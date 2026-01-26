@@ -1,0 +1,48 @@
+{
+  "levels": {
+    "master": {
+      "emoji": "⭐",
+      "label": "Maître",
+      "patterns": [
+        "maître|master|guru|architect|lead"
+      ],
+      "priority": 5
+    },
+    "expert": {
+      "emoji": "🔵",
+      "label": "Expert",
+      "patterns": [
+        "expert|maître|master|senior|advanced|avancé|confirmé"
+      ],
+      "priority": 4
+    },
+    "confirmed": {
+      "emoji": "🟢",
+      "label": "Confirmé",
+      "patterns": [
+        "confirmé|experienced|proficient|good|bon|solide"
+      ],
+      "priority": 3
+    },
+    "intermediate": {
+      "emoji": "🟡",
+      "label": "Intermédiaire",
+      "patterns": [
+        "intermédiaire|intermediate|moyen|correct"
+      ],
+      "priority": 2
+    },
+    "beginner": {
+      "emoji": "🔴",
+      "label": "Débutant",
+      "patterns": [
+        "débutant|beginner|junior|novice|basique|basic"
+      ],
+      "priority": 1
+    }
+  },
+  "default": {
+    "emoji": "🟡",
+    "label": "Intermédiaire"
+  }
+}

@@ -1,0 +1,207 @@
+[tool.poetry]
+name = "cvmatch"
+version = "1.0.0"
+description = "Application de génération intelligente de CV avec IA personnalisée"
+authors = ["KojynthZ"]
+readme = "README.md"
+license = "MIT"
+keywords = ["cv", "resume", "ai", "llm", "job", "application"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business",
+    "Topic :: Text Processing",
+]
+packages = [{include = "cvmatch", from = "."}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+
+# GUI Framework
+PySide6 = "^6.8.0"
+qtawesome = "^1.3.0"
+
+# Database & Models
+sqlmodel = "^0.0.16"
+sqlite-utils = "^3.36"
+alembic = "^1.13.0"
+
+# Document Processing
+pypdf = "^3.17.0"
+python-docx = "^1.1.0"
+markdown = "^3.5.2"
+beautifulsoup4 = "^4.12.0"
+
+# Export & PDF
+weasyprint = "^60.2"
+jinja2 = "^3.1.3"
+
+# HTTP & Web
+requests = "^2.31.0"
+aiohttp = "^3.9.0"
+
+# Data Processing
+pandas = "^2.1.4"
+numpy = "^1.26.0"
+pillow = "^10.1.0"
+
+# Utils
+python-dotenv = "^1.0.0"
+pydantic = "^2.5.0"
+click = "^8.1.7"
+rich = "^13.7.0"
+loguru = "^0.7.2"
+tqdm = "^4.66.0"
+
+# AI/ML Core (maintenant activé)
+transformers = "^4.46.0"
+torch = "^2.2.0"
+torchvision = "^0.17.0"
+torchaudio = "^2.2.0"
+accelerate = "^0.27.0"
+sentence-transformers = "^3.0.0"
+faiss-cpu = "^1.8.0"
+huggingface_hub = "^0.32.0"
+safetensors = "^0.4.2"
+tokenizers = "^0.15.0"
+protobuf = "^4.25.0"
+sentencepiece = "^0.2.0"
+
+# Web Scraping & Document Processing
+selenium = "^4.15.0"
+pymupdf = "^1.26.0"
+
+# Optimizations
+bitsandbytes = "^0.43.0"
+optimum = "^1.17.0"
+psutil = "^5.9.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.3"
+pytest-qt = "^4.2.0"
+pytest-asyncio = "^0.21.1"
+pytest-mock = "^3.12.0"
+black = "^23.11.0"
+flake8 = "^6.1.0"
+mypy = "^1.7.1"
+pre-commit = "^3.6.0"
+isort = "^5.13.0"
+
+[tool.poetry.group.ai]
+optional = true
+
+[tool.poetry.group.ai.dependencies]
+# Quantification avancée
+auto-gptq = "^0.7.0"
+exllamav2 = "^0.1.0"
+ctranslate2 = "^4.4.0"
+peft = "^0.8.0"
+datasets = "^2.16.0"
+
+[tool.poetry.group.gpu]
+optional = true
+
+[tool.poetry.group.gpu.dependencies]
+torch = {version = "^2.2.0", source = "pytorch-gpu"}
+torchvision = {version = "^0.17.0", source = "pytorch-gpu"}
+torchaudio = {version = "^2.2.0", source = "pytorch-gpu"}
+faiss-gpu = "^1.8.0"
+# Optimisations GPU avancées (Linux principalement)
+flash-attn = "^2.5.0"
+vllm = "^0.6.0"
+xformers = "^0.0.26"
+
+[[tool.poetry.source]]
+name = "pytorch-gpu"
+url = "https://download.pytorch.org/whl/cu121"
+priority = "explicit"
+
+[tool.poetry.extras]
+ai = ["auto-gptq", "exllamav2", "ctranslate2", "peft", "datasets"]
+gpu = ["torch", "torchvision", "torchaudio", "faiss-gpu", "flash-attn", "vllm", "xformers"]
+full = ["auto-gptq", "exllamav2", "ctranslate2", "peft", "datasets", "torch", "faiss-gpu", "flash-attn", "vllm", "xformers"]
+
+[tool.poetry.scripts]
+cvmatch = "main:main"
+cvmatch-cli = "app.cli.main:cli"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 88
+target-version = ['py310', 'py311', 'py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+  | models
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["cvmatch"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+exclude = [
+    "datasets/",
+    "exports/",
+    "CV généré/",
+    "logs/",
+    "models/",
+    "cache/",
+]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers --tb=short"
+testpaths = ["tests"]
+qt_api = "pyside6"
+python_files = ["test_*.py", "*_test.py"]
+markers = [
+    "gui: PySide6-driven GUI regression tests"
+]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.coverage.run]
+source = ["cvmatch"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "scripts/*",
+    "datasets/*",
+    "exports/*",
+    "CV généré/*",
+    "models/*",
+    "logs/*",
+    "cache/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+]

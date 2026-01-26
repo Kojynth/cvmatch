@@ -1,0 +1,38 @@
+{
+  "projects": {
+    "en cours|current|ongoing|actuel": "🔄 En cours",
+    "terminé|finished|completed|fini|achevé": "✅ Terminé",
+    "pause|suspended|arrêt|interrompu": "⏸️ En pause",
+    "planifié|planned|prévu|futur": "📋 Planifié",
+    "abandonné|abandoned|cancelled|annulé": "❌ Abandonné"
+  },
+  "certifications": {
+    "valide|valid|active|en cours": "✅ Valide",
+    "expire|expiration|bientôt": "⚠️ Expire bientôt",
+    "expiré|expired|périmé|obsolète": "❌ Expirée",
+    "renouvellement|renewal|mise à jour": "🔄 En renouvellement",
+    "inconnu|unknown|non spécifié": "❓ Statut inconnu"
+  },
+  "volunteering": {
+    "en cours|actuel|current": "🔄 En cours",
+    "terminé|fini|completed": "✅ Terminé",
+    "pause|suspended": "⏸️ En pause",
+    "régulier|regular|hebdomadaire": "📅 Régulier",
+    "ponctuel|occasional|sporadique": "🎆 Ponctuel",
+    "saisonnier|seasonal|périodique": "🗺️ Saisonnier"
+  },
+  "publications": {
+    "publié|published|sorti": "📖 Publié",
+    "accepté|accepted|validé": "✅ Accepté",
+    "en révision|review|peer-review": "🔍 En révision",
+    "soumis|submitted|envoyé": "📤 Soumis",
+    "brouillon|draft|préparation": "✏️ Brouillon",
+    "rejeté|rejected|refusé": "❌ Rejeté"
+  },
+  "defaults": {
+    "projects": "🔄 En cours",
+    "certifications": "❓ Statut inconnu",
+    "volunteering": "✅ Terminé",
+    "publications": "📖 Publié"
+  }
+}

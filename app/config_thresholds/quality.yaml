@@ -1,0 +1,192 @@
+# Quality Guardrails Configuration for CV Extraction
+# Tunable thresholds and quotas for overfitting prevention and section balance
+
+# Diversity thresholds and enforcement
+diversity:
+  threshold: 0.30                    # Minimum pattern diversity score (0-1)
+  max_recovery_passes: 1            # Maximum automated recovery attempts
+  entropy_weight: 0.5               # Weight for normalized entropy in diversity calculation
+  unique_pattern_weight: 0.5        # Weight for unique pattern ratio in diversity calculation
+  
+  # Per-section diversity requirements
+  section_minimums:
+    exp: 0.30
+    edu: 0.25      # Slightly lower due to fewer pattern types
+    certs: 0.20    # Lower diversity acceptable for specialized content
+    lang: 0.20     # Lower diversity acceptable for specialized content  
+    soft: 0.25     # Moderate diversity expected
+    proj: 0.30     # High diversity expected due to varied project types
+
+# Pattern-specific configuration and constraints
+patterns:
+  # EXPERIENCE patterns
+  exp:
+    exp.date_title_company.v1:       {max_share: 0.60, weight: 1.2, priority: 1}
+    exp.bullet_company_role_dates.v1: {max_share: 0.60, weight: 1.1, priority: 2}  
+    exp.title_company_inline.v1:     {max_share: 0.50, weight: 1.0, priority: 3, high_noise: true}
+    exp.internship_keywords.v1:      {max_share: 0.40, weight: 0.9, priority: 4}
+  
+  # EDUCATION patterns  
+  edu:
+    edu.degree_school_line.v1:       {max_share: 0.60, weight: 1.1, priority: 1}
+    edu.school_degree_line.v1:       {max_share: 0.60, weight: 1.0, priority: 2}
+    edu.period_school_block.v1:      {max_share: 0.50, weight: 0.9, priority: 3}
+  
+  # CERTIFICATIONS patterns
+  certs:
+    cert.test_vendor_line.v1:        {max_share: 0.80, weight: 1.0, priority: 1}
+    cert.vendor_code.v1:             {max_share: 0.60, weight: 0.9, priority: 2}
+  
+  # LANGUAGES patterns  
+  lang:
+    lang.table_level.v1:             {max_share: 0.70, weight: 1.1, priority: 1}
+    lang.list_inline.v1:             {max_share: 0.80, weight: 1.0, priority: 2}
+    lang.nationality_guard.v1:       {enabled: true, weight: 0.0, guard_pattern: true}
+  
+  # SOFT SKILLS patterns
+  soft:
+    soft.header_list_delims.v1:      {max_share: 0.80, weight: 1.1, priority: 1}
+    soft.bullets_canon.v1:           {max_share: 0.60, weight: 1.0, priority: 2}
+  
+  # PROJECTS patterns
+  proj:
+    proj.dates_tech_desc.v1:         {max_share: 0.70, weight: 1.1, priority: 1}
+    proj.header_bullets.v1:          {max_share: 0.80, weight: 1.0, priority: 2}
+
+# Overfitting control settings
+overfitting_control:
+  # Automatic pattern adjustments when diversity < threshold
+  dominant_pattern_penalties:
+    max_share_reduction: 0.45        # Cap dominant pattern at this share
+    weight_penalty: 0.7              # Multiply dominant pattern weight by this factor
+    
+  # Cross-pattern boosting to encourage diversity  
+  alternative_pattern_boost:
+    weight_increase: 0.15            # Add this to alternative pattern weights
+    max_boost_cap: 0.30              # Maximum total boost per pattern
+    
+  # Specific controls for noisy patterns
+  noise_filters:
+    exp.title_company_inline.v1:
+      reject_pure_dates: true        # Reject lines that are only dates
+      reject_isolated_acronyms: true # Reject 2-6 char acronyms not in org lexicon  
+      reject_school_without_employment: true # Reject school names without employment signals
+      min_employment_score: 0.4      # Minimum employment keyword score required
+
+# Demotion budget system for section reclassification
+demotion_budget:
+  # EXP → EDU demotion controls
+  exp_to_edu:
+    hard_cap: 8                      # Absolute maximum demotions per CV
+    share_cap: 0.25                  # Maximum 25% of EXP candidates can be demoted
+    per_school_cap: 2                # Maximum 2 demotions per unique school
+    min_evidence_count: 2            # Require ≥2 of 4 demotion criteria
+    
+    # Evidence criteria for EXP→EDU demotion
+    evidence_criteria:
+      company_is_school: 1.0         # Company name matches school lexicon
+      missing_or_suspect_company: 0.8 # Company missing or suspicious
+      no_employment_keywords: 0.6    # No employment-related keywords found
+      education_signals_present: 1.0 # Degree keywords, campus, department present
+    
+    # Override: strong education signals allow demotion with less evidence
+    strong_edu_signals_override: 
+      min_signals: 2                 # Need ≥2 strong education signals
+      bypass_evidence_count: true   # Can bypass min_evidence_count requirement
+  
+  # Other demotion routes (smaller budgets)
+  generic_routes:
+    edu_to_certs: {hard_cap: 3, share_cap: 0.20}
+    exp_to_projects: {hard_cap: 5, share_cap: 0.15}
+    generic_fallback: {hard_cap: 3, share_cap: 0.10}
+
+# Section balance enforcement
+balance:
+  # Skew detection and recovery
+  skew_detection:
+    edu_to_exp_ratio_trigger: 3.0    # Trigger recovery if EDU > 3 × EXP
+    exp_minimum_threshold: 5         # Only trigger if EXP < 5 items
+    
+  # Borderline recovery system  
+  borderline_recovery:
+    max_recoveries: 3                # Maximum items to recover per section
+    confidence_range: [0.45, 0.60]   # Recovery confidence range
+    confidence_boost: 0.05           # Boost applied to recovered items
+    recovery_flag: "recovered_borderline_exp"
+    
+  # Keep-rate floor monitoring (warnings only)
+  keep_rate_floors:
+    edu_keep_rate_min: 0.20          # Warn if education keep rate < 20%
+    exp_keep_rate_min: 0.10          # Warn if experience keep rate < 10% (when headers exist)
+    
+  # Empty section recovery
+  empty_section_recovery:
+    # Try fallback parsing if section detected but empty
+    soft_skills:
+      threshold_reduction: -0.05     # Lower confidence threshold by this amount
+      max_attempts: 1                # Maximum recovery attempts
+      
+    projects:
+      enable_fallback_parse: true    # Enable fallback parsing method
+      max_attempts: 1                # Maximum recovery attempts
+
+# Logging and monitoring
+monitoring:
+  # PII-safe logging configuration
+  log_aggregates_only: true          # Only log aggregated metrics, no raw text
+  log_pattern_ids: true              # Log pattern IDs for debugging
+  log_confidence_stats: true         # Log confidence score statistics
+  
+  # Performance monitoring
+  extraction_time_warning_ms: 5000   # Warn if extraction takes > 5 seconds
+  memory_usage_warning_mb: 512       # Warn if memory usage > 512 MB
+  
+  # Quality metrics to track
+  tracked_metrics:
+    - pattern_diversity_per_section
+    - demotion_budget_usage
+    - section_balance_ratios  
+    - empty_section_recovery_success
+    - overfitting_interventions
+    - borderline_recovery_stats
+
+# Feature integration settings
+feature_integration:
+  # Gradual rollout controls
+  rollout_percentage: 0.0            # Percentage of CVs to apply guardrails (0-100)
+  fallback_on_errors: true           # Fall back to legacy extraction on errors
+  
+  # Integration points in extraction pipeline
+  integration_phases:
+    phase_1_extraction: true         # Apply pattern monitoring in initial extraction  
+    phase_2_cleanup: true            # Apply diversity checks in cleanup phase
+    phase_5_mapping: true            # Apply balance controls in final mapping
+    rescue_flow: true                # Apply recovery mechanisms in rescue flows
+
+# Alert thresholds and notifications  
+alerts:
+  # Pattern diversity alerts
+  diversity_medium_alert: 0.25       # Issue medium alert below this threshold
+  diversity_critical_alert: 0.15     # Issue critical alert below this threshold
+  
+  # Demotion budget alerts
+  demotion_budget_warning: 0.75      # Warn when 75% of budget used
+  demotion_budget_critical: 0.90     # Critical alert when 90% of budget used
+  
+  # Section balance alerts
+  severe_imbalance_ratio: 5.0        # Alert when section ratio > 5:1
+  empty_section_with_headers: true   # Alert when headers detected but section empty
+
+# Experimental features and tuning
+experimental:
+  # Advanced diversity metrics
+  use_jensen_shannon_divergence: false    # Use JS divergence instead of simple entropy
+  pattern_correlation_analysis: false     # Analyze pattern co-occurrence  
+  
+  # Dynamic threshold adjustment
+  adaptive_thresholds: false              # Adjust thresholds based on document characteristics
+  confidence_calibration: false           # Calibrate confidence scores across patterns
+  
+  # Advanced recovery mechanisms
+  cross_section_recovery: false           # Allow recovery from other sections
+  semantic_similarity_recovery: false     # Use semantic similarity for recovery
