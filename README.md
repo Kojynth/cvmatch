@@ -100,7 +100,22 @@ Une fois les premières étapes d'initialisation terminée l'application se lanc
    - Ne modifiez les **balises** que si vous savez ce que vous faites.
 4) Sélectionnez un **modèle** puis exportez en **PDF**.
 
+## Historique
+1) Une fois le CV généré vous retrouverez une liste des CV sur la page historique sur laquelle normalement vous devriez pouvoir indiquer des scores et des indications pour dire si ce CV vous a permis d'obtenir un entretien ou non. (La fonctionnalité n'est pas encore implémenté, elle le fut pendant un temps pour l'apprentissage automatisé mais j'ai laissé tomber cette partie)
+
 ## Remarques (fonctionnalités en cours)
 
 - Le bouton **"Activer l'apprentissage automatique"** est présent mais **n’a pas d’effet** pour le moment (fonctionnalité prévue plus tard).
-- Le bouton **"Lettre de motivation"** n’est **pas encore fonctionnel** : privilégiez **"Générer le CV"**.
+- Le bouton **"Lettre de motivation"** n’est **pas encore fonctionnel** : privilégiez **"Générer le CV" qui va générer les 2**.
+- Rajouter des vannes pendant la génération de CV pour rendre l'attente moins monotones.
+
+## Différence entre Qwen et Mistral
+Qwen a tendance à générer un CV bullet point avec une très bonne lettre de motivation.
+Mistral va présenter dans un court texte votre profil au début puis lister les points importants de votre CV mais la lettre de motivation peut être plus hasardeux des tests que j'ai réalisé.
+  
+
+# Contributeur : 
+- Moi
+- GPT 5.2 Codex (et les versions précédentes j'ai oublié les noms)
+- Claude Code Sonnet puis Opus 4.5
+- 
