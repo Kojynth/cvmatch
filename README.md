@@ -1,6 +1,6 @@
 # CVMatch générateur de CV
 
-CVMatch est une application desktop (PySide6/Qt) destinée à générer des CV et des lettres de motivation adaptées à votre profil. Les informations saisies sont conservés en local sur votre ordinateur uniquement. Aucune information n'est envoyé sur internet ou sur le cloud. 
+CVMatch est une application desktop destinée à générer des CV et des lettres de motivation adaptées à votre profil. Les informations saisies sont conservés en local sur votre ordinateur uniquement. Aucune information n'est envoyé sur internet ou sur le cloud. 
 Le seul moment où une connexion internet est requise est au moment de l'installation des dépendances python et les modèles IA. Autrement toutes les opérations se dérouleront sur l'application
 
 # Prérequis
