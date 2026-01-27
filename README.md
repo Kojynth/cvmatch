@@ -7,6 +7,7 @@ Le seul moment où une connexion internet est requise est au moment de l'install
 Je n'ai pour le moment réalisé aucun test sur la version Linux donc je ne peux pas garantir son bon fonctionnement.
 Je n'ai même pas encore lancé l'application sur Linux et pour le moment je n'ai pas eu le temps de le faire.
 La doc est obsolète faut que je pense à la màj un jour.
+Aucune idée si ça fonctionne avec des offres en anglais j'ai surtout testé avec des offres en fr
 
 
 # Prérequis
