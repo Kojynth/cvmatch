@@ -1616,12 +1616,7 @@ class QwenManager:
                 if force_gpu_env is not None:
                     force_gpu = force_gpu_env.strip() == "1"
                 else:
-                    if self.custom_parameters.get("force_cuda") or self.custom_parameters.get("prefer_gpu"):
-                        force_gpu = True
-                    else:
-                        total_vram = float(gpu_manager.gpu_info.get("total_memory_gb", 0) or 0)
-                        if self._optimization_config.get("load_in_4bit") and total_vram >= 5.0:
-                            force_gpu = True
+                    force_gpu = bool(self.custom_parameters.get("force_cuda"))
             else:
                 model_kwargs["device_map"] = None
 
@@ -1653,8 +1648,10 @@ class QwenManager:
                 model_kwargs.pop("max_memory", None)
                 model_kwargs.pop("low_cpu_mem_usage", None)
                 logger.info(
-                    "Prefer GPU load: forcing device_map=cuda:0 (set CVMATCH_FORCE_GPU=0 to disable)."
+                    "Force GPU strict: device_map=cuda:0 (set CVMATCH_FORCE_GPU=0 to allow CPU offload)."
                 )
+            elif model_kwargs.get("device_map") == "auto" and model_kwargs.get("max_memory"):
+                logger.info("Hybrid load: device_map=auto with CPU offload enabled.")
 
             def _load_with_kwargs(kwargs: Dict[str, Any]):
                 try:

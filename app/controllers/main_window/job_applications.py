@@ -51,15 +51,27 @@ class JobApplicationCoordinator(SimpleCoordinator, Coordinator):
             raise RuntimeError("JobApplicationCoordinator requires a bound profile")
         return self.profile
 
+    def _build_profile_data(self) -> ProfileWorkerData:
+        """Load a fresh profile snapshot for background workers."""
+        profile = self._ensure_profile()
+        profile_id = getattr(profile, "id", None)
+        if not profile_id:
+            return ProfileWorkerData.from_profile(profile)
+
+        with get_session() as session:
+            refreshed = session.get(UserProfile, profile_id)
+            if refreshed is None:
+                return ProfileWorkerData.from_profile(profile)
+            return ProfileWorkerData.from_profile(refreshed)
+
     def create_cv_worker(self, *, offer_data: Dict[str, Any], template: str) -> CVGenerationWorker:
         """Instantiate a CV generation worker and track it.
 
         Note: Extrait les données du profil AVANT de passer au worker
         pour éviter les erreurs SQLAlchemy DetachedInstanceError.
         """
-        profile = self._ensure_profile()
         # Extraire les données du profil dans le thread principal (session active)
-        profile_data = ProfileWorkerData.from_profile(profile)
+        profile_data = self._build_profile_data()
 
         worker = CVGenerationWorker(
             profile_data=profile_data,
@@ -81,9 +93,8 @@ class JobApplicationCoordinator(SimpleCoordinator, Coordinator):
         Note: Extrait les données du profil AVANT de passer au worker
         pour éviter les erreurs SQLAlchemy DetachedInstanceError.
         """
-        profile = self._ensure_profile()
         # Extraire les données du profil dans le thread principal (session active)
-        profile_data = ProfileWorkerData.from_profile(profile)
+        profile_data = self._build_profile_data()
 
         worker = CoverLetterGenerationWorker(
             profile_data=profile_data,
