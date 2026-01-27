@@ -3,6 +3,10 @@
 CVMatch est une application desktop destinée à générer des CV et des lettres de motivation adaptées à votre profil. Les informations saisies sont conservés en local sur votre ordinateur uniquement. Aucune information n'est envoyé sur internet ou sur le cloud. 
 Le seul moment où une connexion internet est requise est au moment de l'installation des dépendances python et les modèles IA. Autrement toutes les opérations se dérouleront sur l'application
 
+#Warning
+Je n'ai pour le moment réalisé aucun test sur la version Linux donc je ne peux pas garantir son bon fonctionnement.
+Je n'ai même pas encore lancé l'application sur Linux et pour le moment je n'ai pas eu le temps de le faire.
+
 # Prérequis
 
 ## Prérequis techniques (avant de lancer quoi que ce soit)
@@ -28,12 +32,13 @@ Le seul moment où une connexion internet est requise est au moment de l'install
 - **Pilotes NVIDIA** : à jour (pour que PyTorch puisse détecter CUDA).
   - Le projet référence des builds PyTorch **CUDA 12.1 (cu121)** : avoir ses driver à jours NVIDIA c'est important.
 
-> Note : CVMatch peut fonctionner **sans GPU** (mode CPU), mais ce sera plus lent et certains modèles seront inadaptés.
+> Note : CVMatch peut fonctionner **sans GPU** (mode CPU), mais ce sera plus lent et certains modèles seront inadaptés et surtout vous risquez d'user plus vite votre CPU.
 
 ## Prérequis “fonctionnels” selon les features (optionnels)
 
 - **Export PDF avancé (WeasyPrint)** :
   - Sur Windows, WeasyPrint peut nécessiter des **bibliothèques natives** (Cairo/Pango/Harfbuzz, etc.).
+  - Sur Linux, j'ai pas testé sur un PC Linux pour le moment.
 
 # Guide d'utilisation
 
@@ -70,25 +75,25 @@ Vous pouvez lancer directement `cvmatch.bat` / `cvmatch.sh` :
 
 N'hésitez pas à installer l'IA.
 
-Les 2 modèles préentraîné installé sont :  Qwen2.5-0.5B-Instruct et Mistral 7B
-Utilisez le fichier CVmatch.bat ou cvmatch.sh  pour lancer l'application
-Un terminal s'ouvrira sur lequel vous pourrez suivre chaque étape de lancement de 
+- Les 2 modèles préentraîné installé sont :  Qwen2.5-0.5B-Instruct et Mistral 7B
+- Utilisez le fichier CVmatch.bat ou cvmatch.sh  pour lancer l'application
+- Un terminal s'ouvrira sur lequel vous pourrez suivre chaque étape de lancement de 
 l'application.
- Le bouton "Activer l'apprentissage automatique" ne fait rien vous pouvez l'activer ou le 
- désactiver il ne fait actuellement rien du tout pour le moment, l'idée derrière ce bouton 
- était d'améliorer l'IA et ses outputs en comparant les précédents résultats pour mieux 
- générer le suivant. Pour le moment cette idée restera sur le côté.
-Une fois l'application lancé renseignez les informations minimales demandés.
-Les formats de fichiers acceptés est le format PDF.
-Une fois les premières étapes d'initialisation terminée l'application se lancera normalement
-
-
+  - Le bouton "Activer l'apprentissage automatique" ne fait rien vous pouvez l'activer ou le 
+   désactiver il ne fait actuellement rien du tout pour le moment, l'idée derrière ce bouton 
+   était d'améliorer l'IA et ses outputs en comparant les précédents résultats pour mieux 
+   générer le suivant. Pour le moment cette idée restera sur le côté.
+- Une fois l'application lancé renseignez les informations minimales demandés.
+- Le format de fichier acceptés est le format PDF.
+- Une fois les premières étapes d'initialisations terminées l'application se lancera normalement.
 
 
 ## Dans l’application (après lancement)
-
+### Premier Lancement 
 - **Renseignez les informations minimales** demandées lors de l’initialisation (profil).
 - **Import (optionnel)** : CV / LinkedIn au **format PDF uniquement**.
+- Le bouton apprentissage automatique ne sert aujourd'hui à rien, je vais réfléchir à le retirer ou à le garder en fonction de comment je fais évoluer le projet
+### Page d'arriver pour tout futur lancement  post-Premier Lancement
 - Après import, allez dans **"Visualiser le détail"** pour **vérifier/corriger** les informations extraites, puis complétez votre profil. Relancez l'extraction avec le bouton "Extraire le CV" et "Extraire Linkedin".
 
 ## Générer un CV pour une offre
@@ -100,7 +105,23 @@ Une fois les premières étapes d'initialisation terminée l'application se lanc
    - Ne modifiez les **balises** que si vous savez ce que vous faites.
 4) Sélectionnez un **modèle** puis exportez en **PDF**.
 
+## Historique
+1) Une fois le CV généré vous retrouverez une liste des CV sur la page historique sur laquelle normalement vous devriez pouvoir indiquer des scores et des indications pour dire si ce CV vous a permis d'obtenir un entretien ou non. (La fonctionnalité n'est pas encore implémenté, elle le fut pendant un temps pour l'apprentissage automatisé mais j'ai laissé tomber cette partie)
+
 ## Remarques (fonctionnalités en cours)
 
 - Le bouton **"Activer l'apprentissage automatique"** est présent mais **n’a pas d’effet** pour le moment (fonctionnalité prévue plus tard).
-- Le bouton **"Lettre de motivation"** n’est **pas encore fonctionnel** : privilégiez **"Générer le CV"**.
+- Le bouton **"Lettre de motivation"** n’est **pas encore fonctionnel** : privilégiez **"Générer le CV" qui va générer les 2**.
+- Rajouter des vannes pendant la génération de CV pour rendre l'attente moins monotones.
+
+## Différence entre Qwen et Mistral
+Qwen a tendance à générer un CV bullet point avec une très bonne lettre de motivation.
+Mistral va présenter dans un court texte votre profil au début puis lister les points importants de votre CV mais la lettre de motivation peut être plus hasardeux des tests que j'ai réalisé.
+  
+
+# Développement de l'application : 
+- Moi, en développement assisté par de l'IA (à 90%+) et principal testeur
+- GPT 5.2 Codex (et les versions précédentes j'ai oublié les noms)
+- Claude Code Sonnet puis Opus 4.5
+- Cursor et son mode agent
+  
