@@ -13,7 +13,7 @@ Module principal d'extraction de CV supportant:
 from .core.types import ExtractionResult, CVSection, ExtractedField
 from .core.extractor import CVExtractor
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 __all__ = ["CVExtractor", "ExtractionResult", "CVSection", "ExtractedField"]
 
 
