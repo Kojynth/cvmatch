@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cvmatch"
-version = "1.0.0"
+version = "1.0.1"
 description = "Application de génération intelligente de CV avec IA personnalisée"
 authors = ["KojynthZ"]
 readme = "README.md"
