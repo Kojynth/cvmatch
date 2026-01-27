@@ -141,7 +141,7 @@ def install_base_requirements():
         "qtawesome>=1.3.0", 
         "sqlmodel>=0.0.16",
         "sqlite-utils>=3.36.0",
-        "pypdf>=3.17.0",
+        "pypdf>=6.6.2",
         "markdown>=3.5.2",
         "jinja2>=3.1.3",
         "loguru>=0.7.2",
