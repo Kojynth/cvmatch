@@ -202,12 +202,16 @@ def generate_json_with_schema(
                     )
                     if base_total and base_input:
                         reduced_input = max(512, int(base_input * 0.85))
-                        new_max = max(64, base_total - reduced_input)
+                        target_new = base_new or max(256, base_total - base_input)
+                        target_new = max(256, int(target_new * 0.7))
+                        cap_new = 1200 if role == "generator" else 1600
+                        new_max = min(target_new, cap_new)
+                        reduced_total = min(base_total, reduced_input + new_max)
                         retry_role_params = {
                             **(role_params or {}),
                             "max_input_tokens": reduced_input,
                             "max_new_tokens": new_max,
-                            "max_total_tokens": base_total,
+                            "max_total_tokens": reduced_total,
                         }
                         logger.warning(
                             "Strict JSON retry params adjusted: role=%s attempt=%s params=%s",

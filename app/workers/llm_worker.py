@@ -9,6 +9,7 @@ import json
 import re
 import time
 import unicodedata
+import inspect
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Iterable, Union, Tuple
@@ -974,21 +975,51 @@ class QwenManager:
         if max_total_tokens:
             max_new_tokens = max(1, min(max_new_tokens, max_total_tokens - input_len))
 
+        slow_device = False
+        try:
+            if getattr(self._device, "type", None) == "cpu":
+                slow_device = True
+        except Exception:
+            pass
+        try:
+            device_map = getattr(self._model, "hf_device_map", None)
+            if isinstance(device_map, dict) and device_map:
+                for value in device_map.values():
+                    resolved = self._normalize_device_target(value)
+                    if resolved is None:
+                        continue
+                    if resolved.type != "cuda":
+                        slow_device = True
+                        break
+        except Exception:
+            pass
+
+        max_time_s = 120.0
+        if slow_device:
+            max_time_s = 240.0
+            max_new_tokens = min(max_new_tokens, 800)
+            logger.info(
+                "Strict JSON slow mode: cap max_new_tokens=%s max_time=%.0fs",
+                max_new_tokens,
+                max_time_s,
+            )
+
         lmfe_kwargs = build_lmfe_generation_kwargs(self._tokenizer, schema)
 
         with torch.no_grad():
-            outputs = self._model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                temperature=max(temperature, 0.0),
-                top_p=top_p,
-                top_k=top_k,
-                do_sample=temperature > 0.0,
-                repetition_penalty=1.05,
-                pad_token_id=self._tokenizer.eos_token_id,
-                eos_token_id=self._tokenizer.eos_token_id,
+            generate_kwargs = {
+                "max_new_tokens": max_new_tokens,
+                "temperature": max(temperature, 0.0),
+                "top_p": top_p,
+                "top_k": top_k,
+                "do_sample": temperature > 0.0,
+                "repetition_penalty": 1.05,
+                "pad_token_id": self._tokenizer.eos_token_id,
+                "eos_token_id": self._tokenizer.eos_token_id,
+                "max_time": max_time_s,
                 **lmfe_kwargs,
-            )
+            }
+            outputs = self._model.generate(**inputs, **generate_kwargs)
 
         generated_text = self._tokenizer.decode(
             outputs[0][inputs.input_ids.shape[1] :],
@@ -1171,6 +1202,16 @@ class QwenManager:
         if not TORCH_AVAILABLE or not torch.cuda.is_available():
             return None
 
+        def _get_percent(key: str, default_value: int) -> int:
+            raw = (self.custom_parameters or {}).get(key)
+            try:
+                value = int(raw)
+            except Exception:
+                return default_value
+            if value < 10 or value > 99:
+                return default_value
+            return value
+
         free_vram_gb = 0.0
         try:
             if hasattr(torch.cuda, "mem_get_info"):
@@ -1189,7 +1230,8 @@ class QwenManager:
         if free_vram_gb <= 0:
             return None
 
-        vram_budget_mib = max(512, int(free_vram_gb * 1024 * 0.90))
+        gpu_percent = _get_percent("max_memory_gpu_percent", 90)
+        vram_budget_mib = max(512, int(free_vram_gb * 1024 * (gpu_percent / 100.0)))
         memory_map: Dict[Union[int, str], str] = {0: f"{vram_budget_mib}MiB"}
 
         try:
@@ -1197,12 +1239,51 @@ class QwenManager:
 
             available_ram_gb = psutil.virtual_memory().available / (1024**3)
             if available_ram_gb >= 1.0:
-                ram_budget_mib = max(1024, int(available_ram_gb * 1024 * 0.80))
+                cpu_percent = _get_percent("max_memory_cpu_percent", 80)
+                ram_budget_mib = max(
+                    1024,
+                    int(available_ram_gb * 1024 * (cpu_percent / 100.0)),
+                )
                 memory_map["cpu"] = f"{ram_budget_mib}MiB"
         except Exception:
             pass
 
         return memory_map
+
+    def _patch_bitsandbytes_params4bit(self) -> None:
+        try:
+            import bitsandbytes as bnb
+        except Exception:
+            return
+
+        params_cls = getattr(getattr(bnb, "nn", None), "Params4bit", None)
+        if params_cls is None:
+            return
+
+        if getattr(params_cls, "_cvmatch_patched", False):
+            return
+
+        has_arg = False
+        try:
+            sig = inspect.signature(params_cls.__new__)
+            has_arg = "_is_hf_initialized" in sig.parameters
+        except Exception:
+            code = getattr(params_cls.__new__, "__code__", None)
+            if code and "_is_hf_initialized" in code.co_varnames:
+                has_arg = True
+
+        if has_arg:
+            return
+
+        original_new = params_cls.__new__
+
+        def _patched_new(cls, *args, **kwargs):
+            kwargs.pop("_is_hf_initialized", None)
+            return original_new(cls, *args, **kwargs)
+
+        params_cls.__new__ = staticmethod(_patched_new)
+        params_cls._cvmatch_patched = True
+        logger.warning("Patched bitsandbytes Params4bit for _is_hf_initialized compat.")
 
     def _normalize_device_target(self, target: Any) -> Optional["torch.device"]:
         if not TORCH_AVAILABLE:
@@ -1624,6 +1705,7 @@ class QwenManager:
             if self._optimization_config.get("load_in_8bit") or self._optimization_config.get("load_in_4bit"):
                 try:
                     import bitsandbytes  # noqa: F401
+                    self._patch_bitsandbytes_params4bit()
                 except Exception as e:
                     raise RuntimeError(
                         "Quantisation 4-bit/8-bit demandee mais 'bitsandbytes' n'est pas utilisable sur cette machine. "
@@ -1903,6 +1985,11 @@ class QwenManager:
                 hint = (
                     "Piste: dépendance manquante 'sentencepiece'. Installez: pip install sentencepiece "
                     "(et parfois aussi: pip install protobuf), puis redémarrez l'application."
+                )
+            elif "_is_hf_initialized" in lowered or "params4bit" in lowered:
+                hint = (
+                    "Piste: bitsandbytes trop ancien/incompatible pour la quantisation 4-bit. "
+                    "Mettez a jour bitsandbytes (CUDA) ou changez de quantification."
                 )
             elif "bitsandbytes" in lowered:
                 hint = (
@@ -2623,6 +2710,31 @@ class CVGenerationWorker(QThread):
                 filtered.append(fact_text)
             sanitized["must_keep_facts"] = filtered
         return sanitized
+
+    def _is_slow_generation_device(self) -> bool:
+        try:
+            device = getattr(self.qwen_manager, "_device", None)
+            if device is not None and getattr(device, "type", None) == "cpu":
+                return True
+        except Exception:
+            pass
+        try:
+            model = getattr(self.qwen_manager, "_model", None)
+            device_map = getattr(model, "hf_device_map", None)
+            if isinstance(device_map, dict) and device_map:
+                normalizer = getattr(self.qwen_manager, "_normalize_device_target", None)
+                for value in device_map.values():
+                    resolved = normalizer(value) if callable(normalizer) else None
+                    if resolved is None:
+                        continue
+                    if resolved.type != "cuda":
+                        return True
+        except Exception:
+            pass
+        return False
+
+    def _strict_generator_retries(self) -> int:
+        return 1 if self._is_slow_generation_device() else 2
 
     def _apply_contact_fallback(
         self, cv_json: Dict[str, Any], profile_json: Dict[str, Any]
@@ -3493,7 +3605,7 @@ OUTPUT RULES:
                 schema_model=CVJSON,
                 messages=messages,
                 qwen_manager=self.qwen_manager,
-                retries=3,
+                retries=self._strict_generator_retries(),
                 progress_callback=progress_callback,
             )
         except JsonStrictError as exc:
@@ -3535,7 +3647,7 @@ OUTPUT RULES:
                 schema_model=CVJSON,
                 messages=messages,
                 qwen_manager=self.qwen_manager,
-                retries=3,
+                retries=self._strict_generator_retries(),
                 progress_callback=progress_callback,
             )
         except JsonStrictError as exc:
