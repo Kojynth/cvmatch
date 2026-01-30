@@ -360,6 +360,34 @@ class MainWindowWithSidebar(QMainWindow):
         rows = self.history_coordinator.list_application_rows(self.profile.id)
         self.history_widget.render_rows(rows)
 
+    def _refresh_profile_from_db(self) -> Optional[UserProfile]:
+        profile_id = None
+        try:
+            from sqlalchemy import inspect as sa_inspect
+
+            state = sa_inspect(self.profile)
+            if state.identity:
+                profile_id = state.identity[0]
+        except Exception:
+            try:
+                profile_id = getattr(self.profile, "id", None)
+            except Exception:
+                profile_id = None
+        if not profile_id:
+            return None
+        try:
+            from ..models.database import get_session
+
+            with get_session() as session:
+                db_profile = session.get(UserProfile, profile_id)
+                if db_profile is None:
+                    return None
+                session.expunge(db_profile)
+                return db_profile
+        except Exception as exc:
+            logger.warning("Impossible de recharger le profil: %s", exc)
+            return None
+
     # --------------------------------------------------------------- ML toggles -------------------------------------------------------------
     def _toggle_zero_shot(self, enabled: bool) -> bool:
         success, message = self.ml_workflow_coordinator.toggle_zero_shot(enabled)
@@ -416,6 +444,9 @@ class MainWindowWithSidebar(QMainWindow):
         """Expose the full application reset flow without dupe logic."""
 
         try:
+            refreshed_profile = self._refresh_profile_from_db()
+            if refreshed_profile is not None:
+                self.on_profile_updated(refreshed_profile)
             dialog = SettingsDialog(
                 self.profile,
                 parent=self,
@@ -517,6 +548,9 @@ class MainWindowWithSidebar(QMainWindow):
     # ---------------------------------------------------------------- Utilities --------------------------------------------------------------
     def open_advanced_settings(self) -> None:
         try:
+            refreshed_profile = self._refresh_profile_from_db()
+            if refreshed_profile is not None:
+                self.on_profile_updated(refreshed_profile)
             dialog = SettingsDialog(
                 self.profile,
                 parent=self,

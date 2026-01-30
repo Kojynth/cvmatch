@@ -241,6 +241,7 @@ class AIModelTab(QWidget):
         super().__init__()
         self.profile = profile
         self.ml_coordinator = ml_coordinator
+        self._updating_memory_limits = False
         self.setup_ui()
 
     def setup_ui(self):
@@ -372,6 +373,40 @@ class AIModelTab(QWidget):
 
         opt_section.setLayout(opt_layout)
         tech_layout.addWidget(opt_section)
+
+        # Section allocation memoire (max_memory)
+        memory_section = QGroupBox("Allocation memoire (max_memory)")
+        memory_layout = QFormLayout()
+
+        self.max_memory_gpu_spin = QSpinBox()
+        self.max_memory_gpu_spin.setRange(10, 99)
+        self.max_memory_gpu_spin.setSuffix("%")
+        self.max_memory_gpu_spin.valueChanged.connect(self.on_memory_limits_changed)
+        memory_layout.addRow("GPU (VRAM):", self.max_memory_gpu_spin)
+
+        self.max_memory_cpu_spin = QSpinBox()
+        self.max_memory_cpu_spin.setRange(10, 99)
+        self.max_memory_cpu_spin.setSuffix("%")
+        self.max_memory_cpu_spin.valueChanged.connect(self.on_memory_limits_changed)
+        memory_layout.addRow("CPU (RAM):", self.max_memory_cpu_spin)
+
+        memory_hint = QLabel(
+            "Augmenter utilise plus de memoire (risque d'OOM). "
+            "Baisser augmente l'offload CPU et peut ralentir."
+        )
+        memory_hint.setStyleSheet("color: #666; font-size: 10px;")
+        memory_hint.setWordWrap(True)
+        memory_layout.addRow("", memory_hint)
+
+        memory_buttons = QHBoxLayout()
+        self.reset_memory_btn = QPushButton("Reinitialiser (90%/80%)")
+        self.reset_memory_btn.clicked.connect(self.reset_memory_limits)
+        memory_buttons.addWidget(self.reset_memory_btn)
+        memory_buttons.addStretch()
+        memory_layout.addRow("", memory_buttons)
+
+        memory_section.setLayout(memory_layout)
+        tech_layout.addWidget(memory_section)
 
         # Section cache et maintenance
         cache_section = QGroupBox("Cache et maintenance")
@@ -558,6 +593,12 @@ class AIModelTab(QWidget):
             self.xformers_check.setChecked(config.use_xformers)
             self.auto_gptq_check.setChecked(config.use_auto_gptq)
 
+            # Allocation memoire
+            custom = config.custom_parameters or {}
+            gpu_percent = custom.get("max_memory_gpu_percent", 90)
+            cpu_percent = custom.get("max_memory_cpu_percent", 80)
+            self._set_memory_limits(gpu_percent, cpu_percent)
+
             # Désactiver les optimisations non disponibles sur Windows
             import platform
 
@@ -575,6 +616,50 @@ class AIModelTab(QWidget):
 
         except ImportError as e:
             logger.warning(f"Configuration technique non disponible: {e}")
+
+    def _set_memory_limits(self, gpu_percent: int, cpu_percent: int) -> None:
+        """Met a jour les controles max_memory sans declencher de sauvegarde."""
+        self._updating_memory_limits = True
+        try:
+            self.max_memory_gpu_spin.setValue(int(gpu_percent))
+            self.max_memory_cpu_spin.setValue(int(cpu_percent))
+        finally:
+            self._updating_memory_limits = False
+
+    def on_memory_limits_changed(self) -> None:
+        """Sauvegarde les allocations max_memory configurees."""
+        if self._updating_memory_limits:
+            return
+        try:
+            from ..utils.model_config_manager import model_config_manager
+
+            gpu_percent = int(self.max_memory_gpu_spin.value())
+            cpu_percent = int(self.max_memory_cpu_spin.value())
+            model_config_manager.update_custom_parameters(
+                {
+                    "max_memory_gpu_percent": gpu_percent,
+                    "max_memory_cpu_percent": cpu_percent,
+                }
+            )
+        except Exception as e:
+            logger.error(f"Erreur mise a jour max_memory: {e}")
+
+    def reset_memory_limits(self) -> None:
+        """Reinitialise les valeurs max_memory par defaut."""
+        default_gpu = 90
+        default_cpu = 80
+        self._set_memory_limits(default_gpu, default_cpu)
+        try:
+            from ..utils.model_config_manager import model_config_manager
+
+            model_config_manager.update_custom_parameters(
+                {
+                    "max_memory_gpu_percent": default_gpu,
+                    "max_memory_cpu_percent": default_cpu,
+                }
+            )
+        except Exception as e:
+            logger.error(f"Erreur reinitialisation max_memory: {e}")
 
     def update_model_info(self):
         """Met à jour les informations du modèle sélectionné."""
@@ -772,6 +857,17 @@ class AIModelTab(QWidget):
 
         elif event_type == "cache_cleared":
             self.refresh_cache_info()
+        elif event_type == "custom_parameters_changed":
+            try:
+                from ..utils.model_config_manager import model_config_manager
+
+                config = model_config_manager.get_current_config()
+                custom = config.custom_parameters or {}
+                gpu_percent = custom.get("max_memory_gpu_percent", 90)
+                cpu_percent = custom.get("max_memory_cpu_percent", 80)
+                self._set_memory_limits(gpu_percent, cpu_percent)
+            except Exception as e:
+                logger.warning(f"Erreur synchro max_memory: {e}")
 
 
 class SettingsDialog(QDialog):
@@ -864,19 +960,49 @@ class SettingsDialog(QDialog):
             profile_values = self.profile_tab.get_values()
             preferences_values = self.preferences_tab.get_values()
 
-            # Mettre à jour le profil
+            # Sauvegarder en base
+            profile_id = None
+            try:
+                from sqlalchemy import inspect as sa_inspect
+
+                state = sa_inspect(self.profile)
+                if state.identity:
+                    profile_id = state.identity[0]
+            except Exception:
+                profile_id = getattr(self.profile, "id", None)
+
+            with get_session() as session:
+                db_profile = session.get(UserProfile, profile_id) if profile_id else None
+                if db_profile is None:
+                    logger.warning(
+                        "Profil introuvable en base, creation d'un nouveau profil."
+                    )
+                    db_profile = UserProfile(
+                        **{**profile_values, **preferences_values}
+                    )
+                    session.add(db_profile)
+                else:
+                    for key, value in profile_values.items():
+                        setattr(db_profile, key, value)
+                    for key, value in preferences_values.items():
+                        setattr(db_profile, key, value)
+                session.commit()
+                try:
+                    session.refresh(db_profile)
+                except Exception:
+                    pass
+                profile_id = db_profile.id
+
+            # Mettre à jour le profil local
             for key, value in profile_values.items():
                 setattr(self.profile, key, value)
 
             for key, value in preferences_values.items():
                 setattr(self.profile, key, value)
+            if getattr(self.profile, "id", None) is None and profile_id is not None:
+                self.profile.id = profile_id
 
-            # Sauvegarder en base
-            with get_session() as session:
-                session.add(self.profile)
-                session.commit()
-
-            logger.info("Paramètres sauvegardés pour profile_id=%s", self.profile.id)
+            logger.info("Paramètres sauvegardés pour profile_id=%s", profile_id)
             show_success(
                 "Paramètres sauvegardés avec succès", title="Succès", parent=self
             )
@@ -1309,4 +1435,3 @@ source "$VENV_DIR/bin/activate" || { echo "ERREUR: Activation venv"; exit 1; }
 
 "$VENV_DIR/bin/pip" install -r "./requirements_linux.txt" --quiet
 "$VENV_DIR/bin/python" main.py"""
-

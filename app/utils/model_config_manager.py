@@ -298,6 +298,24 @@ class ModelConfigManager:
         
         logger.info(f"Optimisations mises à jour: {len(optimizations)} actives")
         return True
+
+    def update_custom_parameters(self, updates: Dict[str, Any]) -> bool:
+        """Met à jour des paramètres avancés stockés dans custom_parameters."""
+        if not isinstance(updates, dict):
+            return False
+        try:
+            custom = self._current_config.custom_parameters
+            for key, value in updates.items():
+                if value is None:
+                    custom.pop(key, None)
+                else:
+                    custom[key] = value
+            self._save_config()
+            self._notify_observers("custom_parameters_changed", updates)
+            return True
+        except Exception as e:
+            logger.error(f"Erreur mise à jour custom_parameters: {e}")
+            return False
     
     def _adjust_quantization_for_model(self, model_info: ModelInfo):
         """Ajuste automatiquement la quantification selon le modèle."""
