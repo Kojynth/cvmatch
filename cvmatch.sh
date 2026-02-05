@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 
 # ================================================================
 # CVMatch - Lanceur Linux/macOS avec gestion venv
@@ -29,6 +29,28 @@ log_warning() {
 
 log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+}
+
+detect_python() {
+    local candidate
+    for candidate in python3 python; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+            if "$candidate" -c "import sys; sys.exit(0 if sys.version_info >= (3,8) else 1)" >/dev/null 2>&1; then
+                echo "$candidate"
+                return 0
+            fi
+        fi
+    done
+
+    for candidate in /usr/bin/python3 /usr/local/bin/python3 /opt/homebrew/bin/python3; do
+        if [[ -x "$candidate" ]]; then
+            if "$candidate" -c "import sys; sys.exit(0 if sys.version_info >= (3,8) else 1)" >/dev/null 2>&1; then
+                echo "$candidate"
+                return 0
+            fi
+        fi
+    done
+    return 1
 }
 
 echo ""
@@ -76,25 +98,31 @@ echo "[1/6] Verifications systeme..." >> "$SESSION_LOG"
 log_info "[1/6] Vérifications système..."
 
 # Test Python
-if ! command -v python3 &> /dev/null; then
-    log_error "Python 3 n'est pas installé"
+PYTHON_BIN="$(detect_python || true)"
+if [[ -z "$PYTHON_BIN" ]]; then
+    log_error "Python 3.8+ introuvable dans le PATH"
+    echo ""
+    echo "Diagnostic:"
+    echo "PATH=$PATH"
+    echo "python3: $(command -v python3 2>/dev/null || echo 'not found')"
+    echo "python:  $(command -v python 2>/dev/null || echo 'not found')"
     echo ""
     echo "Solutions selon votre distribution:"
-    echo "• Ubuntu/Debian: sudo apt update && sudo apt install python3 python3-venv python3-pip"
-    echo "• CentOS/RHEL:   sudo yum install python3 python3-venv python3-pip"  
-    echo "• Arch/Manjaro:  sudo pacman -S python python-virtualenv python-pip"
-    echo "• macOS:         brew install python3"
+    echo "â€¢ Ubuntu/Debian: sudo apt update && sudo apt install python3 python3-venv python3-pip"
+    echo "â€¢ CentOS/RHEL:   sudo yum install python3 python3-venv python3-pip"
+    echo "â€¢ Arch/Manjaro:  sudo pacman -S python python-virtualenv python-pip"
+    echo "â€¢ macOS:         brew install python3"
     exit 1
 fi
 
-PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-if [[ "$(python3 -c "import sys; print(sys.version_info >= (3, 8))")" != "True" ]]; then
-    log_error "Python 3.8+ requis, version détectée: $PYTHON_VERSION"
+PYTHON_VERSION=$($PYTHON_BIN -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+if ! $PYTHON_BIN -c "import sys; sys.exit(0 if sys.version_info >= (3,8) else 1)"; then
+    log_error "Python 3.8+ requis, version dÃ©tectÃ©e: $PYTHON_VERSION"
     exit 1
 fi
 
-echo "Python OK: $(python3 --version)" >> "$SESSION_LOG"
-log_success "Python OK: $(python3 --version)"
+echo "Python OK: $($PYTHON_BIN --version) ($PYTHON_BIN)" >> "$SESSION_LOG"
+log_success "Python OK: $($PYTHON_BIN --version) ($PYTHON_BIN)"
 
 # ================================================================
 # ÉTAPE 2: Gestion intelligente de l'environnement virtuel  
@@ -121,7 +149,7 @@ fi
 if [[ ! -d "$VENV_DIR" ]]; then
     log_info "Création environnement virtuel..."
     
-    if ! python3 -m venv "$VENV_DIR"; then
+    if ! "$PYTHON_BIN" -m venv "$VENV_DIR"; then
         log_error "Impossible de créer l'environnement virtuel"
         echo ""
         echo "Solutions:"
