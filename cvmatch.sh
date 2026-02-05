@@ -6,6 +6,7 @@
 # Ce script gère automatiquement l'environnement virtuel,
 # vérifie les dépendances et lance CVMatch de manière robuste.
 
+
 set -e  # Arrêter en cas d'erreur
 
 # Couleurs pour l'affichage
@@ -33,18 +34,18 @@ log_error() {
 
 detect_python() {
     local candidate
-    for candidate in python3 python; do
+    for candidate in python3.13 python3.12 python3.11 python3.10 python3.9 python3 python; do
         if command -v "$candidate" >/dev/null 2>&1; then
-            if "$candidate" -c "import sys; sys.exit(0 if sys.version_info >= (3,8) else 1)" >/dev/null 2>&1; then
+            if "$candidate" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" >/dev/null 2>&1; then
                 echo "$candidate"
                 return 0
             fi
         fi
     done
 
-    for candidate in /usr/bin/python3 /usr/local/bin/python3 /opt/homebrew/bin/python3; do
+    for candidate in /usr/bin/python3.13 /usr/bin/python3.12 /usr/bin/python3.11 /usr/bin/python3.10 /usr/bin/python3.9 /usr/bin/python3 /usr/local/bin/python3 /opt/homebrew/bin/python3; do
         if [[ -x "$candidate" ]]; then
-            if "$candidate" -c "import sys; sys.exit(0 if sys.version_info >= (3,8) else 1)" >/dev/null 2>&1; then
+            if "$candidate" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" >/dev/null 2>&1; then
                 echo "$candidate"
                 return 0
             fi
@@ -66,6 +67,10 @@ cd "$PROJECT_ROOT"
 VENV_DIR="$PROJECT_ROOT/cvmatch_env"
 VENV_PYTHON="$VENV_DIR/bin/python"
 VENV_PIP="$VENV_DIR/bin/pip"
+
+if [[ -z "${CVMATCH_AI_MODE:-}" ]]; then
+    CVMATCH_AI_MODE="lite"
+fi
 
 # Créer log de session avec timestamp dès le début
 SESSION_TIMESTAMP=$(date +"%Y-%d-%m_%H-%M-%S%3N")
@@ -100,7 +105,7 @@ log_info "[1/6] Vérifications système..."
 # Test Python
 PYTHON_BIN="$(detect_python || true)"
 if [[ -z "$PYTHON_BIN" ]]; then
-    log_error "Python 3.8+ introuvable dans le PATH"
+    log_error "Python 3.10+ introuvable dans le PATH"
     echo ""
     echo "Diagnostic:"
     echo "PATH=$PATH"
@@ -116,8 +121,8 @@ if [[ -z "$PYTHON_BIN" ]]; then
 fi
 
 PYTHON_VERSION=$($PYTHON_BIN -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-if ! $PYTHON_BIN -c "import sys; sys.exit(0 if sys.version_info >= (3,8) else 1)"; then
-    log_error "Python 3.8+ requis, version dÃ©tectÃ©e: $PYTHON_VERSION"
+if ! $PYTHON_BIN -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)"; then
+    log_error "Python 3.10+ requis, version dÃ©tectÃ©e: $PYTHON_VERSION"
     exit 1
 fi
 
@@ -197,45 +202,29 @@ if ! "$VENV_PYTHON" -c "import PySide6, torch, transformers, loguru, pypdf, sqlm
     log_warning "[INFO] Des dépendances critiques manquantes ont été détectées"
     log_warning "[INFO] Installation automatique en cours..."
     echo
-    
-    # Détection GPU pour PyTorch
-    echo "[CHECK] Détection GPU pour PyTorch optimisé..."
-    if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
-        log_success "[GPU] GPU CUDA détecté - Installation version CUDA"
-        TORCH_INDEX="--index-url https://download.pytorch.org/whl/cu121"
-    else
-        log_info "[CPU] Mode CPU - Installation version CPU"
-        TORCH_INDEX="--index-url https://download.pytorch.org/whl/cpu"
-    fi
-    
-    echo "[INSTALL] Installation depuis requirements_linux.txt..."
-    echo "[INSTALL] Ceci peut prendre plusieurs minutes..."
-    echo
-    
-    # Installation depuis requirements_linux.txt (source unique de vérité)
-    if [[ -f "requirements_linux.txt" ]]; then
-        log_info "Installation complète depuis requirements_linux.txt"
-        if ! "$VENV_PIP" install -r requirements_linux.txt $TORCH_INDEX --quiet --disable-pip-version-check; then
-            log_error "[ERREUR] Installation requirements_linux.txt échouée"
+
+    if [[ -f "installation_cvmatch_linux.sh" ]]; then
+        log_info "[INSTALL] Execution de installation_cvmatch_linux.sh..."
+        if ! bash "installation_cvmatch_linux.sh"; then
+            log_error "[ERREUR] Installation automatique échouée"
             exit 1
         fi
-        log_success "[OK] Installation requirements terminée"
     else
-        log_warning "[FALLBACK] requirements_linux.txt non trouvé, installation de base..."
-        # Installation minimale de secours
-        if ! "$VENV_PIP" install PySide6 torch transformers loguru pypdf sqlmodel --quiet --disable-pip-version-check; then
-            log_error "[ERREUR] Installation de base échouée"
-            exit 1
-        fi
-        log_success "[OK] Installation de base terminée"
+        log_error "[ERREUR] installation_cvmatch_linux.sh introuvable"
+        echo "Solutions:"
+        echo "1. Re-télécharger l'installateur Linux"
+        echo "2. Installer manuellement les dépendances"
+        exit 1
     fi
-    
-    echo
-    echo "==============================================="
-    echo "  INSTALLATION TERMINÉE AVEC SUCCÈS"
-    echo "==============================================="
-    echo
-    
+
+    # Réactiver le venv (l'installateur peut l'avoir recréé)
+    if [[ -f "$VENV_DIR/bin/activate" ]]; then
+        source "$VENV_DIR/bin/activate"
+    else
+        log_error "[ERREUR] Environnement virtuel introuvable après installation"
+        exit 1
+    fi
+
     # Test final simple
     echo "[VERIFY] Test final des imports..."
     if "$VENV_PYTHON" -c "import PySide6, torch; print('Tests imports OK')" &>/dev/null; then
@@ -270,7 +259,11 @@ fi
 # Verification modeles IA
 echo "[CHECK] Verification modeles IA..." >> "$SESSION_LOG"
 log_info "[CHECK] Verification modeles IA..."
-if "$VENV_PYTHON" scripts/check_ai_models.py >/dev/null 2>&1; then
+AI_CHECK_ARGS=(--include-llm)
+if [ -n "${CVMATCH_AI_MODE:-}" ]; then
+    AI_CHECK_ARGS+=(--mode "$CVMATCH_AI_MODE")
+fi
+if "$VENV_PYTHON" scripts/check_ai_models.py "${AI_CHECK_ARGS[@]}" >/dev/null 2>&1; then
     echo "[SUCCESS] Modeles IA detectes" >> "$SESSION_LOG"
     log_success "Modeles IA detectes"
 else
