@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 # ================================================================
 # CVMatch - Installateur Linux (recrÃ©e automatiquement)
 # ================================================================
@@ -95,42 +95,36 @@ else
 fi
 
 
-# Installation modèles IA interactifs
 echo
-echo "=============================================="
-echo "Configuration des modèles IA pour CVMatch"
-echo "=============================================="
-echo
-echo "CVMatch peut fonctionner avec ou sans modèles IA :"
-echo "- Avec IA : Extraction précise, classification automatique"
-echo "- Sans IA : Fonctionnement basique avec règles prédéfinies"
-echo
-
-read -p "Souhaitez-vous installer les modèles IA ? (O/n): " INSTALL_AI
-
-if [[ "$INSTALL_AI" =~ ^[Nn]$ ]] || [[ "$INSTALL_AI" =~ ^[Nn][Oo][Nn]$ ]]; then
-    echo
-    echo "Modèles IA ignorés - CVMatch fonctionnera en mode règles uniquement."
+echo "Verification modeles IA..."
+AI_CHECK_ARGS=(--include-llm)
+if [ -n "${CVMATCH_AI_MODE:-}" ]; then
+    AI_CHECK_ARGS+=(--mode "$CVMATCH_AI_MODE")
+fi
+if "$VENV_DIR/bin/python" scripts/check_ai_models.py "${AI_CHECK_ARGS[@]}"; then
+    echo "Modeles IA detectes."
 else
-    echo
-    echo "Lancement de l'installateur interactif des modèles..."
-    "$VENV_DIR/bin/python" scripts/interactive_model_installer.py
-
-    if [ $? -eq 0 ]; then
-        echo
-        echo "✅ Modèles IA installés avec succès!"
-        if [ -f "./installation_cvmatch_ai_linux.sh" ]; then
-            ./installation_cvmatch_ai_linux.sh || echo "[WARN] Préinstallation des modèles IA impossible (mode règles fallback)."
+    AI_STATUS=$?
+    if [ "$AI_STATUS" -eq 2 ]; then
+        echo "Modeles IA manquants. Installation optionnelle."
+        read -r -p "Installer les modeles IA maintenant ? (O/n): " INSTALL_AI
+        if [ -z "$INSTALL_AI" ] || [[ "$INSTALL_AI" =~ ^[OoYy]$ ]]; then
+            if [ -f "./installation_cvmatch_ai_linux.sh" ]; then
+                if [ -x "./installation_cvmatch_ai_linux.sh" ]; then
+                    ./installation_cvmatch_ai_linux.sh || echo "[WARN] Installation modeles IA echouee."
+                else
+                    bash ./installation_cvmatch_ai_linux.sh || echo "[WARN] Installation modeles IA echouee."
+                fi
+            else
+                echo "[WARN] installation_cvmatch_ai_linux.sh introuvable."
+            fi
         else
-            echo "[WARN] installation_cvmatch_ai_linux.sh introuvable (mode regles fallback)."
+            echo "Installation modeles IA ignoree."
         fi
     else
-        echo
-        echo "⚠️ Installation des modèles incomplète ou annulée."
-        echo "CVMatch fonctionnera en mode règles uniquement."
+        echo "[WARN] Verification modeles IA echouee."
     fi
 fi
 
-echo
-echo "Installation terminée!"
+echo "Installation terminee!"
 echo "Utilisez ./cvmatch.sh pour lancer l'application."
