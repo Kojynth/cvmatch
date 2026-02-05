@@ -34,18 +34,18 @@ log_error() {
 
 detect_python() {
     local candidate
-    for candidate in python3 python; do
+    for candidate in python3.13 python3.12 python3.11 python3.10 python3.9 python3 python; do
         if command -v "$candidate" >/dev/null 2>&1; then
-            if "$candidate" -c "import sys; sys.exit(0 if sys.version_info >= (3,8) else 1)" >/dev/null 2>&1; then
+            if "$candidate" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" >/dev/null 2>&1; then
                 echo "$candidate"
                 return 0
             fi
         fi
     done
 
-    for candidate in /usr/bin/python3 /usr/local/bin/python3 /opt/homebrew/bin/python3; do
+    for candidate in /usr/bin/python3.13 /usr/bin/python3.12 /usr/bin/python3.11 /usr/bin/python3.10 /usr/bin/python3.9 /usr/bin/python3 /usr/local/bin/python3 /opt/homebrew/bin/python3; do
         if [[ -x "$candidate" ]]; then
-            if "$candidate" -c "import sys; sys.exit(0 if sys.version_info >= (3,8) else 1)" >/dev/null 2>&1; then
+            if "$candidate" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" >/dev/null 2>&1; then
                 echo "$candidate"
                 return 0
             fi
@@ -105,7 +105,7 @@ log_info "[1/6] Vérifications système..."
 # Test Python
 PYTHON_BIN="$(detect_python || true)"
 if [[ -z "$PYTHON_BIN" ]]; then
-    log_error "Python 3.8+ introuvable dans le PATH"
+    log_error "Python 3.10+ introuvable dans le PATH"
     echo ""
     echo "Diagnostic:"
     echo "PATH=$PATH"
@@ -121,8 +121,8 @@ if [[ -z "$PYTHON_BIN" ]]; then
 fi
 
 PYTHON_VERSION=$($PYTHON_BIN -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-if ! $PYTHON_BIN -c "import sys; sys.exit(0 if sys.version_info >= (3,8) else 1)"; then
-    log_error "Python 3.8+ requis, version dÃ©tectÃ©e: $PYTHON_VERSION"
+if ! $PYTHON_BIN -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)"; then
+    log_error "Python 3.10+ requis, version dÃ©tectÃ©e: $PYTHON_VERSION"
     exit 1
 fi
 
