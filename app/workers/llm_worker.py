@@ -2711,6 +2711,52 @@ class CVGenerationWorker(QThread):
             sanitized["must_keep_facts"] = filtered
         return sanitized
 
+    def _fallback_critic_json(self, *, reason: str = "") -> Dict[str, Any]:
+        language = self._resolve_language_code()
+        job_title = ""
+        company = ""
+        if isinstance(self.offer_data, dict):
+            job_title = self.offer_data.get("job_title") or ""
+            company = self.offer_data.get("company") or ""
+
+        if language == "en":
+            rewrite_prompt = (
+                "Rewrite the CV to better match the job offer. "
+                "Use only facts present in the CV and keep contact details intact."
+            )
+        else:
+            rewrite_prompt = (
+                "Reecrire le CV pour mieux correspondre a l'offre. "
+                "Utiliser uniquement les faits presents dans le CV et conserver les contacts."
+            )
+
+        if job_title or company:
+            rewrite_prompt = f"{rewrite_prompt} Target: {job_title} {company}".strip()
+
+        payload = {
+            "schema_version": "critic.v1",
+            "scorecard": {
+                "ats_keyword_coverage": 50,
+                "clarity": 50,
+                "evidence_metrics": 50,
+                "consistency": 50,
+            },
+            "issues": [],
+            "missing_keywords": [],
+            "rewrite_plan": [],
+            "rewrite_prompt": rewrite_prompt,
+            "must_keep_facts": [],
+        }
+
+        try:
+            from ..schemas.critic_schema import CriticJSON
+
+            return CriticJSON.model_validate(payload).model_dump()
+        except Exception:
+            if reason:
+                logger.warning("Fallback CriticJSON used due to: %s", reason)
+            return payload
+
     def _is_slow_generation_device(self) -> bool:
         try:
             device = getattr(self.qwen_manager, "_device", None)
@@ -2799,6 +2845,41 @@ class CVGenerationWorker(QThread):
             cv_json["target_job_title"] = job_title
         if not cv_json.get("target_company") and company:
             cv_json["target_company"] = company
+
+    def _fallback_cv_json(
+        self, *, profile_json: Dict[str, Any], reason: str = ""
+    ) -> Dict[str, Any]:
+        from ..schemas.cv_schema import CVJSON
+
+        payload = {
+            "schema_version": "cv.v1",
+            "target_job_title": "",
+            "target_company": "",
+            "contact": {},
+            "summary": "",
+            "skills": [],
+            "experience": [],
+            "education": [],
+            "projects": [],
+            "languages": [],
+            "certifications": [],
+            "ats_keywords": [],
+            "render_hints": {
+                "notes": "",
+                "section_order": [],
+                "emphasis": [],
+                "tone": "",
+            },
+        }
+
+        try:
+            parsed = CVJSON.model_validate(payload).model_dump()
+        except Exception:
+            parsed = payload
+
+        if reason:
+            logger.warning("Fallback CVJSON used due to: %s", reason)
+        return parsed
 
     def _resolve_language_code(self) -> str:
         analysis = self.offer_data.get("analysis") if isinstance(self.offer_data, dict) else None
@@ -3617,12 +3698,12 @@ OUTPUT RULES:
             )
             payload = self._parse_json_response(raw)
             if not payload:
-                raise exc
+                return self._fallback_cv_json(profile_json=profile_json, reason=str(exc))
             try:
                 parsed = CVJSON.model_validate(payload)
             except ValidationError as val_exc:
                 logger.warning("Non-strict CVJSON draft validation failed: %s", val_exc)
-                raise exc from val_exc
+                return self._fallback_cv_json(profile_json=profile_json, reason=str(val_exc))
             return parsed.model_dump()
 
     def generate_cv_json_final(
@@ -3659,12 +3740,12 @@ OUTPUT RULES:
             )
             payload = self._parse_json_response(raw)
             if not payload:
-                raise exc
+                return self._fallback_cv_json(profile_json=profile_json, reason=str(exc))
             try:
                 parsed = CVJSON.model_validate(payload)
             except ValidationError as val_exc:
                 logger.warning("Non-strict CVJSON final validation failed: %s", val_exc)
-                raise exc from val_exc
+                return self._fallback_cv_json(profile_json=profile_json, reason=str(val_exc))
             return parsed.model_dump()
 
     def generate_critic_json(
@@ -3673,18 +3754,35 @@ OUTPUT RULES:
         cv_html: str,
         progress_callback=None,
     ) -> Dict[str, Any]:
+        from pydantic import ValidationError
         from ..schemas.critic_schema import CriticJSON
-        from ..utils.json_strict import generate_json_with_schema
+        from ..utils.json_strict import generate_json_with_schema, JsonStrictError
 
         messages = self._build_critic_messages(cv_html=cv_html)
-        return generate_json_with_schema(
-            role="critic",
-            schema_model=CriticJSON,
-            messages=messages,
-            qwen_manager=self.qwen_manager,
-            retries=3,
-            progress_callback=progress_callback,
-        )
+        try:
+            return generate_json_with_schema(
+                role="critic",
+                schema_model=CriticJSON,
+                messages=messages,
+                qwen_manager=self.qwen_manager,
+                retries=3,
+                progress_callback=progress_callback,
+            )
+        except JsonStrictError as exc:
+            logger.warning("Strict CriticJSON failed, retrying non-strict: %s", exc)
+            raw = self.qwen_manager.generate_structured_json(
+                messages["system"], messages["user"], progress_callback
+            )
+            payload = self._parse_json_response(raw)
+            if payload:
+                try:
+                    parsed = CriticJSON.model_validate(payload)
+                    return parsed.model_dump()
+                except ValidationError as val_exc:
+                    logger.warning(
+                        "Non-strict CriticJSON validation failed: %s", val_exc
+                    )
+            return self._fallback_critic_json(reason=str(exc))
 
     def run(self):
         """Run the Extractor/Critic/Generator pipeline."""
@@ -4001,12 +4099,34 @@ REGLES DE CONTENU:
         start = cleaned.find("{")
         end = cleaned.rfind("}")
         if start == -1 or end == -1 or end <= start:
-            return {}
-        candidate = cleaned[start : end + 1]
+            candidate = ""
+        else:
+            candidate = cleaned[start : end + 1]
+            try:
+                return json.loads(candidate)
+            except Exception:
+                pass
+
         try:
-            return json.loads(candidate)
+            from ..utils.json_strict import attempt_json_repair
         except Exception:
-            return {}
+            attempt_json_repair = None
+
+        if attempt_json_repair:
+            repaired = attempt_json_repair(cleaned)
+            if repaired:
+                try:
+                    return json.loads(repaired)
+                except Exception:
+                    pass
+            if candidate:
+                repaired = attempt_json_repair(candidate)
+                if repaired:
+                    try:
+                        return json.loads(repaired)
+                    except Exception:
+                        pass
+        return {}
 
     def _autocheck_unavailable_reason(self) -> str:
         loader = getattr(self.qwen_manager, "current_loader", "transformers")

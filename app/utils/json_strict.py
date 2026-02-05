@@ -70,6 +70,152 @@ def _summarize_output_for_log(text: str, max_chars: int = 180) -> str:
     return re.sub(r"[^ -~]", "?", snippet)
 
 
+def _attempt_truncated_json_repair(text: str) -> Optional[str]:
+    """Best-effort repair for truncated JSON output.
+
+    This only runs after json.loads fails, so it should be conservative.
+    It tries to close open strings/braces/brackets and remove trailing commas.
+    """
+    if not text:
+        return None
+    cleaned = text.strip()
+    if not cleaned:
+        return None
+    first_obj = cleaned.find("{")
+    first_arr = cleaned.find("[")
+    starts = [idx for idx in (first_obj, first_arr) if idx >= 0]
+    if not starts:
+        return None
+    start_idx = min(starts)
+    original = cleaned[start_idx:].rstrip()
+
+    in_string = False
+    escape = False
+    stack = []
+    for ch in original:
+        if escape:
+            escape = False
+            continue
+        if ch == "\\" and in_string:
+            escape = True
+            continue
+        if ch == "\"":
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            stack.append("{")
+        elif ch == "[":
+            stack.append("[")
+        elif ch == "}" and stack and stack[-1] == "{":
+            stack.pop()
+        elif ch == "]" and stack and stack[-1] == "[":
+            stack.pop()
+
+    candidate = original.rstrip()
+    if in_string:
+        if candidate.endswith("\\"):
+            candidate = candidate[:-1]
+        candidate += "\""
+
+    stripped = candidate.rstrip()
+    if stripped.endswith(":"):
+        candidate = stripped + " null"
+    elif stripped.endswith(","):
+        candidate = stripped[:-1]
+
+    if stack:
+        closing = "".join("}" if opener == "{" else "]" for opener in reversed(stack))
+        candidate += closing
+
+    if candidate == original:
+        return None
+    return candidate
+
+
+def attempt_json_repair(text: str) -> Optional[str]:
+    """Public wrapper for best-effort JSON repair."""
+    return _attempt_truncated_json_repair(text)
+
+
+def _coerce_critic_payload(payload: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return None
+    changed = False
+
+    scorecard = payload.get("scorecard")
+    if not isinstance(scorecard, dict):
+        scorecard = {}
+        payload["scorecard"] = scorecard
+        changed = True
+
+    def _coerce_int(value: Any, default: int) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return default
+
+    for key in ("ats_keyword_coverage", "clarity", "evidence_metrics", "consistency"):
+        if key not in scorecard:
+            scorecard[key] = 50
+            changed = True
+        else:
+            coerced = _coerce_int(scorecard.get(key), 50)
+            if scorecard.get(key) != coerced:
+                scorecard[key] = coerced
+                changed = True
+
+    if not isinstance(payload.get("rewrite_prompt"), str):
+        value = payload.get("rewrite_prompt")
+        payload["rewrite_prompt"] = "" if value is None else str(value)
+        changed = True
+
+    for key in ("issues", "missing_keywords", "rewrite_plan", "must_keep_facts"):
+        value = payload.get(key)
+        if value is None:
+            payload[key] = []
+            changed = True
+        elif not isinstance(value, list):
+            payload[key] = [value]
+            changed = True
+
+    issues = []
+    allowed_severity = {"blocker", "high", "medium", "low"}
+    allowed_category = {
+        "ATS",
+        "structure",
+        "evidence",
+        "relevance",
+        "style",
+        "consistency",
+        "formatting",
+        "language",
+    }
+    for entry in payload.get("issues") or []:
+        if not isinstance(entry, dict):
+            changed = True
+            continue
+        issue = dict(entry)
+        if issue.get("severity") not in allowed_severity:
+            issue["severity"] = "low"
+            changed = True
+        if issue.get("category") not in allowed_category:
+            issue["category"] = "relevance"
+            changed = True
+        for field in ("problem", "evidence", "fix"):
+            if not isinstance(issue.get(field), str):
+                value = issue.get(field)
+                issue[field] = "" if value is None else str(value)
+                changed = True
+        issues.append(issue)
+    payload["issues"] = issues
+
+    if changed:
+        logger.warning("Strict JSON critic payload coerced to required fields.")
+    return payload
+
+
 def generate_json_with_schema(
     *,
     role: str,
@@ -181,63 +327,79 @@ def generate_json_with_schema(
             attempt,
             len(stripped),
         )
+        payload = None
         try:
             payload = json.loads(stripped)
         except Exception as exc:
-            meta = ""
-            if stripped:
-                ends_with = stripped[-1]
-                brace_delta = stripped.count("{") - stripped.count("}")
-                bracket_delta = stripped.count("[") - stripped.count("]")
-                quote_count = stripped.count('"')
-                line_count = stripped.count("\n") + 1
-                meta = (
-                    f" len={len(stripped)} endswith={ends_with} brace_delta={brace_delta}"
-                    f" bracket_delta={bracket_delta} quotes={quote_count} lines={line_count}"
-                )
-                if not stripped.endswith(("}", "]")) or brace_delta != 0:
-                    retry_hint = (
-                        "Output was truncated. Return a shorter JSON: "
-                        "limit list sizes and keep string values concise."
+            repaired = _attempt_truncated_json_repair(stripped)
+            if repaired:
+                try:
+                    payload = json.loads(repaired)
+                    stripped = repaired
+                    logger.warning(
+                        "Strict JSON repaired output: role=%s attempt=%s", role, attempt
                     )
-                    if base_total and base_input:
-                        reduced_input = max(512, int(base_input * 0.85))
-                        target_new = base_new or max(256, base_total - base_input)
-                        target_new = max(256, int(target_new * 0.7))
-                        cap_new = 1200 if role == "generator" else 1600
-                        new_max = min(target_new, cap_new)
-                        reduced_total = min(base_total, reduced_input + new_max)
-                        retry_role_params = {
-                            **(role_params or {}),
-                            "max_input_tokens": reduced_input,
-                            "max_new_tokens": new_max,
-                            "max_total_tokens": reduced_total,
-                        }
-                        logger.warning(
-                            "Strict JSON retry params adjusted: role=%s attempt=%s params=%s",
-                            role,
-                            attempt,
-                            _summarize_params(retry_role_params),
+                except Exception:
+                    payload = None
+            if payload is None:
+                meta = ""
+                if stripped:
+                    ends_with = stripped[-1]
+                    brace_delta = stripped.count("{") - stripped.count("}")
+                    bracket_delta = stripped.count("[") - stripped.count("]")
+                    quote_count = stripped.count('"')
+                    line_count = stripped.count("\n") + 1
+                    meta = (
+                        f" len={len(stripped)} endswith={ends_with} brace_delta={brace_delta}"
+                        f" bracket_delta={bracket_delta} quotes={quote_count} lines={line_count}"
+                    )
+                    if not stripped.endswith(("}", "]")) or brace_delta != 0:
+                        retry_hint = (
+                            "Output was truncated. Return a shorter JSON: "
+                            "limit list sizes and keep string values concise."
                         )
-            last_error = f"Invalid JSON: {exc}{meta}"
-            logger.warning(
-                "Strict JSON parse failed: role=%s attempt=%s error=%s",
-                role,
-                attempt,
-                last_error,
-            )
-            if stripped:
-                head = _summarize_output_for_log(stripped[:240], 240)
-                tail = _summarize_output_for_log(stripped[-240:], 240)
+                        if base_total and base_input:
+                            reduced_input = max(512, int(base_input * 0.85))
+                            target_new = base_new or max(256, base_total - base_input)
+                            target_new = max(256, int(target_new * 0.7))
+                            cap_new = 1200 if role == "generator" else 1600
+                            new_max = min(target_new, cap_new)
+                            reduced_total = min(base_total, reduced_input + new_max)
+                            retry_role_params = {
+                                **(role_params or {}),
+                                "max_input_tokens": reduced_input,
+                                "max_new_tokens": new_max,
+                                "max_total_tokens": reduced_total,
+                            }
+                            logger.warning(
+                                "Strict JSON retry params adjusted: role=%s attempt=%s params=%s",
+                                role,
+                                attempt,
+                                _summarize_params(retry_role_params),
+                            )
+                last_error = f"Invalid JSON: {exc}{meta}"
                 logger.warning(
-                    "Strict JSON output snippet: role=%s attempt=%s head=%s tail=%s",
+                    "Strict JSON parse failed: role=%s attempt=%s error=%s",
                     role,
                     attempt,
-                    head,
-                    tail,
+                    last_error,
                 )
-            continue
+                if stripped:
+                    head = _summarize_output_for_log(stripped[:240], 240)
+                    tail = _summarize_output_for_log(stripped[-240:], 240)
+                    logger.warning(
+                        "Strict JSON output snippet: role=%s attempt=%s head=%s tail=%s",
+                        role,
+                        attempt,
+                        head,
+                        tail,
+                    )
+                continue
 
+        if role == "critic":
+            coerced = _coerce_critic_payload(payload)
+            if coerced is not None:
+                payload = coerced
         try:
             parsed = schema_model.model_validate(payload)
             elapsed = time.time() - start_ts
