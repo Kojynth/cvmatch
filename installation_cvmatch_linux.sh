@@ -49,6 +49,19 @@ source "$VENV_DIR/bin/activate" || {
     exit 1
 }
 
+# Détection GPU pour PyTorch
+TORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
+TORCH_VARIANT="CPU"
+if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
+    TORCH_INDEX_URL="https://download.pytorch.org/whl/cu121"
+    TORCH_VARIANT="CUDA"
+fi
+
+echo "Installation PyTorch ($TORCH_VARIANT)..."
+"$VENV_DIR/bin/python" -m pip install --upgrade --force-reinstall torch torchvision torchaudio --index-url "$TORCH_INDEX_URL"
+
+"$VENV_DIR/bin/python" -m pip install --upgrade huggingface_hub transformers protobuf sentencepiece
+
 # Installation dépendances
 echo "Installation dépendances..."
 REQ_FILE="$PROJECT_ROOT/requirements_linux.txt"
@@ -67,20 +80,8 @@ else
     echo "[WARN] Using unpinned requirements file."
     echo "[WARN] Consider creating requirements_linux.lock with hashes."
 fi
-"$VENV_DIR/bin/pip" install "${PIP_ARGS[@]}" -r "$REQ_TARGET"
-
-# Détection GPU pour PyTorch
-TORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
-TORCH_VARIANT="CPU"
-if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
-    TORCH_INDEX_URL="https://download.pytorch.org/whl/cu121"
-    TORCH_VARIANT="CUDA"
-fi
-
-echo "Installation PyTorch ($TORCH_VARIANT)..."
-"$VENV_DIR/bin/python" -m pip install --upgrade --force-reinstall torch torchvision torchaudio --index-url "$TORCH_INDEX_URL"
-
-"$VENV_DIR/bin/python" -m pip install --upgrade huggingface_hub transformers protobuf sentencepiece
+# Certains paquets utilisent torch durant le build : désactive l'isolation.
+"$VENV_DIR/bin/pip" install --no-build-isolation "${PIP_ARGS[@]}" -r "$REQ_TARGET"
 
 echo
 echo "Verification GPU PyTorch..."
