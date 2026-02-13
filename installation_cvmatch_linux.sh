@@ -1,7 +1,11 @@
-﻿#!/bin/bash
+#!/bin/bash
 # ================================================================
 # CVMatch - Installateur Linux (recrÃ©e automatiquement)
 # ================================================================
+if [ -z "${BASH_VERSION:-}" ]; then
+    exec bash "$0" "$@"
+fi
+
 set -e
 
 echo "CVMatch - Installateur Linux"

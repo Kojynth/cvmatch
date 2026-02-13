@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 
 # ================================================================
 # CVMatch - Lanceur Linux/macOS avec gestion venv
@@ -6,6 +6,9 @@
 # Ce script gère automatiquement l'environnement virtuel,
 # vérifie les dépendances et lance CVMatch de manière robuste.
 
+if [ -z "${BASH_VERSION:-}" ]; then
+    exec bash "$0" "$@"
+fi
 
 set -e  # Arrêter en cas d'erreur
 
@@ -339,7 +342,16 @@ echo "[5/6] Tests de sante..." >> "$SESSION_LOG"
 log_info "[5/6] Tests de santé..."
 
 # Test imports critiques
-if ! "$VENV_PYTHON" -c "try: import PySide6, torch, transformers, loguru, pypdf, sqlmodel, docx, psutil; print('Tests d\\'import: OK'); except ImportError as e: print(f'Erreur import: {e}'); exit(1)"; then
+if ! "$VENV_PYTHON" - <<'PY'
+import sys
+try:
+    import PySide6, torch, transformers, loguru, pypdf, sqlmodel, docx, psutil
+    print("Tests d'import: OK")
+except ImportError as exc:
+    print(f"Erreur import: {exc}")
+    sys.exit(1)
+PY
+then
     log_error "Tests d'import échoués"
     echo ""
     echo "Diagnostic:"
@@ -409,7 +421,20 @@ else
     "$VENV_PYTHON" --version
     echo ""
     echo "Test imports critiques:"
-    "$VENV_PYTHON" -c "try: import PySide6; from PySide6.QtWidgets import QApplication; import sys; print('PySide6: OK - Version', PySide6.__version__); print('QtWidgets: OK'); print('Python executable:', sys.executable); print('Python path:', sys.path[0]); except Exception as e: import traceback; print('ERREUR Import:', repr(e)); traceback.print_exc()"
+    "$VENV_PYTHON" - <<'PY'
+import sys
+try:
+    import PySide6
+    from PySide6.QtWidgets import QApplication
+    print("PySide6: OK - Version", PySide6.__version__)
+    print("QtWidgets: OK")
+    print("Python executable:", sys.executable)
+    print("Python path:", sys.path[0])
+except Exception as exc:
+    import traceback
+    print("ERREUR Import:", repr(exc))
+    traceback.print_exc()
+PY
     echo ""
     
     if [[ -d "logs" ]] && [[ -f "logs/app.log" ]]; then
