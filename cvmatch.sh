@@ -268,16 +268,46 @@ fi
 # Verification modeles IA
 echo "[CHECK] Verification modeles IA..." >> "$SESSION_LOG"
 log_info "[CHECK] Verification modeles IA..."
-AI_CHECK_ARGS=(--include-llm)
-if [ -n "${CVMATCH_AI_MODE:-}" ]; then
-    AI_CHECK_ARGS+=(--mode "$CVMATCH_AI_MODE")
+AI_MODE="${CVMATCH_AI_MODE:-lite}"
+AI_CHECK_ARGS=(--mode "$AI_MODE" --include-llm)
+if [ "${CVMATCH_SKIP_LLM:-}" = "1" ]; then
+    AI_CHECK_ARGS=(--mode "$AI_MODE")
 fi
+
+AI_OK=0
+AI_HAVE_LLM=1
 if "$VENV_PYTHON" scripts/check_ai_models.py "${AI_CHECK_ARGS[@]}" >/dev/null 2>&1; then
-    echo "[SUCCESS] Modeles IA detectes" >> "$SESSION_LOG"
-    log_success "Modeles IA detectes"
+    AI_OK=1
 else
     AI_STATUS=$?
     if [ "$AI_STATUS" -eq 2 ]; then
+        if [[ " ${AI_CHECK_ARGS[*]} " == *"--include-llm"* ]]; then
+            if "$VENV_PYTHON" scripts/check_ai_models.py --mode "$AI_MODE" >/dev/null 2>&1; then
+                AI_OK=1
+                AI_HAVE_LLM=0
+            fi
+        fi
+        if [ "$AI_OK" -eq 0 ] && [ "$AI_MODE" != "full" ]; then
+            if "$VENV_PYTHON" scripts/check_ai_models.py --mode full >/dev/null 2>&1; then
+                AI_OK=1
+                AI_HAVE_LLM=0
+                CVMATCH_AI_MODE="full"
+                AI_MODE="full"
+            fi
+        fi
+    fi
+fi
+
+if [ "$AI_OK" -eq 1 ]; then
+    if [ "$AI_HAVE_LLM" -eq 1 ]; then
+        echo "[SUCCESS] Modeles IA detectes (mode: $AI_MODE)" >> "$SESSION_LOG"
+        log_success "Modeles IA detectes (mode: $AI_MODE)"
+    else
+        echo "[WARN] Modeles IA de base detectes (mode: $AI_MODE) - LLM manquant." >> "$SESSION_LOG"
+        log_warning "Modeles IA de base detectes (mode: $AI_MODE) - LLM manquant."
+    fi
+else
+    if [ "${AI_STATUS:-1}" -eq 2 ]; then
         echo "[WARN] Modeles IA manquants. Installation optionnelle." >> "$SESSION_LOG"
         log_warning "Modeles IA manquants. Installation optionnelle."
         read -r -p "Installer les modeles IA maintenant ? (O/n): " RUN_AI_INSTALL
