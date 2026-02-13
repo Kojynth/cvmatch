@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 # ================================================================
 # CVMatch - Installateur Linux (recrÃ©e automatiquement)
 # ================================================================
@@ -41,7 +41,27 @@ detect_python() {
 }
 
 # VÃ©rification Python
-PYTHON_BIN="$(detect_python || true)"
+PYTHON_BIN=""
+if [[ -n "${CVMATCH_PYTHON:-}" ]]; then
+    if [[ -x "$CVMATCH_PYTHON" ]]; then
+        if [[ "$CVMATCH_PYTHON" == "$PROJECT_ROOT/"* ]]; then
+            echo "ERREUR: CVMATCH_PYTHON pointe vers le dossier projet."
+            exit 1
+        fi
+        if "$CVMATCH_PYTHON" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" >/dev/null 2>&1; then
+            PYTHON_BIN="$CVMATCH_PYTHON"
+        else
+            echo "ERREUR: CVMATCH_PYTHON doit etre en Python 3.10+."
+            exit 1
+        fi
+    else
+        echo "ERREUR: CVMATCH_PYTHON n'est pas executable."
+        exit 1
+    fi
+fi
+if [[ -z "$PYTHON_BIN" ]]; then
+    PYTHON_BIN="$(detect_python || true)"
+fi
 if [[ -z "$PYTHON_BIN" ]]; then
     echo "ERREUR: Python 3.10+ requis (hors du dossier projet)"
     echo "Installez Python avec: sudo apt install python3 python3-venv python3-pip"
