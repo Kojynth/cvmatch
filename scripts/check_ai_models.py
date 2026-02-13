@@ -34,7 +34,11 @@ def build_cache_dirs(project_root: Path) -> List[Path]:
     def add(path: Optional[Union[str, Path]]) -> None:
         if not path:
             return
-        candidates.add(Path(path).expanduser())
+        base = Path(path).expanduser()
+        candidates.add(base)
+        # Hugging Face caches often store models under a "hub" subdir.
+        if base.name != "hub":
+            candidates.add(base / "hub")
 
     add(os.environ.get("CVMATCH_HF_CACHE"))
     add(os.environ.get("HUGGINGFACE_HUB_CACHE"))
