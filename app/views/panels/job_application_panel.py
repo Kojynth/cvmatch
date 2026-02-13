@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -27,6 +26,7 @@ from ...models.user_profile import UserProfile
 from ...services.dialogs import show_error, show_info, show_success, show_warning
 from ...utils.emoji_utils import get_display_text
 from ...utils.parsers import DocumentParser
+from ...widgets.text_only_edit import TextOnlyEdit
 from ..profile_setup import DragDropArea
 from ..generation_loading_dialog import GenerationLoadingDialog
 
@@ -123,7 +123,7 @@ class JobApplicationPanel(QWidget):
         layout.addLayout(buttons_layout)
 
         # Zone de texte pour Ã©dition
-        text_edit = QTextEdit()
+        text_edit = TextOnlyEdit()
         text_edit.setPlaceholderText("Le texte de l'offre apparaîtra ici...")
         text_edit.setMaximumHeight(150)
         layout.addWidget(text_edit)

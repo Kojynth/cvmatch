@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 # ================================================================
 # CVMatch - Installateur Linux (recrÃ©e automatiquement)
 # ================================================================
@@ -11,19 +11,41 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR"
 cd "$PROJECT_ROOT"
 
+detect_python() {
+    local candidate resolved
+    for candidate in python3.13 python3.12 python3.11 python3.10 python3.9 python3 python; do
+        resolved="$(command -v "$candidate" 2>/dev/null || true)"
+        if [[ -n "$resolved" ]]; then
+            if [[ "$resolved" == "$PROJECT_ROOT/"* ]]; then
+                continue
+            fi
+            if "$resolved" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" >/dev/null 2>&1; then
+                echo "$resolved"
+                return 0
+            fi
+        fi
+    done
+
+    for resolved in /usr/bin/python3.13 /usr/bin/python3.12 /usr/bin/python3.11 /usr/bin/python3.10 /usr/bin/python3.9 /usr/bin/python3 /usr/local/bin/python3 /opt/homebrew/bin/python3; do
+        if [[ -x "$resolved" ]]; then
+            if [[ "$resolved" == "$PROJECT_ROOT/"* ]]; then
+                continue
+            fi
+            if "$resolved" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" >/dev/null 2>&1; then
+                echo "$resolved"
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
 # VÃ©rification Python
-PYTHON_BIN="$(command -v python3 || true)"
+PYTHON_BIN="$(detect_python || true)"
 if [[ -z "$PYTHON_BIN" ]]; then
-    echo "ERREUR: Python 3.10+ requis"
+    echo "ERREUR: Python 3.10+ requis (hors du dossier projet)"
     echo "Installez Python avec: sudo apt install python3 python3-venv python3-pip"
-    exit 1
-fi
-if [[ "$PYTHON_BIN" == "$PROJECT_ROOT/"* ]]; then
-    echo "ERROR: Refusing to run python from project directory."
-    exit 1
-fi
-if ! "$PYTHON_BIN" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)"; then
-    echo "ERREUR: Python 3.10+ requis"
+    echo "Astuce: desactivez le venv puis relancez l'installateur."
     exit 1
 fi
 
@@ -49,6 +71,19 @@ source "$VENV_DIR/bin/activate" || {
     exit 1
 }
 
+# Détection GPU pour PyTorch
+TORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
+TORCH_VARIANT="CPU"
+if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
+    TORCH_INDEX_URL="https://download.pytorch.org/whl/cu121"
+    TORCH_VARIANT="CUDA"
+fi
+
+echo "Installation PyTorch ($TORCH_VARIANT)..."
+"$VENV_DIR/bin/python" -m pip install --upgrade --force-reinstall torch torchvision torchaudio --index-url "$TORCH_INDEX_URL"
+
+"$VENV_DIR/bin/python" -m pip install --upgrade huggingface_hub transformers protobuf sentencepiece
+
 # Installation dépendances
 echo "Installation dépendances..."
 REQ_FILE="$PROJECT_ROOT/requirements_linux.txt"
@@ -67,20 +102,8 @@ else
     echo "[WARN] Using unpinned requirements file."
     echo "[WARN] Consider creating requirements_linux.lock with hashes."
 fi
-"$VENV_DIR/bin/pip" install "${PIP_ARGS[@]}" -r "$REQ_TARGET"
-
-# Détection GPU pour PyTorch
-TORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
-TORCH_VARIANT="CPU"
-if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
-    TORCH_INDEX_URL="https://download.pytorch.org/whl/cu121"
-    TORCH_VARIANT="CUDA"
-fi
-
-echo "Installation PyTorch ($TORCH_VARIANT)..."
-"$VENV_DIR/bin/python" -m pip install --upgrade --force-reinstall torch torchvision torchaudio --index-url "$TORCH_INDEX_URL"
-
-"$VENV_DIR/bin/python" -m pip install --upgrade huggingface_hub transformers protobuf sentencepiece
+# Certains paquets utilisent torch durant le build : désactive l'isolation.
+"$VENV_DIR/bin/pip" install --no-build-isolation "${PIP_ARGS[@]}" -r "$REQ_TARGET"
 
 echo
 echo "Verification GPU PyTorch..."
