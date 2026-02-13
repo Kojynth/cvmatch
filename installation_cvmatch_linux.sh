@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 # ================================================================
 # CVMatch - Installateur Linux (recrÃ©e automatiquement)
 # ================================================================
@@ -41,12 +41,41 @@ detect_python() {
 }
 
 # VÃ©rification Python
-PYTHON_BIN="$(detect_python || true)"
+PYTHON_BIN=""
+if [[ -n "${CVMATCH_PYTHON:-}" ]]; then
+    if [[ -x "$CVMATCH_PYTHON" ]]; then
+        if [[ "$CVMATCH_PYTHON" == "$PROJECT_ROOT/"* ]]; then
+            echo "ERREUR: CVMATCH_PYTHON pointe vers le dossier projet."
+            exit 1
+        fi
+        if "$CVMATCH_PYTHON" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" >/dev/null 2>&1; then
+            PYTHON_BIN="$CVMATCH_PYTHON"
+        else
+            echo "ERREUR: CVMATCH_PYTHON doit etre en Python 3.10+."
+            exit 1
+        fi
+    else
+        echo "ERREUR: CVMATCH_PYTHON n'est pas executable."
+        exit 1
+    fi
+fi
+if [[ -z "$PYTHON_BIN" ]]; then
+    PYTHON_BIN="$(detect_python || true)"
+fi
 if [[ -z "$PYTHON_BIN" ]]; then
     echo "ERREUR: Python 3.10+ requis (hors du dossier projet)"
     echo "Installez Python avec: sudo apt install python3 python3-venv python3-pip"
     echo "Astuce: desactivez le venv puis relancez l'installateur."
     exit 1
+fi
+PYTHON_VERSION="$("$PYTHON_BIN" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")"
+if [[ "${CVMATCH_FORCE_GPU:-}" == "1" ]]; then
+    case "$PYTHON_VERSION" in
+        3.12|3.13)
+            echo "[WARN] Python $PYTHON_VERSION peut poser probleme avec flash-attn/xformers."
+            echo "[WARN] Recommande: Python 3.11 pour un stack GPU stable."
+            ;;
+    esac
 fi
 
 # CrÃ©ation environnement virtuel
@@ -70,6 +99,10 @@ source "$VENV_DIR/bin/activate" || {
     echo "ERREUR: Activation environnement"
     exit 1
 }
+
+# Mise a jour pip/setuptools/wheel (evite erreurs de build)
+echo "Mise a jour pip/setuptools/wheel..."
+"$VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel
 
 # Détection GPU pour PyTorch
 TORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
@@ -103,7 +136,20 @@ else
     echo "[WARN] Consider creating requirements_linux.lock with hashes."
 fi
 # Certains paquets utilisent torch durant le build : désactive l'isolation.
-"$VENV_DIR/bin/pip" install --no-build-isolation "${PIP_ARGS[@]}" -r "$REQ_TARGET"
+# Si nvcc est absent, ignorer les packages GPU/compile lourds.
+REQ_TO_USE="$REQ_TARGET"
+if ! command -v nvcc >/dev/null 2>&1; then
+    if [[ "${CVMATCH_FORCE_GPU:-}" == "1" ]]; then
+        echo "[ERREUR] nvcc introuvable mais CVMATCH_FORCE_GPU=1."
+        echo "Installez le CUDA toolkit (nvcc) puis relancez l'installation."
+        exit 1
+    fi
+    echo "[WARN] nvcc introuvable - desactivation des optimisations GPU (flash-attn/vllm/xformers/torch-tensorrt/onnxruntime-gpu/auto-gptq/exllamav2)."
+    TMP_REQ="$(mktemp)"
+    grep -v -E "^(flash-attn|vllm|xformers|torch-tensorrt|onnxruntime-gpu|auto-gptq|exllamav2)[[:space:]]*([<=>].*)?$" "$REQ_TARGET" > "$TMP_REQ"
+    REQ_TO_USE="$TMP_REQ"
+fi
+"$VENV_DIR/bin/pip" install --no-build-isolation "${PIP_ARGS[@]}" -r "$REQ_TO_USE"
 
 echo
 echo "Verification GPU PyTorch..."

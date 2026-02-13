@@ -204,6 +204,15 @@ if ! "$VENV_PYTHON" -c "import PySide6, torch, transformers, loguru, pypdf, sqlm
     echo
 
     if [[ -f "installation_cvmatch_linux.sh" ]]; then
+        if [[ -n "${PYTHON_BIN:-}" ]]; then
+            "$PYTHON_BIN" - <<'PY'
+from pathlib import Path
+path = Path("installation_cvmatch_linux.sh")
+data = path.read_bytes()
+if data.startswith(b"\xef\xbb\xbf"):
+    path.write_bytes(data[3:])
+PY
+        fi
         log_info "[INSTALL] Execution de installation_cvmatch_linux.sh..."
         if ! bash "installation_cvmatch_linux.sh"; then
             log_error "[ERREUR] Installation automatique échouée"
