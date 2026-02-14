@@ -1006,6 +1006,18 @@ class QwenManager:
 
         lmfe_kwargs = build_lmfe_generation_kwargs(self._tokenizer, schema)
 
+        use_cache = True
+        try:
+            if getattr(self._device, "type", None) == "cuda" and self._should_disable_kv_cache():
+                free_vram = self._get_free_vram_gb()
+                use_cache = False
+                note = f"[WARN] VRAM faible ({free_vram:.1f}GB) : KV cache désactivé."
+                logger.warning(note)
+                if progress_callback:
+                    progress_callback(note)
+        except Exception:
+            pass
+
         with torch.no_grad():
             generate_kwargs = {
                 "max_new_tokens": max_new_tokens,
@@ -1017,6 +1029,7 @@ class QwenManager:
                 "pad_token_id": self._tokenizer.eos_token_id,
                 "eos_token_id": self._tokenizer.eos_token_id,
                 "max_time": max_time_s,
+                "use_cache": use_cache,
                 **lmfe_kwargs,
             }
             outputs = self._model.generate(**inputs, **generate_kwargs)
@@ -1197,6 +1210,58 @@ class QwenManager:
             logger.warning(f"Erreur vérification mémoire: {e}")
             return True, None
 
+    def _get_free_vram_gb(self) -> float:
+        if not TORCH_AVAILABLE or not torch.cuda.is_available():
+            return 0.0
+        try:
+            if hasattr(torch.cuda, "mem_get_info"):
+                free_bytes, _ = torch.cuda.mem_get_info()
+                return free_bytes / (1024**3)
+        except Exception:
+            pass
+        try:
+            if hasattr(gpu_manager, "get_available_vram"):
+                return float(gpu_manager.get_available_vram())
+        except Exception:
+            pass
+        return 0.0
+
+    def _get_vram_headroom_gb(self) -> float:
+        custom = self.custom_parameters or {}
+        try:
+            override = float(custom.get("vram_headroom_gb", 0) or 0)
+            if override > 0:
+                return override
+        except Exception:
+            pass
+        try:
+            total_vram = float(getattr(gpu_manager, "gpu_info", {}).get("total_memory_gb", 0) or 0)
+        except Exception:
+            total_vram = 0.0
+        if total_vram > 0:
+            return max(1.5, min(4.0, total_vram * 0.2))
+        return 2.0
+
+    def _should_disable_kv_cache(self) -> bool:
+        if not TORCH_AVAILABLE or not torch.cuda.is_available():
+            return False
+        custom = self.custom_parameters or {}
+        try:
+            threshold = float(custom.get("disable_kv_cache_below_gb", 0) or 0)
+        except Exception:
+            threshold = 0.0
+        if threshold <= 0:
+            try:
+                total_vram = float(getattr(gpu_manager, "gpu_info", {}).get("total_memory_gb", 0) or 0)
+            except Exception:
+                total_vram = 0.0
+            if total_vram > 0:
+                threshold = max(1.0, min(2.5, total_vram * 0.12))
+            else:
+                threshold = 1.5
+        free_vram = self._get_free_vram_gb()
+        return free_vram > 0 and free_vram < threshold
+
     def _build_max_memory_map(self) -> Optional[Dict[Union[int, str], str]]:
         """Build a max_memory map for auto device placement."""
         if not TORCH_AVAILABLE or not torch.cuda.is_available():
@@ -1231,7 +1296,11 @@ class QwenManager:
             return None
 
         gpu_percent = _get_percent("max_memory_gpu_percent", 90)
-        vram_budget_mib = max(512, int(free_vram_gb * 1024 * (gpu_percent / 100.0)))
+        headroom_gb = self._get_vram_headroom_gb()
+        usable_vram_gb = max(0.0, free_vram_gb - headroom_gb)
+        if usable_vram_gb <= 0:
+            usable_vram_gb = max(0.0, free_vram_gb * 0.5)
+        vram_budget_mib = max(512, int(usable_vram_gb * 1024 * (gpu_percent / 100.0)))
         memory_map: Dict[Union[int, str], str] = {0: f"{vram_budget_mib}MiB"}
 
         try:
@@ -2150,6 +2219,20 @@ class QwenManager:
             if progress_callback:
                 progress_callback(f"🤖 Génération du CV (~{max_tokens} tokens max)...")
 
+            use_cache = True
+            if not is_cpu and self._should_disable_kv_cache():
+                free_vram = self._get_free_vram_gb()
+                use_cache = False
+                note = f"[WARN] VRAM faible ({free_vram:.1f}GB) : KV cache désactivé."
+                logger.warning(note)
+                if progress_callback:
+                    progress_callback(note)
+            if TORCH_AVAILABLE and torch.cuda.is_available():
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
+
             # Génération avec paramètres optimisés
             with torch.no_grad():
                 outputs = self._model.generate(
@@ -2162,7 +2245,7 @@ class QwenManager:
                     repetition_penalty=1.1,
                     pad_token_id=self._tokenizer.eos_token_id,
                     eos_token_id=self._tokenizer.eos_token_id,
-                    use_cache=True
+                    use_cache=use_cache
                 )
             
             # Décodage de la réponse avec protection contre les débordements
@@ -2257,6 +2340,23 @@ class QwenManager:
             else:
                 max_new_tokens = max_new_tokens_cap
 
+            use_cache = True
+            try:
+                if getattr(self._device, "type", None) == "cuda" and self._should_disable_kv_cache():
+                    free_vram = self._get_free_vram_gb()
+                    use_cache = False
+                    note = f"[WARN] VRAM faible ({free_vram:.1f}GB) : KV cache désactivé."
+                    logger.warning(note)
+                    if progress_callback:
+                        progress_callback(note)
+            except Exception:
+                pass
+            if TORCH_AVAILABLE and torch.cuda.is_available():
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
+
             with torch.no_grad():
                 outputs = self._model.generate(
                     **inputs,
@@ -2267,6 +2367,7 @@ class QwenManager:
                     repetition_penalty=1.05,
                     pad_token_id=self._tokenizer.eos_token_id,
                     eos_token_id=self._tokenizer.eos_token_id,
+                    use_cache=use_cache,
                 )
 
             generated_text = self._tokenizer.decode(
