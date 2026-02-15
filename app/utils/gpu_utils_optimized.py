@@ -9,6 +9,7 @@ Version optimisée avec cache pour la détection GPU.
 import json
 import psutil
 import time
+import re
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 from ..logging.safe_logger import get_safe_logger
@@ -175,6 +176,17 @@ class GPUManager:
         
         # Sauvegarder en cache
         self._save_gpu_cache(gpu_info)
+
+    def _get_rtx_model_number(self) -> Optional[int]:
+        """Extract RTX model number from GPU name."""
+        gpu_name = str(self.gpu_info.get("name", "")).lower() if self.gpu_info else ""
+        match = re.search(r"rtx\s*(\d{4})", gpu_name)
+        if not match:
+            return None
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return None
     
     def get_available_vram(self) -> float:
         """Retourne la VRAM disponible en GB."""
@@ -203,20 +215,22 @@ class GPUManager:
             }
         
         available_vram = self.get_available_vram()
-        
-        # Estimations optimisées pour RTX 4050 (6GB VRAM)
+        total_vram = float(self.gpu_info.get("total_memory_gb", 0) or 0)
+        # Estimations optimisees pour GPU faible VRAM (~6GB)
         memory_requirements = {
-            "fp16": model_size_gb * 2,      # ~64GB (impossible RTX 4050)
-            "int8": model_size_gb * 1,      # ~32GB (impossible RTX 4050)  
-            "int4": model_size_gb * 0.5,    # ~16GB (impossible RTX 4050)
-            "gptq": model_size_gb * 0.25,   # ~8GB (limite RTX 4050)
-            "awq": model_size_gb * 0.22,    # ~7GB (optimal RTX 4050)
-            "ggml": model_size_gb * 0.20,   # ~6.4GB (très optimal RTX 4050)
+            "fp16": model_size_gb * 2,
+            "int8": model_size_gb * 1,
+            "int4": model_size_gb * 0.5,
+            "gptq": model_size_gb * 0.25,
+            "awq": model_size_gb * 0.22,
+            "ggml": model_size_gb * 0.20,
         }
         
-        # Détection spécifique RTX 4050
-        gpu_name = self.gpu_info.get("name", "").lower()
-        is_rtx_4050 = "rtx 4050" in gpu_name or available_vram <= 6.5
+        # Detection RTX et VRAM faible
+        rtx_model_number = self._get_rtx_model_number()
+        is_rtx_4050_or_more = rtx_model_number is not None and rtx_model_number >= 4050
+        is_low_vram = 0 < total_vram <= 6.5
+        label = f"RTX {rtx_model_number}" if is_rtx_4050_or_more else "GPU faible VRAM"
         
         # Import PyTorch seulement si GPU CUDA disponible
         if self.gpu_info.get("cuda_available", False):
@@ -231,8 +245,11 @@ class GPUManager:
                 "reason": "CPU-only mode (no PyTorch import required)"
             }
         
-        if is_rtx_4050:
-            logger.info("🎮 RTX 4050 détectée - Configuration ultra-optimisée")
+        if is_low_vram:
+            if is_rtx_4050_or_more:
+                logger.info(f"[GPU] {label} detectee - Configuration ultra-optimisee")
+            else:
+                logger.info("[GPU] GPU faible VRAM detectee - Configuration optimisee")
             
             if available_vram >= memory_requirements["ggml"]:
                 return {
@@ -241,7 +258,7 @@ class GPUManager:
                     "load_in_4bit": True,
                     "bnb_4bit_compute_dtype": "float16",
                     "bnb_4bit_use_double_quant": True,
-                    "reason": f"RTX 4050 optimisée: 4-bit + FP16 ({available_vram:.1f}GB disponible)"
+                    "reason": f"{label} optimisée: 4-bit + FP16 ({available_vram:.1f}GB disponible)"
                 }
             else:
                 return {
@@ -249,7 +266,7 @@ class GPUManager:
                     "dtype": "float32",
                     "load_in_8bit": False,
                     "load_in_4bit": False,
-                    "reason": f"VRAM insuffisante RTX 4050: {available_vram:.1f}GB < {memory_requirements['ggml']:.1f}GB requis"
+                    "reason": f"VRAM insuffisante ({label}): {available_vram:.1f}GB < {memory_requirements['ggml']:.1f}GB requis"
                 }
         
         # Configuration générale pour autres GPU
