@@ -8,6 +8,7 @@ Worker pour la génération de CV avec le modèle Qwen2.5-32B-Instruct.
 import json
 import re
 import time
+import os
 import unicodedata
 import inspect
 from difflib import SequenceMatcher
@@ -2082,6 +2083,12 @@ class QwenManager:
         if not self.model_loaded:
             self.load_model(progress_callback, allow_fallback=allow_fallback)
 
+        if (
+            getattr(self, "current_loader", "transformers") != "llama_cpp"
+            and self._should_use_chunked_generation(prompt)
+        ):
+            return self._generate_cv_chunked(prompt, progress_callback)
+
         if getattr(self, "current_loader", "transformers") == "llama_cpp":
             try:
                 if progress_callback:
@@ -2429,6 +2436,447 @@ CV en Markdown:
 """
 
         return formatted_prompt
+
+    def _cv_section_system_prompt(self, language_code: str) -> str:
+        if language_code == "en":
+            return (
+                "You are a senior recruiter and ATS expert. "
+                "Use ONLY the candidate data provided. Do not invent facts. "
+                "Output ONLY the requested section in Markdown."
+            )
+        return (
+            "Tu es un recruteur senior et expert ATS. "
+            "Utilise UNIQUEMENT les données candidat fournies. "
+            "N'invente aucun fait. "
+            "Retourne UNIQUEMENT la section demandée en Markdown."
+        )
+
+    def _extract_prompt_block(self, text: str, start_marker: str, end_marker: str) -> str:
+        if not text:
+            return ""
+        start = text.find(start_marker)
+        if start == -1:
+            return ""
+        end = text.find(end_marker, start + len(start_marker))
+        if end == -1:
+            end = len(text)
+        return text[start:end].strip()
+
+    def _extract_autocheck_feedback(self, base_prompt: str) -> str:
+        feedback = self._extract_prompt_block(
+            base_prompt,
+            "AUTO-CHECK FEEDBACK",
+            "CURRENT CV",
+        )
+        if feedback:
+            return feedback
+        return self._extract_prompt_block(
+            base_prompt,
+            "AUTO-CHECK FEEDBACK",
+            "Regenerate the full CV",
+        )
+
+    def _extract_current_cv_block(self, base_prompt: str) -> str:
+        block = self._extract_prompt_block(
+            base_prompt,
+            "CURRENT CV (markdown):",
+            "Regenerate the full CV",
+        )
+        return block
+
+    def _normalize_heading(self, text: str) -> str:
+        if not text:
+            return ""
+        normalized = unicodedata.normalize("NFKD", text)
+        normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+        normalized = re.sub(r"\s+", " ", normalized.lower()).strip()
+        return normalized
+
+    def _parse_markdown_sections(self, cv_markdown: str) -> Dict[str, str]:
+        sections: Dict[str, str] = {}
+        current_title = ""
+        buffer: List[str] = []
+        for raw_line in (cv_markdown or "").splitlines():
+            line = raw_line.strip()
+            if line.startswith("## "):
+                if current_title:
+                    sections[current_title] = "\n".join(buffer).strip()
+                current_title = line[3:].strip()
+                buffer = []
+                continue
+            if current_title:
+                buffer.append(raw_line)
+        if current_title:
+            sections[current_title] = "\n".join(buffer).strip()
+        return sections
+
+    def _find_section_text(self, sections: Dict[str, str], keywords: List[str]) -> str:
+        if not sections:
+            return ""
+        normalized_keywords = [self._normalize_heading(k) for k in keywords if k]
+        for title, body in sections.items():
+            title_norm = self._normalize_heading(title)
+            for keyword in normalized_keywords:
+                if keyword and keyword in title_norm:
+                    return body or ""
+        return ""
+
+    def _parse_candidate_sections(self, candidate_block: str) -> Dict[str, Dict[str, str]]:
+        header_map = {
+            "CONTACT (profil):": "contact",
+            "INFOS COMPLEMENTAIRES (profil detaille):": "extra",
+            "RESUME (profil detaille):": "summary",
+            "LIENS (profil detaille):": "links",
+            "EXPERIENCES (profil detaille):": "experience",
+            "FORMATION (profil detaille):": "education",
+            "COMPETENCES (profil detaille):": "skills",
+            "SOFT SKILLS (profil detaille):": "soft_skills",
+            "PROJETS (profil detaille):": "projects",
+            "CERTIFICATIONS (profil detaille):": "certifications",
+            "VOLONTARIAT (profil detaille):": "volunteering",
+            "LANGUES (profil detaille):": "languages",
+            "CENTRES D'INTERET (profil detaille):": "interests",
+            "LETTRE DE MOTIVATION TYPE (profil):": "cover_letter",
+            "CV DE REFERENCE (texte brut, pour details):": "master_cv",
+        }
+
+        sections: Dict[str, Dict[str, str]] = {}
+        current_key: Optional[str] = None
+        for raw_line in (candidate_block or "").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line in header_map:
+                current_key = header_map[line]
+                sections[current_key] = {"header": line, "text": ""}
+                continue
+            if current_key:
+                existing = sections[current_key].get("text", "")
+                sections[current_key]["text"] = (existing + "\n" + raw_line).strip()
+        return sections
+
+    def _build_section_context(
+        self,
+        sections: Dict[str, Dict[str, str]],
+        keys: List[str],
+        max_chars: int = 1800,
+    ) -> str:
+        parts: List[str] = []
+        for key in keys:
+            data = sections.get(key)
+            if not data:
+                continue
+            header = data.get("header") or ""
+            text = data.get("text") or ""
+            if not text.strip():
+                continue
+            parts.append(f"{header}\n{text}".strip())
+        combined = "\n\n".join(parts).strip()
+        if max_chars > 0:
+            combined = _trim_text(combined, max_chars)
+        return combined
+
+    def _normalize_section_output(self, text: str, title: str, placeholder: str) -> str:
+        content = (text or "").strip()
+        if "<|im_end|>" in content:
+            content = content.split("<|im_end|>")[0].strip()
+        if not content:
+            return f"## {title}\n{placeholder}"
+        lines = [line.rstrip() for line in content.splitlines() if line.strip()]
+        if lines and lines[0].lstrip().startswith("#"):
+            lines.pop(0)
+        body = "\n".join(lines).strip()
+        if not body:
+            body = placeholder
+        return f"## {title}\n{body}".strip()
+
+    def _should_use_chunked_generation(self, base_prompt: str) -> bool:
+        env_flag = os.getenv("CVMATCH_CHUNKED_CV")
+        if env_flag is not None:
+            return env_flag.strip().lower() in ("1", "true", "yes", "y")
+
+        custom = self.custom_parameters or {}
+        if "chunked_generation" in custom:
+            return bool(custom.get("chunked_generation"))
+
+        try:
+            total_vram = float(getattr(gpu_manager, "gpu_info", {}).get("total_memory_gb", 0) or 0)
+        except Exception:
+            total_vram = 0.0
+
+        model_hint = str(self.model_name or "").lower()
+        if total_vram and total_vram <= 12 and ("7b" in model_hint or "8b" in model_hint):
+            return True
+
+        free_vram = self._get_free_vram_gb()
+        if free_vram > 0 and free_vram < max(2.0, self._get_vram_headroom_gb()):
+            return True
+        return False
+
+    def _generate_text_with_prompt(
+        self,
+        formatted_prompt: str,
+        max_tokens: int,
+        temperature: float,
+        top_p: float,
+        do_sample: bool,
+        progress_callback=None,
+    ) -> str:
+        if not TRANSFORMERS_AVAILABLE or self._model is None or self._tokenizer is None:
+            return ""
+
+        model_max_positions = 4096
+        try:
+            if hasattr(self._model, "config") and hasattr(self._model.config, "max_position_embeddings"):
+                model_max_positions = int(self._model.config.max_position_embeddings)
+        except Exception:
+            pass
+
+        try:
+            opt_max_len = int((self._optimization_config or {}).get("max_model_len") or 0)
+        except Exception:
+            opt_max_len = 0
+        max_total_len = min(opt_max_len or model_max_positions, model_max_positions)
+        max_new_tokens_cap = min(max_tokens, max_total_len // 2)
+        prompt_max_len = max(256, max_total_len - max_new_tokens_cap - 64)
+
+        inputs = self._tokenizer(
+            formatted_prompt,
+            return_tensors="pt",
+            truncation=True,
+            max_length=prompt_max_len,
+        ).to(self._device)
+
+        input_len = int(inputs.input_ids.shape[1])
+        allowed_new_tokens = max_total_len - input_len - 32
+        if allowed_new_tokens > 0:
+            max_tokens = min(max_tokens, max_new_tokens_cap, allowed_new_tokens)
+        else:
+            max_tokens = min(max_tokens, max_new_tokens_cap)
+
+        use_cache = True
+        if getattr(self._device, "type", None) == "cuda" and self._should_disable_kv_cache():
+            free_vram = self._get_free_vram_gb()
+            use_cache = False
+            note = f"[WARN] VRAM faible ({free_vram:.1f}GB) : KV cache désactivé."
+            logger.warning(note)
+            if progress_callback:
+                progress_callback(note)
+
+        if TORCH_AVAILABLE and torch.cuda.is_available():
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+        with torch.no_grad():
+            outputs = self._model.generate(
+                **inputs,
+                max_new_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=50,
+                do_sample=do_sample,
+                repetition_penalty=1.05,
+                pad_token_id=self._tokenizer.eos_token_id,
+                eos_token_id=self._tokenizer.eos_token_id,
+                use_cache=use_cache,
+            )
+
+        return self._tokenizer.decode(
+            outputs[0][inputs.input_ids.shape[1]:],
+            skip_special_tokens=True,
+        )
+
+    def _generate_cv_chunked(self, base_prompt: str, progress_callback=None) -> str:
+        lang_match = re.search(r"LANGUE:\s*([a-zA-Z-]+)", base_prompt or "")
+        language_code = _normalize_language(lang_match.group(1)) if lang_match else "fr"
+        placeholder = "[TO COMPLETE]" if language_code == "en" else "[A COMPLETER]"
+
+        if progress_callback:
+            progress_callback("[LOW VRAM] Generation en sections (mode fragmenté)...")
+
+        offer_block = self._extract_prompt_block(base_prompt, "OFFRE CIBLE:", "IDENTITE CANDIDAT")
+        if offer_block:
+            offer_block = _trim_text(offer_block, 1400)
+
+        identity_block = self._extract_prompt_block(base_prompt, "IDENTITE CANDIDAT", "DONNEES CANDIDAT")
+        candidate_block = self._extract_prompt_block(base_prompt, "DONNEES CANDIDAT", "SORTIE OBLIGATOIRE")
+        if candidate_block:
+            lines = candidate_block.splitlines()
+            candidate_block = "\n".join(lines[1:]).strip() if len(lines) > 1 else ""
+
+        candidate_sections = self._parse_candidate_sections(candidate_block)
+        feedback_block = self._extract_autocheck_feedback(base_prompt)
+        if feedback_block:
+            feedback_block = _trim_text(feedback_block, 900)
+        current_cv_block = self._extract_current_cv_block(base_prompt)
+        current_cv_sections = self._parse_markdown_sections(current_cv_block) if current_cv_block else {}
+
+        if language_code == "en":
+            header = "# [Your First Name] [Your Last Name]\n## <Target role>\n"
+            contact_title = "Contact"
+            contact_block = (
+                f"## {contact_title}\n"
+                "- Email: [Your Email]\n"
+                "- Phone: [Your Phone]\n"
+                "- LinkedIn: [Your LinkedIn]\n"
+                "- Location: [Your City, Country]\n"
+            )
+        else:
+            header = "# [Votre Prenom] [Votre Nom]\n## <Titre du poste cible>\n"
+            contact_title = "Informations de contact"
+            contact_block = (
+                f"## {contact_title}\n"
+                "- Email: [Votre Email]\n"
+                "- Telephone: [Votre Telephone]\n"
+                "- LinkedIn: [Votre LinkedIn]\n"
+                "- Localisation: [Votre Ville, Pays]\n"
+            )
+
+        section_plan = [
+            {
+                "key": "summary",
+                "title": "Professional Summary" if language_code == "en" else "Profil professionnel",
+                "data_keys": ["summary", "experience", "skills"],
+                "max_tokens": 192,
+                "include_offer": True,
+                "include_identity": False,
+                "guidance": "3-4 lines, concise, aligned to the target role."
+                if language_code == "en"
+                else "3-4 lignes, concises, alignees au poste cible.",
+            },
+            {
+                "key": "experience",
+                "title": "Work Experience" if language_code == "en" else "Experience professionnelle",
+                "data_keys": ["experience", "volunteering"],
+                "max_tokens": 700,
+                "include_offer": True,
+                "include_identity": False,
+                "guidance": "For each role: 3-5 impact bullets. No invented facts."
+                if language_code == "en"
+                else "Pour chaque poste: 3-5 puces orientées impact. N'invente rien.",
+            },
+            {
+                "key": "projects",
+                "title": "Projects" if language_code == "en" else "Projets",
+                "data_keys": ["projects"],
+                "max_tokens": 360,
+                "include_offer": True,
+                "include_identity": False,
+                "guidance": "1-2 sentences per project, focus on outcomes."
+                if language_code == "en"
+                else "1-2 phrases par projet, focus sur les résultats.",
+            },
+            {
+                "key": "education",
+                "title": "Education" if language_code == "en" else "Formation",
+                "data_keys": ["education"],
+                "max_tokens": 260,
+                "include_offer": False,
+                "include_identity": False,
+                "guidance": "Degree | School | Year, add details if relevant."
+                if language_code == "en"
+                else "Diplome | Etablissement | Annee, details si pertinent.",
+            },
+            {
+                "key": "skills",
+                "title": "Skills" if language_code == "en" else "Competences",
+                "data_keys": ["skills", "soft_skills"],
+                "max_tokens": 260,
+                "include_offer": True,
+                "include_identity": False,
+                "guidance": "Bullet list, prioritize offer keywords."
+                if language_code == "en"
+                else "Liste en puces, priorise les mots-cles de l'offre.",
+            },
+            {
+                "key": "languages",
+                "title": "Languages" if language_code == "en" else "Langues",
+                "data_keys": ["languages"],
+                "max_tokens": 140,
+                "include_offer": False,
+                "include_identity": False,
+                "guidance": "- Language: Level"
+                if language_code == "en"
+                else "- Langue: Niveau",
+            },
+            {
+                "key": "certifications",
+                "title": "Certifications (optional)" if language_code == "en" else "Certifications (optionnel)",
+                "data_keys": ["certifications"],
+                "max_tokens": 140,
+                "include_offer": False,
+                "include_identity": False,
+                "guidance": "List only confirmed certifications."
+                if language_code == "en"
+                else "Liste uniquement les certifications confirmées.",
+            },
+            {
+                "key": "interests",
+                "title": "Interests (optional)" if language_code == "en" else "Centres d'interet (optionnel)",
+                "data_keys": ["interests"],
+                "max_tokens": 120,
+                "include_offer": False,
+                "include_identity": False,
+                "guidance": "Short bullet list."
+                if language_code == "en"
+                else "Liste courte en puces.",
+            },
+        ]
+
+        output_parts: List[str] = [header.strip(), contact_block.strip()]
+        system_prompt = self._cv_section_system_prompt(language_code)
+
+        for section in section_plan:
+            context = self._build_section_context(
+                candidate_sections,
+                section["data_keys"],
+                max_chars=1200,
+            )
+            if not context:
+                output_parts.append(f"## {section['title']}\n{placeholder}")
+                continue
+
+            prompt_parts = []
+            if section.get("include_offer") and offer_block:
+                prompt_parts.append(offer_block)
+            if section.get("include_identity") and identity_block:
+                prompt_parts.append(identity_block)
+            if feedback_block:
+                prompt_parts.append("AUTO-CHECK FEEDBACK (apply if relevant):")
+                prompt_parts.append(feedback_block)
+            if current_cv_sections:
+                current_section = self._find_section_text(
+                    current_cv_sections,
+                    [section["title"], section["key"]],
+                )
+                if current_section:
+                    prompt_parts.append("SECTION COURANTE (brouillon):")
+                    prompt_parts.append(_trim_text(current_section, 900))
+            prompt_parts.append("DONNEES CANDIDAT (section cible):")
+            prompt_parts.append(context)
+            prompt_parts.append(
+                f"SECTION A GENERER: {section['title']}\n"
+                f"CONSIGNES: {section['guidance']}\n"
+                f"Sortie: uniquement cette section en Markdown, commence par '## {section['title']}'."
+            )
+            user_prompt = "\n\n".join(part for part in prompt_parts if part).strip()
+
+            formatted_prompt = self._build_generic_prompt(system_prompt, user_prompt)
+            raw = self._generate_text_with_prompt(
+                formatted_prompt,
+                max_tokens=section["max_tokens"],
+                temperature=0.6,
+                top_p=0.9,
+                do_sample=True,
+                progress_callback=progress_callback,
+            )
+            output_parts.append(
+                self._normalize_section_output(raw, section["title"], placeholder)
+            )
+
+        return "\n\n".join(part for part in output_parts if part).strip()
 
     def _build_generic_prompt(self, system_prompt: str, user_prompt: str) -> str:
         """Build a generic prompt with ChatML when supported."""
