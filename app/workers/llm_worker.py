@@ -1371,6 +1371,52 @@ class QwenManager:
                 return torch.device("cpu")
         return None
 
+    def _log_cuda_mem(self, label: str) -> None:
+        if os.getenv("CVMATCH_VRAM_DEBUG", "").strip() != "1":
+            return
+        if not TORCH_AVAILABLE or not torch.cuda.is_available():
+            return
+
+        def _fmt_bytes(value: Optional[int]) -> str:
+            if value is None:
+                return "n/a"
+            return f"{value / (1024 ** 3):.2f}GB"
+
+        free_bytes = total_bytes = None
+        allocated = reserved = None
+        max_allocated = max_reserved = None
+        try:
+            free_bytes, total_bytes = torch.cuda.mem_get_info()
+        except Exception:
+            pass
+        try:
+            allocated = torch.cuda.memory_allocated()
+        except Exception:
+            pass
+        try:
+            reserved = torch.cuda.memory_reserved()
+        except Exception:
+            pass
+        try:
+            max_allocated = torch.cuda.max_memory_allocated()
+        except Exception:
+            pass
+        try:
+            max_reserved = torch.cuda.max_memory_reserved()
+        except Exception:
+            pass
+
+        logger.info(
+            "VRAM[%s]: free=%s total=%s alloc=%s reserved=%s max_alloc=%s max_reserved=%s",
+            label,
+            _fmt_bytes(free_bytes),
+            _fmt_bytes(total_bytes),
+            _fmt_bytes(allocated),
+            _fmt_bytes(reserved),
+            _fmt_bytes(max_allocated),
+            _fmt_bytes(max_reserved),
+        )
+
     def _resolve_input_device(self) -> Optional["torch.device"]:
         """Pick the input device matching the model's device map."""
         if not TORCH_AVAILABLE or self._model is None:
@@ -1601,6 +1647,7 @@ class QwenManager:
                     )
                 except Exception:
                     pass
+            self._log_cuda_mem("before_load")
             if self.custom_parameters.get("force_4bit_nf4"):
                 self._optimization_config["load_in_4bit"] = True
                 self._optimization_config["load_in_8bit"] = False
@@ -1805,11 +1852,49 @@ class QwenManager:
             elif model_kwargs.get("device_map") == "auto" and model_kwargs.get("max_memory"):
                 logger.info("Hybrid load: device_map=auto with CPU offload enabled.")
 
+            conversion_retry = False
+
             def _load_with_kwargs(kwargs: Dict[str, Any]):
+                nonlocal model_ref, conversion_retry
                 try:
                     return AutoModelForCausalLM.from_pretrained(model_ref, **kwargs)
                 except Exception as exc:
                     msg = str(exc)
+                    lowered_msg = msg.lower()
+                    if (
+                        not conversion_retry
+                        and ("automatic conversion of the weights" in lowered_msg or "conversion" in lowered_msg)
+                    ):
+                        conversion_retry = True
+                        logger.warning(
+                            "Weight conversion failed; forcing re-download and retrying: %s",
+                            msg,
+                        )
+                        try:
+                            forced_path = model_optimizer.optimize_model_download(
+                                self.model_name,
+                                progress_callback=progress_callback,
+                                force_download=True,
+                            )
+                            if forced_path:
+                                model_ref = forced_path
+                        except Exception as force_exc:
+                            logger.warning("Force download failed: %s", force_exc)
+
+                        alt_kwargs = dict(kwargs)
+                        alt_kwargs.pop("low_cpu_mem_usage", None)
+                        alt_kwargs.setdefault("use_safetensors", False)
+                        try:
+                            return AutoModelForCausalLM.from_pretrained(
+                                model_ref,
+                                **alt_kwargs,
+                            )
+                        except Exception:
+                            alt_kwargs.pop("use_safetensors", None)
+                            return AutoModelForCausalLM.from_pretrained(
+                                model_ref,
+                                **alt_kwargs,
+                            )
                     if "Device cuda:0 is not recognized" in msg or "Device 0 is not recognized" in msg:
                         logger.warning(
                             "Retry model load with alternate max_memory keys: %s",
@@ -1937,6 +2022,7 @@ class QwenManager:
             
             self.model_loaded = True
             self._current_model_path = self.model_name
+            self._log_cuda_mem("after_load")
             
             # Stats mémoire finales
             memory_stats = gpu_manager.get_memory_stats()
@@ -2065,6 +2151,12 @@ class QwenManager:
                 hint = (
                     "Piste: 'bitsandbytes' manquant/incompatible. Réinstallez bitsandbytes (CUDA) "
                     "ou choisissez un modèle CPU plus petit."
+                )
+            elif "automatic conversion of the weights" in lowered or ("conversion" in lowered and "weights" in lowered):
+                hint = (
+                    "Piste: conversion des poids echouee (cache potentiellement corrompu). "
+                    "Supprimez le snapshot du modele dans le cache HF puis relancez, "
+                    "ou forcez un telechargement complet."
                 )
 
             logger.error(f"Erreur chargement modèle: {e}")
@@ -2240,6 +2332,13 @@ class QwenManager:
                 except Exception:
                     pass
 
+            if TORCH_AVAILABLE and torch.cuda.is_available():
+                if os.getenv("CVMATCH_VRAM_DEBUG", "").strip() == "1":
+                    try:
+                        torch.cuda.reset_peak_memory_stats()
+                    except Exception:
+                        pass
+            self._log_cuda_mem("pre_generate")
             # Génération avec paramètres optimisés
             with torch.no_grad():
                 outputs = self._model.generate(
@@ -2269,6 +2368,7 @@ class QwenManager:
                     skip_special_tokens=True
                 )
             
+            self._log_cuda_mem("post_generate")
             # Nettoyage et extraction du CV
             cv_content = self._extract_cv_content(generated_text)
             
@@ -2668,6 +2768,13 @@ CV en Markdown:
                 torch.cuda.empty_cache()
             except Exception:
                 pass
+        if TORCH_AVAILABLE and torch.cuda.is_available():
+            if os.getenv("CVMATCH_VRAM_DEBUG", "").strip() == "1":
+                try:
+                    torch.cuda.reset_peak_memory_stats()
+                except Exception:
+                    pass
+        self._log_cuda_mem("pre_generate")
 
         with torch.no_grad():
             outputs = self._model.generate(
@@ -2683,6 +2790,7 @@ CV en Markdown:
                 use_cache=use_cache,
             )
 
+        self._log_cuda_mem("post_generate")
         return self._tokenizer.decode(
             outputs[0][inputs.input_ids.shape[1]:],
             skip_special_tokens=True,

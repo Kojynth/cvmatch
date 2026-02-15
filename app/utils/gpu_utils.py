@@ -6,6 +6,7 @@ Utilitaires pour la détection GPU et optimisation automatique.
 """
 
 import psutil
+import re
 from loguru import logger
 from typing import Dict, Any, Optional, Tuple
 
@@ -68,6 +69,17 @@ class GPUManager:
             self.gpu_info = {"available": False}
             reason = "PyTorch non installé" if not TORCH_AVAILABLE else "Aucun GPU CUDA disponible"
             logger.info(f"{reason} - Utilisation CPU")
+
+    def _get_rtx_model_number(self) -> Optional[int]:
+        """Extract RTX model number from GPU name."""
+        gpu_name = str(self.gpu_info.get("name", "")).lower() if self.gpu_info else ""
+        match = re.search(r"rtx\s*(\d{4})", gpu_name)
+        if not match:
+            return None
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return None
     
     def get_available_vram(self) -> float:
         """Retourne la VRAM disponible en GB."""
@@ -103,7 +115,7 @@ class GPUManager:
         available_vram = self.get_available_vram()
         total_vram = float(self.gpu_info.get("total_memory_gb", 0) or 0)
         
-        # Estimations optimisées pour RTX 4050 (6GB VRAM)
+        # Estimations optimisées pour GPU faible VRAM (~6GB)
         memory_requirements = {
             "fp16": model_size_gb * 2,      # ~64GB (impossible RTX 4050)
             "int8": model_size_gb * 1,      # ~32GB (impossible RTX 4050)  
@@ -112,19 +124,17 @@ class GPUManager:
             "awq": model_size_gb * 0.22,    # ~7GB (optimal RTX 4050)
             "ggml": model_size_gb * 0.20,   # ~6.4GB (très optimal RTX 4050)
         }
-        
-        # Détection spécifique RTX 4050
-        gpu_name = self.gpu_info.get("name", "").lower()
-        is_rtx_4050 = "rtx 4050" in gpu_name
+        # Detection RTX et VRAM faible
+        rtx_model_number = self._get_rtx_model_number()
+        is_rtx_4050_or_more = rtx_model_number is not None and rtx_model_number >= 4050
         is_low_vram = 0 < total_vram <= 6.5
-        label = "RTX 4050" if is_rtx_4050 else "GPU faible VRAM"
-        
-        if is_rtx_4050 or is_low_vram:
-            if is_rtx_4050:
-                logger.info("🎮 RTX 4050 détectée - Configuration ultra-optimisée")
+        label = f"RTX {rtx_model_number}" if is_rtx_4050_or_more else "GPU faible VRAM"
+
+        if is_low_vram:
+            if is_rtx_4050_or_more:
+                logger.info(f"[GPU] {label} detectee - Configuration ultra-optimisee")
             else:
-                logger.info("🎮 GPU faible VRAM détecté - Configuration optimisée")
-            
+                logger.info("[GPU] GPU faible VRAM detectee - Configuration optimisee")
             if available_vram >= memory_requirements["ggml"]:
                 return {
                     "device": "cuda",
@@ -205,51 +215,61 @@ class GPUManager:
                     "reason": f"Mémoire limitée - CPU + quantisation 8-bit"
                 }
     
-    def get_rtx_4050_optimizations(self) -> Dict[str, Any]:
-        """Retourne les optimisations spécifiques RTX 4050."""
+    def get_rtx_optimizations(self) -> Dict[str, Any]:
+        """Return optimizations for RTX-class GPUs."""
         if not self.gpu_info["available"]:
-            return {"rtx_4050_detected": False}
-        
-        gpu_name = self.gpu_info.get("name", "").lower()
+            return {
+                "rtx_4050_detected": False,
+                "rtx_4050_or_more": False,
+                "rtx_model_number": None,
+            }
+
+        rtx_model_number = self._get_rtx_model_number()
+        is_rtx_4050 = rtx_model_number == 4050
+        is_rtx_4050_or_more = rtx_model_number is not None and rtx_model_number >= 4050
         available_vram = self.get_available_vram()
-        total_vram = float(self.gpu_info.get("total_memory_gb", 0) or 0)
-        is_rtx_4050 = "rtx 4050" in gpu_name
-        
+
         optimizations = {
             "rtx_4050_detected": is_rtx_4050,
+            "rtx_4050_or_more": is_rtx_4050_or_more,
+            "rtx_model_number": rtx_model_number,
             "gpu_name": self.gpu_info.get("name", "Unknown"),
             "vram_gb": available_vram,
             "recommended_engines": [],
             "quantization_options": [],
             "performance_tips": []
         }
-        
-        if is_rtx_4050:
+
+        if is_rtx_4050_or_more:
             optimizations["recommended_engines"] = [
                 "vLLM (optimal)",
                 "ExLlamaV2 (ultra-rapide)",
                 "ctranslate2 (efficace)",
                 "ONNX Runtime (compatible)"
             ]
-            
+
             optimizations["quantization_options"] = [
-                "GGML Q4 (recommandé pour 32B)",
-                "AWQ (équilibre vitesse/qualité)",
-                "GPTQ (économie mémoire)",
+                "GGML Q4 (recommande pour 32B)",
+                "AWQ (equilibre vitesse/qualite)",
+                "GPTQ (economie memoire)",
                 "ExLlama (vitesse maximale)"
             ]
-            
+
             optimizations["performance_tips"] = [
-                "🚀 Utiliser vLLM avec AWQ quantization",
-                "⚡ Activer FlashAttention-2 si disponible",
-                "💾 GPU memory utilization à 0.85 max",
-                "🔧 Réduire max_model_len si nécessaire",
-                "🧹 Vider le cache CUDA régulièrement",
-                "📊 Surveiller la température GPU"
+                "Utiliser vLLM avec AWQ quantization",
+                "Activer FlashAttention-2 si disponible",
+                "GPU memory utilization a 0.85 max",
+                "Reduire max_model_len si necessaire",
+                "Vider le cache CUDA regulierement",
+                "Surveiller la temperature GPU"
             ]
-        
+
         return optimizations
-    
+
+    def get_rtx_4050_optimizations(self) -> Dict[str, Any]:
+        """Backward-compatible alias for get_rtx_optimizations."""
+        return self.get_rtx_optimizations()
+
     def optimize_for_inference(self):
         """Optimise les paramètres pour l'inférence."""
         if TORCH_AVAILABLE and self.gpu_info["available"]:
