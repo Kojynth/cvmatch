@@ -203,6 +203,7 @@ class GPUManager:
             }
         
         available_vram = self.get_available_vram()
+        total_vram = float(self.gpu_info.get("total_memory_gb", 0) or 0)
         
         # Estimations optimisées pour RTX 4050 (6GB VRAM)
         memory_requirements = {
@@ -214,9 +215,11 @@ class GPUManager:
             "ggml": model_size_gb * 0.20,   # ~6.4GB (très optimal RTX 4050)
         }
         
-        # Détection spécifique RTX 4050
+        # Détection spécifique RTX 4050 / faible VRAM
         gpu_name = self.gpu_info.get("name", "").lower()
-        is_rtx_4050 = "rtx 4050" in gpu_name or available_vram <= 6.5
+        is_rtx_4050 = "rtx 4050" in gpu_name
+        is_low_vram = 0 < total_vram <= 6.5
+        label = "RTX 4050" if is_rtx_4050 else "GPU faible VRAM"
         
         # Import PyTorch seulement si GPU CUDA disponible
         if self.gpu_info.get("cuda_available", False):
@@ -231,8 +234,11 @@ class GPUManager:
                 "reason": "CPU-only mode (no PyTorch import required)"
             }
         
-        if is_rtx_4050:
-            logger.info("🎮 RTX 4050 détectée - Configuration ultra-optimisée")
+        if is_rtx_4050 or is_low_vram:
+            if is_rtx_4050:
+                logger.info("🎮 RTX 4050 détectée - Configuration ultra-optimisée")
+            else:
+                logger.info("🎮 GPU faible VRAM détecté - Configuration optimisée")
             
             if available_vram >= memory_requirements["ggml"]:
                 return {
@@ -241,7 +247,7 @@ class GPUManager:
                     "load_in_4bit": True,
                     "bnb_4bit_compute_dtype": "float16",
                     "bnb_4bit_use_double_quant": True,
-                    "reason": f"RTX 4050 optimisée: 4-bit + FP16 ({available_vram:.1f}GB disponible)"
+                    "reason": f"{label} optimisée: 4-bit + FP16 ({available_vram:.1f}GB disponible)"
                 }
             else:
                 return {
@@ -249,7 +255,7 @@ class GPUManager:
                     "dtype": "float32",
                     "load_in_8bit": False,
                     "load_in_4bit": False,
-                    "reason": f"VRAM insuffisante RTX 4050: {available_vram:.1f}GB < {memory_requirements['ggml']:.1f}GB requis"
+                    "reason": f"VRAM insuffisante ({label}): {available_vram:.1f}GB < {memory_requirements['ggml']:.1f}GB requis"
                 }
         
         # Configuration générale pour autres GPU

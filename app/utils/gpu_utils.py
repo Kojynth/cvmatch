@@ -101,6 +101,7 @@ class GPUManager:
             }
         
         available_vram = self.get_available_vram()
+        total_vram = float(self.gpu_info.get("total_memory_gb", 0) or 0)
         
         # Estimations optimisées pour RTX 4050 (6GB VRAM)
         memory_requirements = {
@@ -114,10 +115,15 @@ class GPUManager:
         
         # Détection spécifique RTX 4050
         gpu_name = self.gpu_info.get("name", "").lower()
-        is_rtx_4050 = "rtx 4050" in gpu_name or available_vram <= 6.5
+        is_rtx_4050 = "rtx 4050" in gpu_name
+        is_low_vram = 0 < total_vram <= 6.5
+        label = "RTX 4050" if is_rtx_4050 else "GPU faible VRAM"
         
-        if is_rtx_4050:
-            logger.info("🎮 RTX 4050 détectée - Configuration ultra-optimisée")
+        if is_rtx_4050 or is_low_vram:
+            if is_rtx_4050:
+                logger.info("🎮 RTX 4050 détectée - Configuration ultra-optimisée")
+            else:
+                logger.info("🎮 GPU faible VRAM détecté - Configuration optimisée")
             
             if available_vram >= memory_requirements["ggml"]:
                 return {
@@ -128,7 +134,7 @@ class GPUManager:
                     "use_vllm": True,
                     "gpu_memory_utilization": 0.85,
                     "max_model_len": 4096,
-                    "reason": f"RTX 4050 optimisé - GGML Q4 ({available_vram:.1f}GB VRAM)"
+                    "reason": f"{label} optimisé - GGML Q4 ({available_vram:.1f}GB VRAM)"
                 }
             elif available_vram >= memory_requirements["awq"]:
                 return {
@@ -139,7 +145,7 @@ class GPUManager:
                     "use_vllm": True,
                     "gpu_memory_utilization": 0.80,
                     "max_model_len": 3072,
-                    "reason": f"RTX 4050 - AWQ quantization ({available_vram:.1f}GB VRAM)"
+                    "reason": f"{label} - AWQ quantization ({available_vram:.1f}GB VRAM)"
                 }
             elif available_vram >= memory_requirements["gptq"]:
                 return {
@@ -148,10 +154,10 @@ class GPUManager:
                     "quantization": "gptq",
                     "load_in_4bit": True,
                     "max_model_len": 2048,
-                    "reason": f"RTX 4050 - GPTQ 4-bit ({available_vram:.1f}GB VRAM)"
+                    "reason": f"{label} - GPTQ 4-bit ({available_vram:.1f}GB VRAM)"
                 }
             else:
-                # RTX 4050 avec très peu de VRAM libre
+                # GPU faible VRAM avec très peu de VRAM libre
                 return {
                     "device": "cuda",
                     "dtype": torch.float16,
@@ -159,7 +165,7 @@ class GPUManager:
                     "load_in_4bit": True,
                     "gpu_memory_utilization": 0.95,
                     "max_model_len": 1024,
-                    "reason": f"RTX 4050 mode extrême - ExLlama ({available_vram:.1f}GB VRAM)"
+                    "reason": f"{label} mode extrême - ExLlama ({available_vram:.1f}GB VRAM)"
                 }
         
         # Configuration standard pour autres GPU
@@ -206,7 +212,8 @@ class GPUManager:
         
         gpu_name = self.gpu_info.get("name", "").lower()
         available_vram = self.get_available_vram()
-        is_rtx_4050 = "rtx 4050" in gpu_name or available_vram <= 6.5
+        total_vram = float(self.gpu_info.get("total_memory_gb", 0) or 0)
+        is_rtx_4050 = "rtx 4050" in gpu_name
         
         optimizations = {
             "rtx_4050_detected": is_rtx_4050,
