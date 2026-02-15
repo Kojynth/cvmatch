@@ -25,7 +25,9 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QButtonGroup,
     QPushButton,
+    QRadioButton,
     QScrollArea,
     QSpinBox,
     QTabWidget,
@@ -242,6 +244,7 @@ class AIModelTab(QWidget):
         self.profile = profile
         self.ml_coordinator = ml_coordinator
         self._updating_memory_limits = False
+        self._updating_chunked_generation = False
         self.setup_ui()
 
     def setup_ui(self):
@@ -407,6 +410,41 @@ class AIModelTab(QWidget):
 
         memory_section.setLayout(memory_layout)
         tech_layout.addWidget(memory_section)
+
+        # Section generation (VRAM)
+        gen_section = QGroupBox("Generation (VRAM)")
+        gen_layout = QVBoxLayout()
+
+        self.chunked_generation_group = QButtonGroup(self)
+        self.chunked_generation_auto = QRadioButton("Auto (recommande)")
+        self.chunked_generation_on = QRadioButton("Force ON")
+        self.chunked_generation_off = QRadioButton("Force OFF")
+
+        self.chunked_generation_group.addButton(self.chunked_generation_auto)
+        self.chunked_generation_group.addButton(self.chunked_generation_on)
+        self.chunked_generation_group.addButton(self.chunked_generation_off)
+
+        self.chunked_generation_auto.setChecked(True)
+
+        self.chunked_generation_auto.toggled.connect(self.on_chunked_generation_changed)
+        self.chunked_generation_on.toggled.connect(self.on_chunked_generation_changed)
+        self.chunked_generation_off.toggled.connect(self.on_chunked_generation_changed)
+
+        gen_layout.addWidget(self.chunked_generation_auto)
+        gen_layout.addWidget(self.chunked_generation_on)
+        gen_layout.addWidget(self.chunked_generation_off)
+
+        gen_hint = QLabel(
+            "Auto = selon VRAM libre. "
+            "Force ON = mode fragmente actif. "
+            "Force OFF = mode fragmente desactive."
+        )
+        gen_hint.setStyleSheet("color: #666; font-size: 10px;")
+        gen_hint.setWordWrap(True)
+        gen_layout.addWidget(gen_hint)
+
+        gen_section.setLayout(gen_layout)
+        tech_layout.addWidget(gen_section)
 
         # Section cache et maintenance
         cache_section = QGroupBox("Cache et maintenance")
@@ -598,6 +636,7 @@ class AIModelTab(QWidget):
             gpu_percent = custom.get("max_memory_gpu_percent", 90)
             cpu_percent = custom.get("max_memory_cpu_percent", 80)
             self._set_memory_limits(gpu_percent, cpu_percent)
+            self._set_chunked_generation(custom.get("chunked_generation"))
 
             # Désactiver les optimisations non disponibles sur Windows
             import platform
@@ -626,6 +665,19 @@ class AIModelTab(QWidget):
         finally:
             self._updating_memory_limits = False
 
+    def _set_chunked_generation(self, value) -> None:
+        """Met a jour le controle de generation fragmente sans sauvegarde."""
+        self._updating_chunked_generation = True
+        try:
+            if value is None:
+                self.chunked_generation_auto.setChecked(True)
+            elif value:
+                self.chunked_generation_on.setChecked(True)
+            else:
+                self.chunked_generation_off.setChecked(True)
+        finally:
+            self._updating_chunked_generation = False
+
     def on_memory_limits_changed(self) -> None:
         """Sauvegarde les allocations max_memory configurees."""
         if self._updating_memory_limits:
@@ -643,6 +695,24 @@ class AIModelTab(QWidget):
             )
         except Exception as e:
             logger.error(f"Erreur mise a jour max_memory: {e}")
+
+    def on_chunked_generation_changed(self, _state=None) -> None:
+        """Sauvegarde le mode de generation fragmente."""
+        if self._updating_chunked_generation:
+            return
+        try:
+            from ..utils.model_config_manager import model_config_manager
+            if self.chunked_generation_auto.isChecked():
+                value = None
+            elif self.chunked_generation_on.isChecked():
+                value = True
+            else:
+                value = False
+            model_config_manager.update_custom_parameters(
+                {"chunked_generation": value}
+            )
+        except Exception as e:
+            logger.error(f"Erreur mise a jour generation fragmente: {e}")
 
     def reset_memory_limits(self) -> None:
         """Reinitialise les valeurs max_memory par defaut."""
@@ -866,6 +936,7 @@ class AIModelTab(QWidget):
                 gpu_percent = custom.get("max_memory_gpu_percent", 90)
                 cpu_percent = custom.get("max_memory_cpu_percent", 80)
                 self._set_memory_limits(gpu_percent, cpu_percent)
+                self._set_chunked_generation(custom.get("chunked_generation"))
             except Exception as e:
                 logger.warning(f"Erreur synchro max_memory: {e}")
 
