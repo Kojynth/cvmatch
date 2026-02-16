@@ -864,6 +864,7 @@ class QwenManager:
         self._llama_cpp_server = None
         self._optimization_config = None
         self._current_model_path = None
+        self._last_max_memory_map_details: Dict[str, Any] = {}
         self.last_model_resolution_note: Optional[str] = None
         self._initialized = True
         
@@ -1181,6 +1182,16 @@ class QwenManager:
             total_ram = mem.total / (1024**3)
 
             device = (self._optimization_config or {}).get("device") or "cpu"
+            swap_total_gb = 0.0
+            try:
+                swap_total_gb = psutil.swap_memory().total / (1024**3)
+            except Exception:
+                swap_total_gb = 0.0
+            if device != "cpu" and swap_total_gb < 8.0:
+                logger.warning(
+                    "Swap size is low for large-model loading: swap_total=%.1fGB (recommended >= 16GB).",
+                    swap_total_gb,
+                )
 
             # Pour GPU, la contrainte principale est la VRAM (déjà gérée par gpu_manager).
             # On garde ici une vérification minimale de RAM pour éviter les crashs au chargement.
@@ -1237,7 +1248,11 @@ class QwenManager:
             pass
         return 0.0
 
-    def _get_vram_headroom_gb(self) -> float:
+    def _get_vram_headroom_gb(
+        self,
+        free_vram_gb: Optional[float] = None,
+        total_vram_gb: Optional[float] = None,
+    ) -> float:
         custom = self.custom_parameters or {}
         try:
             override = float(custom.get("vram_headroom_gb", 0) or 0)
@@ -1245,13 +1260,76 @@ class QwenManager:
                 return override
         except Exception:
             pass
+        env_override = os.getenv("CVMATCH_VRAM_HEADROOM_GB")
+        if env_override:
+            try:
+                parsed = float(env_override)
+                if parsed > 0:
+                    return parsed
+            except Exception:
+                pass
+
+        free_vram = float(free_vram_gb or 0.0)
+        if free_vram <= 0:
+            free_vram = self._get_free_vram_gb()
+
+        total_vram = float(total_vram_gb or 0.0)
+        if total_vram <= 0:
+            try:
+                total_vram = float(
+                    getattr(gpu_manager, "gpu_info", {}).get("total_memory_gb", 0) or 0
+                )
+            except Exception:
+                total_vram = 0.0
+
         try:
-            total_vram = float(getattr(gpu_manager, "gpu_info", {}).get("total_memory_gb", 0) or 0)
+            factor = float(custom.get("vram_headroom_factor", 0.15) or 0.15)
         except Exception:
-            total_vram = 0.0
+            factor = 0.15
+        env_factor = os.getenv("CVMATCH_VRAM_HEADROOM_FACTOR")
+        if env_factor:
+            try:
+                factor = float(env_factor)
+            except Exception:
+                pass
+        if factor <= 0:
+            factor = 0.15
+
+        default_min = 0.5
+        default_max = 1.5 if (total_vram > 0 and total_vram <= 12.0) else 2.5
+        try:
+            min_headroom = float(custom.get("vram_headroom_min_gb", default_min) or default_min)
+        except Exception:
+            min_headroom = default_min
+        env_min = os.getenv("CVMATCH_VRAM_HEADROOM_MIN_GB")
+        if env_min:
+            try:
+                min_headroom = float(env_min)
+            except Exception:
+                pass
+        try:
+            max_headroom = float(custom.get("vram_headroom_max_gb", default_max) or default_max)
+        except Exception:
+            max_headroom = default_max
+        env_max = os.getenv("CVMATCH_VRAM_HEADROOM_MAX_GB")
+        if env_max:
+            try:
+                max_headroom = float(env_max)
+            except Exception:
+                pass
+
+        if min_headroom <= 0:
+            min_headroom = default_min
+        if max_headroom < min_headroom:
+            max_headroom = min_headroom
+
+        if free_vram > 0:
+            dynamic = free_vram * factor
+            return max(min_headroom, min(max_headroom, dynamic))
+
         if total_vram > 0:
-            return max(1.5, min(4.0, total_vram * 0.2))
-        return 2.0
+            return max(min_headroom, min(max_headroom, total_vram * 0.12))
+        return 1.0
 
     def _should_disable_kv_cache(self) -> bool:
         if not TORCH_AVAILABLE or not torch.cuda.is_available():
@@ -1275,7 +1353,12 @@ class QwenManager:
 
     def _build_max_memory_map(self) -> Optional[Dict[Union[int, str], str]]:
         """Build a max_memory map for auto device placement."""
+        self._last_max_memory_map_details = {}
         if not TORCH_AVAILABLE or not torch.cuda.is_available():
+            self._last_max_memory_map_details = {
+                "enabled": False,
+                "reason": "torch_or_cuda_unavailable",
+            }
             return None
 
         def _get_percent(key: str, default_value: int) -> int:
@@ -1288,13 +1371,39 @@ class QwenManager:
                 return default_value
             return value
 
+        def _get_gb_from_custom_or_env(
+            custom_key: str,
+            env_key: str,
+        ) -> Optional[float]:
+            value: Optional[float] = None
+            try:
+                raw_custom = (self.custom_parameters or {}).get(custom_key)
+                if raw_custom is not None:
+                    parsed = float(raw_custom)
+                    if parsed > 0:
+                        value = parsed
+            except Exception:
+                value = None
+            raw_env = os.getenv(env_key)
+            if raw_env:
+                try:
+                    parsed_env = float(raw_env)
+                    if parsed_env > 0:
+                        value = parsed_env
+                except Exception:
+                    pass
+            return value
+
         free_vram_gb = 0.0
+        free_vram_source = "unknown"
         try:
             if hasattr(torch.cuda, "mem_get_info"):
                 free_bytes, _ = torch.cuda.mem_get_info()
                 free_vram_gb = free_bytes / (1024**3)
+                free_vram_source = "mem_get_info"
         except Exception:
             free_vram_gb = 0.0
+            free_vram_source = "mem_get_info_error"
 
         try:
             total_vram = float(gpu_manager.gpu_info.get("total_memory_gb", 0) or 0)
@@ -1303,53 +1412,145 @@ class QwenManager:
 
         if not free_vram_gb:
             free_vram_gb = total_vram
+            free_vram_source = "total_vram_fallback"
 
         if free_vram_gb <= 0:
+            self._last_max_memory_map_details = {
+                "enabled": False,
+                "reason": "free_vram_unknown",
+                "total_vram_gb": round(total_vram, 3),
+            }
+            logger.warning(
+                "Max memory map disabled: unable to determine free VRAM (total_vram_gb=%.3f).",
+                total_vram,
+            )
             return None
 
         default_gpu_percent = 80 if total_vram and total_vram <= 12 else 90
         gpu_percent = _get_percent("max_memory_gpu_percent", default_gpu_percent)
-        headroom_gb = self._get_vram_headroom_gb()
-        requested_gpu_gb = None
-        try:
-            requested_gpu_gb = float((self.custom_parameters or {}).get("max_memory_gpu_gb") or 0)
-        except Exception:
-            requested_gpu_gb = None
+        headroom_gb = self._get_vram_headroom_gb(
+            free_vram_gb=free_vram_gb,
+            total_vram_gb=total_vram,
+        )
+        requested_gpu_gb = _get_gb_from_custom_or_env(
+            "max_memory_gpu_gb", "CVMATCH_MAX_MEMORY_GPU_GB"
+        )
 
-        env_gpu_gb = os.getenv("CVMATCH_MAX_MEMORY_GPU_GB")
-        if env_gpu_gb:
-            try:
-                requested_gpu_gb = float(env_gpu_gb)
-            except Exception:
-                pass
-
-        usable_vram_gb = max(0.0, free_vram_gb - headroom_gb)
-        if usable_vram_gb <= 0:
-            usable_vram_gb = max(0.0, free_vram_gb * 0.5)
-
-        if requested_gpu_gb and requested_gpu_gb > 0:
-            vram_budget_gb = requested_gpu_gb
-            if usable_vram_gb > 0:
-                vram_budget_gb = min(vram_budget_gb, usable_vram_gb)
+        gpu_mode = "percent_total" if total_vram > 0 else "percent_free"
+        if requested_gpu_gb is not None:
+            gpu_mode = "absolute_gb"
+            requested_vram_budget_gb = float(requested_gpu_gb)
         else:
-            vram_budget_gb = usable_vram_gb * (gpu_percent / 100.0)
+            requested_base = total_vram if total_vram > 0 else free_vram_gb
+            requested_vram_budget_gb = requested_base * (gpu_percent / 100.0)
 
-        vram_budget_mib = max(512, int(vram_budget_gb * 1024))
+        available_vram_gb = max(0.0, free_vram_gb - headroom_gb)
+        clamp_reason = ""
+        if available_vram_gb <= 0:
+            fallback_available = max(0.25, free_vram_gb * 0.7)
+            available_vram_gb = fallback_available
+            clamp_reason = "free_minus_headroom_non_positive"
+
+        vram_budget_gb = min(requested_vram_budget_gb, available_vram_gb, free_vram_gb)
+        if vram_budget_gb < requested_vram_budget_gb and not clamp_reason:
+            clamp_reason = "capped_by_free_minus_headroom"
+
+        if vram_budget_gb <= 0:
+            self._last_max_memory_map_details = {
+                "enabled": False,
+                "reason": "gpu_budget_non_positive",
+                "free_vram_gb": round(free_vram_gb, 3),
+                "headroom_gb": round(headroom_gb, 3),
+                "requested_vram_budget_gb": round(requested_vram_budget_gb, 3),
+            }
+            logger.warning(
+                "Max memory map disabled: computed GPU budget is non-positive (free=%.3fGB headroom=%.3fGB requested=%.3fGB).",
+                free_vram_gb,
+                headroom_gb,
+                requested_vram_budget_gb,
+            )
+            return None
+
+        vram_budget_mib = max(256, int(vram_budget_gb * 1024))
         memory_map: Dict[Union[int, str], str] = {0: f"{vram_budget_mib}MiB"}
 
+        cpu_percent_value = _get_percent("max_memory_cpu_percent", 80)
+        cpu_available_ram_gb = 0.0
+        cpu_headroom_gb = 2.0
+        cpu_mode = "percent_available"
+        cpu_requested_gb: Optional[float] = None
+        cpu_applied_gb = 0.0
+        cpu_clamp_reason = ""
         try:
             import psutil
 
-            available_ram_gb = psutil.virtual_memory().available / (1024**3)
-            if available_ram_gb >= 1.0:
-                cpu_percent = _get_percent("max_memory_cpu_percent", 80)
-                ram_budget_mib = max(
-                    1024,
-                    int(available_ram_gb * 1024 * (cpu_percent / 100.0)),
-                )
+            cpu_available_ram_gb = psutil.virtual_memory().available / (1024**3)
+            cpu_requested_gb = _get_gb_from_custom_or_env(
+                "max_memory_cpu_gb", "CVMATCH_MAX_MEMORY_CPU_GB"
+            )
+            try:
+                custom_headroom = (self.custom_parameters or {}).get("cpu_headroom_gb")
+                if custom_headroom is not None:
+                    cpu_headroom_gb = max(0.5, float(custom_headroom))
+                env_headroom = os.getenv("CVMATCH_CPU_HEADROOM_GB")
+                if env_headroom:
+                    cpu_headroom_gb = max(0.5, float(env_headroom))
+            except Exception:
+                cpu_headroom_gb = 2.0
+
+            available_cpu_for_model_gb = max(0.0, cpu_available_ram_gb - cpu_headroom_gb)
+            if cpu_requested_gb is not None:
+                cpu_mode = "absolute_gb"
+                requested_cpu_budget_gb = float(cpu_requested_gb)
+            else:
+                requested_cpu_budget_gb = cpu_available_ram_gb * (cpu_percent_value / 100.0)
+
+            if available_cpu_for_model_gb <= 0:
+                cpu_applied_gb = max(0.0, min(requested_cpu_budget_gb, cpu_available_ram_gb))
+                cpu_clamp_reason = "available_ram_below_headroom"
+            else:
+                cpu_applied_gb = min(requested_cpu_budget_gb, available_cpu_for_model_gb)
+                if cpu_applied_gb < requested_cpu_budget_gb:
+                    cpu_clamp_reason = "capped_by_available_ram_minus_headroom"
+
+            if cpu_applied_gb >= 1.0:
+                ram_budget_mib = max(1024, int(cpu_applied_gb * 1024))
                 memory_map["cpu"] = f"{ram_budget_mib}MiB"
         except Exception:
             pass
+
+        details = {
+            "enabled": True,
+            "free_vram_source": free_vram_source,
+            "total_vram_gb": round(total_vram, 3),
+            "free_vram_gb": round(free_vram_gb, 3),
+            "headroom_gb": round(headroom_gb, 3),
+            "available_vram_gb": round(available_vram_gb, 3),
+            "gpu_mode": gpu_mode,
+            "gpu_percent": gpu_percent,
+            "gpu_budget_requested_gb": round(requested_vram_budget_gb, 3),
+            "gpu_budget_final_gb": round(vram_budget_gb, 3),
+            "gpu_budget_final_mib": vram_budget_mib,
+            "gpu_clamp_reason": clamp_reason,
+            "cpu_percent": cpu_percent_value,
+            "cpu_mode": cpu_mode,
+            "cpu_available_ram_gb": round(cpu_available_ram_gb, 3),
+            "cpu_headroom_gb": round(cpu_headroom_gb, 3),
+            "cpu_budget_requested_gb": (
+                round(float(cpu_requested_gb), 3)
+                if cpu_requested_gb is not None
+                else (
+                    round(cpu_available_ram_gb * (cpu_percent_value / 100.0), 3)
+                    if cpu_available_ram_gb > 0
+                    else 0.0
+                )
+            ),
+            "cpu_budget_final_gb": round(cpu_applied_gb, 3),
+            "cpu_clamp_reason": cpu_clamp_reason,
+            "memory_map": dict(memory_map),
+        }
+        self._last_max_memory_map_details = details
+        logger.info("Max memory map computed: %s", details)
 
         return memory_map
 
@@ -1836,17 +2037,72 @@ class QwenManager:
             }
             force_gpu = False
             auto_kwargs: Optional[Dict[str, Any]] = None
+            last_load_kwargs: Dict[str, Any] = {}
+            offload_folder_resolved: Optional[str] = None
+
+            def _resolve_bool_setting(custom_value: Any, env_value: Optional[str], default: bool) -> bool:
+                if env_value is not None:
+                    return str(env_value).strip().lower() in ("1", "true", "yes", "y", "on")
+                if custom_value is None:
+                    return default
+                if isinstance(custom_value, bool):
+                    return custom_value
+                return str(custom_value).strip().lower() in ("1", "true", "yes", "y", "on")
             if self._optimization_config["device"] == "cuda":
                 model_kwargs["device_map"] = "auto"
                 max_memory = self._build_max_memory_map()
                 if max_memory:
                     model_kwargs["max_memory"] = max_memory
                     model_kwargs["low_cpu_mem_usage"] = True
-                    logger.info("Max memory map active: %s", max_memory)
+                    details = getattr(self, "_last_max_memory_map_details", None)
+                    if details:
+                        logger.info(
+                            "Max memory map active: %s (details=%s)",
+                            max_memory,
+                            details,
+                        )
+                    else:
+                        logger.info("Max memory map active: %s", max_memory)
                 else:
                     logger.warning(
                         "Max memory map not set (device_map=auto). Offload disabled."
                     )
+
+                disk_offload_enabled = _resolve_bool_setting(
+                    (self.custom_parameters or {}).get("disk_offload"),
+                    os.getenv("CVMATCH_DISK_OFFLOAD"),
+                    True,
+                )
+                if disk_offload_enabled:
+                    custom_offload_folder = (self.custom_parameters or {}).get("offload_folder")
+                    env_offload_folder = os.getenv("CVMATCH_OFFLOAD_FOLDER")
+                    raw_offload_folder = env_offload_folder or custom_offload_folder
+                    if raw_offload_folder:
+                        offload_dir = Path(str(raw_offload_folder))
+                    else:
+                        offload_dir = Path.cwd() / "logs" / "hf_offload"
+                    try:
+                        offload_dir.mkdir(parents=True, exist_ok=True)
+                        offload_folder_resolved = str(offload_dir)
+                        offload_state_dict = _resolve_bool_setting(
+                            (self.custom_parameters or {}).get("offload_state_dict"),
+                            os.getenv("CVMATCH_OFFLOAD_STATE_DICT"),
+                            True,
+                        )
+                        model_kwargs["offload_folder"] = offload_folder_resolved
+                        model_kwargs["offload_state_dict"] = offload_state_dict
+                        logger.info(
+                            "Disk offload enabled: folder=%s offload_state_dict=%s",
+                            offload_folder_resolved,
+                            offload_state_dict,
+                        )
+                    except Exception as offload_exc:
+                        logger.warning(
+                            "Disk offload setup failed, continuing without it: %s",
+                            offload_exc,
+                        )
+                else:
+                    logger.info("Disk offload disabled by config.")
 
                 force_gpu_env = os.getenv("CVMATCH_FORCE_GPU")
                 if force_gpu_env is not None:
@@ -1881,12 +2137,28 @@ class QwenManager:
 
             if force_gpu and model_kwargs.get("device_map") == "auto":
                 auto_kwargs = dict(model_kwargs)
+                removed_map = model_kwargs.get("max_memory")
+                removed_offload_folder = model_kwargs.get("offload_folder")
+                removed_offload_state = model_kwargs.get("offload_state_dict")
                 model_kwargs["device_map"] = {"": 0}
                 model_kwargs.pop("max_memory", None)
                 model_kwargs.pop("low_cpu_mem_usage", None)
+                model_kwargs.pop("offload_folder", None)
+                model_kwargs.pop("offload_state_dict", None)
                 logger.info(
                     "Force GPU strict: device_map=cuda:0 (set CVMATCH_FORCE_GPU=0 to allow CPU offload)."
                 )
+                if removed_map:
+                    logger.info(
+                        "Force GPU strict disabled max_memory offload map: %s",
+                        removed_map,
+                    )
+                if removed_offload_folder or removed_offload_state is not None:
+                    logger.info(
+                        "Force GPU strict disabled disk offload: folder=%s offload_state_dict=%s",
+                        removed_offload_folder,
+                        removed_offload_state,
+                    )
             elif model_kwargs.get("device_map") == "auto" and model_kwargs.get("max_memory"):
                 logger.info("Hybrid load: device_map=auto with CPU offload enabled.")
             elif model_kwargs.get("device_map") == "auto":
@@ -1895,12 +2167,25 @@ class QwenManager:
             conversion_retry = False
 
             def _load_with_kwargs(kwargs: Dict[str, Any]):
-                nonlocal model_ref, conversion_retry
+                nonlocal model_ref, conversion_retry, last_load_kwargs
                 try:
+                    last_load_kwargs = dict(kwargs)
                     return AutoModelForCausalLM.from_pretrained(model_ref, **kwargs)
                 except Exception as exc:
                     msg = str(exc)
                     lowered_msg = msg.lower()
+                    if (
+                        "unexpected keyword argument" in lowered_msg
+                        and ("offload_state_dict" in lowered_msg or "offload_folder" in lowered_msg)
+                    ):
+                        logger.warning(
+                            "Transformers version does not support disk offload kwargs; retrying without them."
+                        )
+                        alt_kwargs = dict(kwargs)
+                        alt_kwargs.pop("offload_state_dict", None)
+                        alt_kwargs.pop("offload_folder", None)
+                        last_load_kwargs = dict(alt_kwargs)
+                        return AutoModelForCausalLM.from_pretrained(model_ref, **alt_kwargs)
                     if (
                         not conversion_retry
                         and ("automatic conversion of the weights" in lowered_msg or "conversion" in lowered_msg)
@@ -1925,12 +2210,14 @@ class QwenManager:
                         alt_kwargs.pop("low_cpu_mem_usage", None)
                         alt_kwargs.setdefault("use_safetensors", False)
                         try:
+                            last_load_kwargs = dict(alt_kwargs)
                             return AutoModelForCausalLM.from_pretrained(
                                 model_ref,
                                 **alt_kwargs,
                             )
                         except Exception:
                             alt_kwargs.pop("use_safetensors", None)
+                            last_load_kwargs = dict(alt_kwargs)
                             return AutoModelForCausalLM.from_pretrained(
                                 model_ref,
                                 **alt_kwargs,
@@ -1956,28 +2243,40 @@ class QwenManager:
                                 else:
                                     alt_memory[key] = value
                             alt_kwargs["max_memory"] = alt_memory
+                            logger.info(
+                                "Retrying model load with normalized max_memory keys: %s",
+                                alt_memory,
+                            )
                             try:
+                                last_load_kwargs = dict(alt_kwargs)
                                 return AutoModelForCausalLM.from_pretrained(
                                     model_ref,
                                     **alt_kwargs
                                 )
                             except Exception:
+                                logger.warning(
+                                    "Normalized max_memory keys still failed; retrying without max_memory."
+                                )
                                 alt_kwargs.pop("max_memory", None)
                                 alt_kwargs.pop("low_cpu_mem_usage", None)
+                                last_load_kwargs = dict(alt_kwargs)
                                 return AutoModelForCausalLM.from_pretrained(
                                     model_ref,
                                     **alt_kwargs
                                 )
                         raise
                     if "meta tensors" in msg:
+                        removed_map = kwargs.get("max_memory")
                         logger.warning(
-                            "Retry model load without max_memory after meta tensor error: %s",
+                            "Retry model load without max_memory after meta tensor error: %s (removed_map=%s)",
                             msg,
+                            removed_map,
                         )
                         alt_kwargs = dict(kwargs)
                         alt_kwargs.pop("max_memory", None)
                         alt_kwargs.pop("low_cpu_mem_usage", None)
                         try:
+                            last_load_kwargs = dict(alt_kwargs)
                             return AutoModelForCausalLM.from_pretrained(
                                 model_ref,
                                 **alt_kwargs
@@ -1985,6 +2284,7 @@ class QwenManager:
                         except Exception:
                             if self._optimization_config["device"] == "cuda":
                                 alt_kwargs["device_map"] = {"": 0}
+                            last_load_kwargs = dict(alt_kwargs)
                             return AutoModelForCausalLM.from_pretrained(
                                 model_ref,
                                 **alt_kwargs
@@ -1998,7 +2298,8 @@ class QwenManager:
                 lowered = str(exc).lower()
                 if auto_kwargs and ("cuda out of memory" in lowered or "out of memory" in lowered):
                     logger.warning(
-                        "Forced GPU load failed (OOM). Retrying with device_map=auto."
+                        "Forced GPU load failed (OOM). Retrying with device_map=auto and max_memory=%s.",
+                        auto_kwargs.get("max_memory"),
                     )
                     try:
                         self.cleanup_memory()
@@ -2007,6 +2308,15 @@ class QwenManager:
                     self._model = _load_with_kwargs(auto_kwargs)
                 else:
                     raise
+            if self._optimization_config["device"] == "cuda":
+                logger.info(
+                    "Model load kwargs applied: device_map=%s max_memory=%s low_cpu_mem_usage=%s offload_folder=%s offload_state_dict=%s",
+                    last_load_kwargs.get("device_map"),
+                    last_load_kwargs.get("max_memory"),
+                    bool(last_load_kwargs.get("low_cpu_mem_usage")),
+                    last_load_kwargs.get("offload_folder"),
+                    last_load_kwargs.get("offload_state_dict"),
+                )
             # Configuration pour CPU si nécessaire
             if self._optimization_config["device"] == "cpu":
                 self._model = self._model.to("cpu")
@@ -2787,7 +3097,9 @@ CV en Markdown:
             return True
 
         free_vram = self._get_free_vram_gb()
-        if free_vram > 0 and free_vram < max(2.0, self._get_vram_headroom_gb()):
+        if free_vram > 0 and free_vram < max(
+            2.0, self._get_vram_headroom_gb(free_vram_gb=free_vram)
+        ):
             return True
         return False
 
