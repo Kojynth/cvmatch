@@ -8,6 +8,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
+from pydantic import ValidationError
+
 from ..config import DEFAULT_PII_CONFIG
 from ..logging.safe_logger import get_safe_logger
 from .text_norm import normalize_text_for_ui
@@ -1227,18 +1229,35 @@ def _extract_profile_json_with_llm_single(
         return {}
     system_prompt, user_prompt = _build_llm_prompts(text, source)
     from ..schemas.profile_schema import ProfileJSON
-    from ..utils.json_strict import generate_json_with_schema
+    from ..utils.json_strict import generate_json_with_schema, JsonStrictError
     from ..workers.llm_worker import QwenManager
 
     qwen = QwenManager()
-    parsed = generate_json_with_schema(
-        role="extractor",
-        schema_model=ProfileJSON,
-        messages={"system": system_prompt, "user": user_prompt},
-        qwen_manager=qwen,
-        retries=3,
-    )
-    return normalize_profile_json(parsed)
+    try:
+        parsed = generate_json_with_schema(
+            role="extractor",
+            schema_model=ProfileJSON,
+            messages={"system": system_prompt, "user": user_prompt},
+            qwen_manager=qwen,
+            retries=3,
+        )
+        return normalize_profile_json(parsed)
+    except JsonStrictError as exc:
+        logger.warning(
+            "Strict ProfileJSON extraction failed, retrying non-strict: %s", exc
+        )
+        raw = qwen.generate_structured_json(system_prompt, user_prompt)
+        payload = _parse_json_response(raw)
+        if not payload:
+            return {}
+        try:
+            parsed = ProfileJSON.model_validate(payload).model_dump()
+            return normalize_profile_json(parsed)
+        except ValidationError as val_exc:
+            logger.warning(
+                "Non-strict ProfileJSON validation failed: %s", val_exc
+            )
+            return {}
 
 
 def extract_profile_json_with_llm(

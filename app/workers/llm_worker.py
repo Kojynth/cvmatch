@@ -1296,22 +1296,45 @@ class QwenManager:
         except Exception:
             free_vram_gb = 0.0
 
+        try:
+            total_vram = float(gpu_manager.gpu_info.get("total_memory_gb", 0) or 0)
+        except Exception:
+            total_vram = 0.0
+
         if not free_vram_gb:
-            try:
-                total_vram = float(gpu_manager.gpu_info.get("total_memory_gb", 0) or 0)
-            except Exception:
-                total_vram = 0.0
             free_vram_gb = total_vram
 
         if free_vram_gb <= 0:
             return None
 
-        gpu_percent = _get_percent("max_memory_gpu_percent", 90)
+        default_gpu_percent = 80 if total_vram and total_vram <= 12 else 90
+        gpu_percent = _get_percent("max_memory_gpu_percent", default_gpu_percent)
         headroom_gb = self._get_vram_headroom_gb()
+        requested_gpu_gb = None
+        try:
+            requested_gpu_gb = float((self.custom_parameters or {}).get("max_memory_gpu_gb") or 0)
+        except Exception:
+            requested_gpu_gb = None
+
+        env_gpu_gb = os.getenv("CVMATCH_MAX_MEMORY_GPU_GB")
+        if env_gpu_gb:
+            try:
+                requested_gpu_gb = float(env_gpu_gb)
+            except Exception:
+                pass
+
         usable_vram_gb = max(0.0, free_vram_gb - headroom_gb)
         if usable_vram_gb <= 0:
             usable_vram_gb = max(0.0, free_vram_gb * 0.5)
-        vram_budget_mib = max(512, int(usable_vram_gb * 1024 * (gpu_percent / 100.0)))
+
+        if requested_gpu_gb and requested_gpu_gb > 0:
+            vram_budget_gb = requested_gpu_gb
+            if usable_vram_gb > 0:
+                vram_budget_gb = min(vram_budget_gb, usable_vram_gb)
+        else:
+            vram_budget_gb = usable_vram_gb * (gpu_percent / 100.0)
+
+        vram_budget_mib = max(512, int(vram_budget_gb * 1024))
         memory_map: Dict[Union[int, str], str] = {0: f"{vram_budget_mib}MiB"}
 
         try:
@@ -1819,6 +1842,11 @@ class QwenManager:
                 if max_memory:
                     model_kwargs["max_memory"] = max_memory
                     model_kwargs["low_cpu_mem_usage"] = True
+                    logger.info("Max memory map active: %s", max_memory)
+                else:
+                    logger.warning(
+                        "Max memory map not set (device_map=auto). Offload disabled."
+                    )
 
                 force_gpu_env = os.getenv("CVMATCH_FORCE_GPU")
                 if force_gpu_env is not None:
@@ -1861,6 +1889,8 @@ class QwenManager:
                 )
             elif model_kwargs.get("device_map") == "auto" and model_kwargs.get("max_memory"):
                 logger.info("Hybrid load: device_map=auto with CPU offload enabled.")
+            elif model_kwargs.get("device_map") == "auto":
+                logger.info("device_map=auto without max_memory (no offload).")
 
             conversion_retry = False
 
@@ -2010,7 +2040,15 @@ class QwenManager:
             self._model.eval()
             
             # Optimisations post-chargement
-            if hasattr(torch, 'compile') and self._device.type == "cuda":
+            disable_compile = False
+            if os.getenv("CVMATCH_DISABLE_TORCH_COMPILE", "").strip() in ("1", "true", "yes", "y"):
+                disable_compile = True
+            if (self.custom_parameters or {}).get("disable_torch_compile"):
+                disable_compile = True
+
+            if disable_compile:
+                logger.info("Skip torch.compile: disabled by config.")
+            elif hasattr(torch, 'compile') and self._device.type == "cuda":
                 should_compile = True
                 device_map = getattr(self._model, "hf_device_map", None)
                 if isinstance(device_map, dict) and device_map:
@@ -2457,6 +2495,35 @@ class QwenManager:
             else:
                 max_new_tokens = max_new_tokens_cap
 
+            slow_device = False
+            try:
+                if getattr(self._device, "type", None) == "cpu":
+                    slow_device = True
+            except Exception:
+                pass
+            try:
+                device_map = getattr(self._model, "hf_device_map", None)
+                if isinstance(device_map, dict) and device_map:
+                    for value in device_map.values():
+                        resolved = self._normalize_device_target(value)
+                        if resolved is None:
+                            continue
+                        if resolved.type != "cuda":
+                            slow_device = True
+                            break
+            except Exception:
+                pass
+
+            max_time_s = 120.0
+            if slow_device:
+                max_time_s = 240.0
+                max_new_tokens = min(max_new_tokens, 600)
+                logger.info(
+                    "Structured JSON slow mode: cap max_new_tokens=%s max_time=%.0fs",
+                    max_new_tokens,
+                    max_time_s,
+                )
+
             use_cache = True
             try:
                 if getattr(self._device, "type", None) == "cuda" and self._should_disable_kv_cache():
@@ -2484,6 +2551,7 @@ class QwenManager:
                     repetition_penalty=1.05,
                     pad_token_id=self._tokenizer.eos_token_id,
                     eos_token_id=self._tokenizer.eos_token_id,
+                    max_time=max_time_s,
                     use_cache=use_cache,
                 )
 
@@ -3504,6 +3572,40 @@ class CVGenerationWorker(QThread):
                 logger.warning("Fallback CriticJSON used due to: %s", reason)
             return payload
 
+    def _fallback_offer_keywords_json(self, *, reason: str = "") -> Dict[str, Any]:
+        from ..schemas.offer_keywords_schema import OfferKeywordsJSON
+
+        language = self._resolve_language_code()
+        job_title = ""
+        company = ""
+        if isinstance(self.offer_data, dict):
+            job_title = self.offer_data.get("job_title") or ""
+            company = self.offer_data.get("company") or ""
+
+        payload = {
+            "schema_version": "offer_keywords.v1",
+            "language": language,
+            "job_title": job_title,
+            "company": company,
+            "seniority": "",
+            "keywords": [],
+            "skills": [],
+            "tools": [],
+            "soft_skills": [],
+            "responsibilities": [],
+            "education": [],
+            "certifications": [],
+        }
+
+        try:
+            parsed = OfferKeywordsJSON.model_validate(payload).model_dump()
+        except Exception:
+            parsed = payload
+
+        if reason:
+            logger.warning("Fallback OfferKeywordsJSON used due to: %s", reason)
+        return parsed
+
     def _is_slow_generation_device(self) -> bool:
         try:
             device = getattr(self.qwen_manager, "_device", None)
@@ -4401,18 +4503,40 @@ OUTPUT RULES:
         return {"system": system_prompt, "user": user_prompt}
 
     def generate_offer_keywords_json(self, progress_callback=None) -> Dict[str, Any]:
+        from pydantic import ValidationError
         from ..schemas.offer_keywords_schema import OfferKeywordsJSON
-        from ..utils.json_strict import generate_json_with_schema
+        from ..utils.json_strict import generate_json_with_schema, JsonStrictError
 
         messages = self._build_offer_keywords_messages()
-        return generate_json_with_schema(
-            role="offer_critic",
-            schema_model=OfferKeywordsJSON,
-            messages=messages,
-            qwen_manager=self.qwen_manager,
-            retries=3,
-            progress_callback=progress_callback,
-        )
+        try:
+            return generate_json_with_schema(
+                role="offer_critic",
+                schema_model=OfferKeywordsJSON,
+                messages=messages,
+                qwen_manager=self.qwen_manager,
+                retries=3,
+                progress_callback=progress_callback,
+            )
+        except JsonStrictError as exc:
+            logger.warning(
+                "Strict OfferKeywordsJSON failed, retrying non-strict: %s", exc
+            )
+            raw = self.qwen_manager.generate_structured_json(
+                messages["system"],
+                messages["user"],
+                progress_callback,
+            )
+            payload = self._parse_json_response(raw)
+            if not payload:
+                return self._fallback_offer_keywords_json(reason=str(exc))
+            try:
+                parsed = OfferKeywordsJSON.model_validate(payload)
+            except ValidationError as val_exc:
+                logger.warning(
+                    "Non-strict OfferKeywordsJSON validation failed: %s", val_exc
+                )
+                return self._fallback_offer_keywords_json(reason=str(val_exc))
+            return parsed.model_dump()
 
     def generate_cv_json_draft(
         self,

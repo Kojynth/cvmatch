@@ -120,6 +120,7 @@ echo "Installation PyTorch ($TORCH_VARIANT)..."
 "$VENV_DIR/bin/python" -m pip install --upgrade --force-reinstall torch torchvision torchaudio --index-url "$TORCH_INDEX_URL"
 
 "$VENV_DIR/bin/python" -m pip install --upgrade huggingface_hub transformers protobuf sentencepiece
+"$VENV_DIR/bin/python" -m pip install --upgrade lm-format-enforcer
 
 # Installation dépendances
 echo "Installation dépendances..."
@@ -154,6 +155,14 @@ if ! command -v nvcc >/dev/null 2>&1; then
     REQ_TO_USE="$TMP_REQ"
 fi
 "$VENV_DIR/bin/pip" install --no-build-isolation "${PIP_ARGS[@]}" -r "$REQ_TO_USE"
+
+echo "Verification LM Format Enforcer..."
+if "$VENV_DIR/bin/python" -c "import lmformatenforcer; print('lmformatenforcer OK')"; then
+    :
+else
+    echo "[WARN] lmformatenforcer non detecte apres install requirements - nouvelle tentative."
+    "$VENV_DIR/bin/python" -m pip install --upgrade lm-format-enforcer
+fi
 
 echo
 echo "Verification GPU PyTorch..."

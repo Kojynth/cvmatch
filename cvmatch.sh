@@ -196,7 +196,7 @@ log_info "[4/6] Vérification et installation dépendances..."
 # Test rapide des packages critiques
 echo "Test des dépendances critiques..."
 echo "Test des dependances critiques..." >> "$SESSION_LOG"
-if ! "$VENV_PYTHON" -c "import PySide6, torch, transformers, loguru, pypdf, sqlmodel, docx, psutil; print('Toutes les dependances sont presentes')" &>/dev/null; then
+if ! "$VENV_PYTHON" -c "import PySide6, torch, transformers, loguru, pypdf, sqlmodel, docx, psutil, lmformatenforcer; print('Toutes les dependances sont presentes')" &>/dev/null; then
     echo
     echo "==============================================="
     echo "  INSTALLATION AUTOMATIQUE DES DÉPENDANCES"
@@ -239,7 +239,7 @@ PY
 
     # Test final simple
     echo "[VERIFY] Test final des imports..."
-    if "$VENV_PYTHON" -c "import PySide6, torch; print('Tests imports OK')" &>/dev/null; then
+    if "$VENV_PYTHON" -c "import PySide6, torch, lmformatenforcer; print('Tests imports OK')" &>/dev/null; then
         log_success "[SUCCESS] Installation vérifiée avec succès"
         echo
     else
@@ -345,7 +345,7 @@ log_info "[5/6] Tests de santé..."
 if ! "$VENV_PYTHON" - <<'PY'
 import sys
 try:
-    import PySide6, torch, transformers, loguru, pypdf, sqlmodel, docx, psutil
+    import PySide6, torch, transformers, loguru, pypdf, sqlmodel, docx, psutil, lmformatenforcer
     print("Tests d'import: OK")
 except ImportError as exc:
     print(f"Erreur import: {exc}")
