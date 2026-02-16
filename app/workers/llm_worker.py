@@ -1,4 +1,4 @@
-"""
+﻿"""
 LLM Worker
 ==========
 
@@ -1899,6 +1899,17 @@ class QwenManager:
         if self.model_loaded and self._model is not None and self._current_model_path == self.model_name:
             logger.info(f"Modèle {self.model_name} déjà chargé en mémoire")
             return
+
+        # Évite de garder des références partielles après un échec précédent.
+        if not self.model_loaded and (
+            self._model is not None or self._tokenizer is not None
+        ):
+            logger.warning("Stale model references detected before load; forcing cleanup.")
+            self._model = None
+            self._tokenizer = None
+            self._device = None
+            self._current_model_path = None
+            self.cleanup_memory()
         
         # Si on change de modèle, nettoyer l'ancien
         if self.model_loaded and self._current_model_path != self.model_name:
@@ -2850,6 +2861,13 @@ class QwenManager:
             
         except Exception as e:
             logger.error(f"Erreur generation CV: {e}")
+            lowered = str(e).lower()
+            if "out of memory" in lowered or "cuda out of memory" in lowered:
+                logger.warning("Generation OOM detected; unloading model to recover VRAM.")
+                try:
+                    self.unload_model(reason="generation OOM")
+                except Exception:
+                    pass
             if allow_fallback:
                 if progress_callback:
                     progress_callback("Warning: generation error - fallback enabled")
@@ -2984,7 +3002,14 @@ class QwenManager:
 
             return self._extract_structured_content(generated_text)
         except Exception as e:
-            logger.error(f"Erreur gÇ¸nÇ¸ration JSON: {e}")
+            logger.error(f"Structured JSON generation error: {e}")
+            lowered = str(e).lower()
+            if "out of memory" in lowered or "cuda out of memory" in lowered:
+                logger.warning("Structured JSON OOM detected; unloading model to recover VRAM.")
+                try:
+                    self.unload_model(reason="structured json OOM")
+                except Exception:
+                    pass
             return ""
 
     def _cv_system_prompt(self) -> str:
@@ -5308,14 +5333,20 @@ OUTPUT RULES:
         except JsonStrictError as exc:
             logger.error("Strict JSON pipeline failed: %s", exc)
             try:
-                self.qwen_manager.cleanup_memory()
+                if self.qwen_manager._should_unload_after_generation():
+                    self.qwen_manager.unload_model(reason="after strict error")
+                else:
+                    self.qwen_manager.cleanup_memory()
             except Exception:
                 pass
             self.error_occurred.emit(str(exc))
         except Exception as e:
             logger.error(f"Erreur génération CV : {e}")
             try:
-                self.qwen_manager.cleanup_memory()
+                if self.qwen_manager._should_unload_after_generation():
+                    self.qwen_manager.unload_model(reason="after generation error")
+                else:
+                    self.qwen_manager.cleanup_memory()
             except Exception:
                 pass
             self.error_occurred.emit(f"Erreur génération: {str(e)}")
@@ -6251,3 +6282,4 @@ class FineTuningWorker(QThread):
         except Exception as e:
             logger.error(f"Erreur fine-tuning : {e}")
             self.error_occurred.emit(str(e))
+
