@@ -9,6 +9,9 @@ import json
 import re
 import time
 import os
+import sys
+import tempfile
+import subprocess
 import unicodedata
 import inspect
 from difflib import SequenceMatcher
@@ -933,6 +936,13 @@ class QwenManager:
         if overrides:
             merged.update(overrides)
         return merged
+
+    def _should_unload_between_stages(self) -> bool:
+        env_flag = os.getenv("CVMATCH_UNLOAD_BETWEEN_STAGES")
+        if env_flag is not None:
+            return env_flag.strip().lower() in ("1", "true", "yes", "y")
+        custom = self.custom_parameters or {}
+        return bool(custom.get("unload_between_stages"))
 
     def generate_structured_json_lmfe(
         self,
@@ -3245,6 +3255,25 @@ Dans l'attente de votre retour, je vous prie d'agréer, Madame, Monsieur, mes sa
                 pass
         logger.info("Mémoire nettoyée")
 
+    def unload_model(self, reason: str = "") -> None:
+        """Décharge le modèle pour libérer la VRAM entre les étapes."""
+        note = f" ({reason})" if reason else ""
+        try:
+            if self.model_loaded or self._model is not None:
+                logger.info("Déchargement du modèle%s", note)
+        except Exception:
+            pass
+        # Forcer l'arrêt d'un serveur llama.cpp si nécessaire.
+        self._current_model_path = None
+        self._model = None
+        self._tokenizer = None
+        self._device = None
+        self.model_loaded = False
+        try:
+            self.cleanup_memory()
+        except Exception:
+            pass
+
 
 class CVGenerationWorker(QThread):
     """Worker pour générer un CV en arrière-plan.
@@ -3266,6 +3295,67 @@ class CVGenerationWorker(QThread):
         self.template = template
         # Le QwenManager se configure automatiquement selon le modèle sélectionné
         self.qwen_manager = QwenManager(self.profile_data.model_version)
+
+    def _should_use_stage_subprocess(self) -> bool:
+        env_flag = os.getenv("CVMATCH_SUBPROCESS_STAGES")
+        if env_flag is not None:
+            return env_flag.strip().lower() in ("1", "true", "yes", "y")
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        return bool(custom.get("subprocess_stages"))
+
+    def _run_stage_subprocess(self, stage: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        from dataclasses import asdict
+
+        import uuid
+
+        repo_root = Path(__file__).resolve().parents[2]
+        tmp_dir = Path(tempfile.gettempdir())
+        token = uuid.uuid4().hex
+        input_path = tmp_dir / f"cvmatch_stage_{stage}_{token}_in.json"
+        output_path = tmp_dir / f"cvmatch_stage_{stage}_{token}_out.json"
+
+        payload = dict(payload)
+        payload["profile_data"] = asdict(self.profile_data)
+        payload["offer_data"] = self.offer_data
+        payload["template"] = self.template
+
+        with open(input_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=True, default=str)
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "app.workers.llm_stage_runner",
+            "--stage",
+            stage,
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_path),
+        ]
+
+        result = subprocess.run(
+            cmd,
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            stdout = (result.stdout or "").strip()
+            details = stderr or stdout or "unknown error"
+            raise RuntimeError(f"Stage subprocess failed: {stage}: {details}")
+
+        with open(output_path, "r", encoding="utf-8") as handle:
+            result_payload = json.load(handle)
+
+        try:
+            input_path.unlink(missing_ok=True)
+            output_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+        return result_payload
 
     def _build_profile_payload(self) -> Dict[str, Any]:
         personal_info = dict(self.profile_data.extracted_personal_info or {})
@@ -4463,9 +4553,15 @@ OUTPUT RULES:
                 progress_callback(note)
                 self.qwen_manager.last_model_resolution_note = None
 
+            use_subprocess = self._should_use_stage_subprocess()
             model_name = getattr(self.qwen_manager, "current_model_id", "IA")
             progress_callback(f"[MODEL] Initialisation {model_name}...")
-            self.qwen_manager.load_model(progress_callback, allow_fallback=False)
+            if use_subprocess:
+                progress_callback("[MODEL] Mode VRAM: etapes isolees en sous-processus")
+            elif self.qwen_manager._should_unload_between_stages():
+                progress_callback("[MODEL] Mode VRAM: chargement paresseux par etape")
+            else:
+                self.qwen_manager.load_model(progress_callback, allow_fallback=False)
 
             progress_callback("[EXTRACTOR] Building ProfileJSON...")
             logger.info("ProfileJSON build start")
@@ -4494,9 +4590,14 @@ OUTPUT RULES:
                 progress_callback("[OFFER] Extracting keywords...")
                 logger.info("Offer keyword extraction start")
                 try:
-                    offer_keywords = self.generate_offer_keywords_json(
-                        progress_callback=progress_callback,
-                    )
+                    if use_subprocess:
+                        offer_keywords = self._run_stage_subprocess(
+                            "offer_keywords", {}
+                        )
+                    else:
+                        offer_keywords = self.generate_offer_keywords_json(
+                            progress_callback=progress_callback,
+                        )
                     self._merge_offer_keywords(offer_keywords)
                     logger.info(
                         "Offer keyword extraction done: keywords=%s skills=%s tools=%s",
@@ -4511,13 +4612,22 @@ OUTPUT RULES:
 
             progress_callback("[GENERATOR] Draft CVJSON...")
             logger.info("Draft CVJSON generation start")
-            cv_json_draft = self.generate_cv_json_draft(
-                profile_json=profile_json,
-                progress_callback=progress_callback,
-            )
+            if use_subprocess:
+                cv_json_draft = self._run_stage_subprocess(
+                    "draft", {"profile_json": profile_json}
+                )
+            else:
+                cv_json_draft = self.generate_cv_json_draft(
+                    profile_json=profile_json,
+                    progress_callback=progress_callback,
+                )
             self._apply_contact_fallback(cv_json_draft, profile_json)
             self._apply_target_fallback(cv_json_draft)
             logger.info("Draft CVJSON generation done")
+
+            if not use_subprocess and self.qwen_manager._should_unload_between_stages():
+                progress_callback("[VRAM] Dechargement modele apres draft...")
+                self.qwen_manager.unload_model(reason="after draft")
 
             try:
                 from ..utils.cv_json_storage import save_cv_json_draft
@@ -4541,19 +4651,34 @@ OUTPUT RULES:
 
             progress_callback("[CRITIC] Reviewing draft...")
             logger.info("Critic JSON generation start")
-            critic_json = self.generate_critic_json(
-                cv_html=draft_html,
-                progress_callback=progress_callback,
-            )
+            if use_subprocess:
+                critic_json = self._run_stage_subprocess(
+                    "critic", {"cv_html": draft_html}
+                )
+            else:
+                critic_json = self.generate_critic_json(
+                    cv_html=draft_html,
+                    progress_callback=progress_callback,
+                )
             logger.info("Critic JSON generation done")
+
+            if not use_subprocess and self.qwen_manager._should_unload_between_stages():
+                progress_callback("[VRAM] Dechargement modele apres critic...")
+                self.qwen_manager.unload_model(reason="after critic")
 
             progress_callback("[GENERATOR] Rewrite CVJSON...")
             logger.info("Final CVJSON generation start")
-            cv_json_final = self.generate_cv_json_final(
-                profile_json=profile_json,
-                critic_json=critic_json,
-                progress_callback=progress_callback,
-            )
+            if use_subprocess:
+                cv_json_final = self._run_stage_subprocess(
+                    "final",
+                    {"profile_json": profile_json, "critic_json": critic_json},
+                )
+            else:
+                cv_json_final = self.generate_cv_json_final(
+                    profile_json=profile_json,
+                    critic_json=critic_json,
+                    progress_callback=progress_callback,
+                )
             self._apply_contact_fallback(cv_json_final, profile_json)
             self._apply_target_fallback(cv_json_final)
             self._merge_cv_json_missing_sections(cv_json_final, cv_json_draft)
@@ -4580,9 +4705,14 @@ OUTPUT RULES:
             progress_callback("[LETTER] Generating cover letter...")
             logger.info("Cover letter generation start")
             letter_prompt = self.build_cover_letter_prompt()
-            cover_letter = self.qwen_manager.generate_cover_letter(
-                letter_prompt, progress_callback
-            )
+            if use_subprocess:
+                cover_payload = {"letter_prompt": letter_prompt}
+                cover_result = self._run_stage_subprocess("cover_letter", cover_payload)
+                cover_letter = cover_result.get("cover_letter", "")
+            else:
+                cover_letter = self.qwen_manager.generate_cover_letter(
+                    letter_prompt, progress_callback
+                )
             logger.info("Cover letter generation done: length=%s", len(cover_letter or ""))
 
             progress_callback("[SAVE] Persisting application...")
