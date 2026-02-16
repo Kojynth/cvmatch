@@ -244,9 +244,12 @@ class AIModelTab(QWidget):
         self.profile = profile
         self.ml_coordinator = ml_coordinator
         self._updating_memory_limits = False
+        self._updating_memory_gb_limits = False
         self._updating_chunked_generation = False
         self._updating_unload_between_stages = False
         self._updating_subprocess_stages = False
+        self._updating_vram_mode = False
+        self._updating_skip_critic_low_vram = False
         self.setup_ui()
 
     def setup_ui(self):
@@ -395,16 +398,39 @@ class AIModelTab(QWidget):
         self.max_memory_cpu_spin.valueChanged.connect(self.on_memory_limits_changed)
         memory_layout.addRow("CPU (RAM):", self.max_memory_cpu_spin)
 
+        self.max_memory_gpu_gb_spin = QDoubleSpinBox()
+        self.max_memory_gpu_gb_spin.setRange(0.0, 64.0)
+        self.max_memory_gpu_gb_spin.setSingleStep(0.1)
+        self.max_memory_gpu_gb_spin.setDecimals(1)
+        self.max_memory_gpu_gb_spin.setSpecialValueText("Auto")
+        self.max_memory_gpu_gb_spin.setSuffix(" GB")
+        self.max_memory_gpu_gb_spin.valueChanged.connect(
+            self.on_memory_gb_limits_changed
+        )
+        memory_layout.addRow("GPU budget (GB):", self.max_memory_gpu_gb_spin)
+
+        self.max_memory_cpu_gb_spin = QDoubleSpinBox()
+        self.max_memory_cpu_gb_spin.setRange(0.0, 256.0)
+        self.max_memory_cpu_gb_spin.setSingleStep(0.5)
+        self.max_memory_cpu_gb_spin.setDecimals(1)
+        self.max_memory_cpu_gb_spin.setSpecialValueText("Auto")
+        self.max_memory_cpu_gb_spin.setSuffix(" GB")
+        self.max_memory_cpu_gb_spin.valueChanged.connect(
+            self.on_memory_gb_limits_changed
+        )
+        memory_layout.addRow("CPU budget (GB):", self.max_memory_cpu_gb_spin)
+
         memory_hint = QLabel(
             "Augmenter utilise plus de memoire (risque d'OOM). "
-            "Baisser augmente l'offload CPU et peut ralentir."
+            "Baisser augmente l'offload CPU et peut ralentir. "
+            "Si un budget GB est renseigne (>0), il remplace le pourcentage."
         )
         memory_hint.setStyleSheet("color: #666; font-size: 10px;")
         memory_hint.setWordWrap(True)
         memory_layout.addRow("", memory_hint)
 
         memory_buttons = QHBoxLayout()
-        self.reset_memory_btn = QPushButton("Reinitialiser (90%/80%)")
+        self.reset_memory_btn = QPushButton("Reinitialiser (90%/80%, GB=Auto)")
         self.reset_memory_btn.clicked.connect(self.reset_memory_limits)
         memory_buttons.addWidget(self.reset_memory_btn)
         memory_buttons.addStretch()
@@ -416,6 +442,15 @@ class AIModelTab(QWidget):
         # Section generation (VRAM)
         gen_section = QGroupBox("Generation (VRAM)")
         gen_layout = QVBoxLayout()
+
+        self.vram_mode_combo = QComboBox()
+        self.vram_mode_combo.addItem("Auto (recommande)", "auto")
+        self.vram_mode_combo.addItem("HighVRAM (performance)", "high")
+        self.vram_mode_combo.addItem("MedVRAM (equilibre)", "med")
+        self.vram_mode_combo.addItem("LowVRAM (stabilite anti-OOM)", "low")
+        self.vram_mode_combo.currentIndexChanged.connect(self.on_vram_mode_changed)
+        gen_layout.addWidget(QLabel("Profil VRAM:"))
+        gen_layout.addWidget(self.vram_mode_combo)
 
         self.chunked_generation_group = QButtonGroup(self)
         self.chunked_generation_auto = QRadioButton("Auto (recommande)")
@@ -452,7 +487,16 @@ class AIModelTab(QWidget):
         )
         gen_layout.addWidget(self.subprocess_stages_check)
 
+        self.skip_critic_low_vram_check = QCheckBox(
+            "LowVRAM: desactiver l'etape critic (plus stable, qualite moindre)"
+        )
+        self.skip_critic_low_vram_check.stateChanged.connect(
+            self.on_skip_critic_low_vram_changed
+        )
+        gen_layout.addWidget(self.skip_critic_low_vram_check)
+
         gen_hint = QLabel(
+            "Profil VRAM: High=perf, Med=equilibre, Low=anti-OOM. "
             "Auto = selon VRAM libre. "
             "Force ON = mode fragmente actif. "
             "Force OFF = mode fragmente desactive."
@@ -654,9 +698,15 @@ class AIModelTab(QWidget):
             gpu_percent = custom.get("max_memory_gpu_percent", 90)
             cpu_percent = custom.get("max_memory_cpu_percent", 80)
             self._set_memory_limits(gpu_percent, cpu_percent)
+            self._set_memory_gb_limits(
+                custom.get("max_memory_gpu_gb"),
+                custom.get("max_memory_cpu_gb"),
+            )
+            self._set_vram_mode(custom.get("vram_mode"))
             self._set_chunked_generation(custom.get("chunked_generation"))
             self._set_unload_between_stages(custom.get("unload_between_stages"))
             self._set_subprocess_stages(custom.get("subprocess_stages"))
+            self._set_skip_critic_low_vram(custom.get("skip_critic_in_low_vram"))
 
             # Désactiver les optimisations non disponibles sur Windows
             import platform
@@ -684,6 +734,46 @@ class AIModelTab(QWidget):
             self.max_memory_cpu_spin.setValue(int(cpu_percent))
         finally:
             self._updating_memory_limits = False
+
+    def _set_memory_gb_limits(self, gpu_gb, cpu_gb) -> None:
+        """Met a jour les budgets absolus sans declencher de sauvegarde."""
+        self._updating_memory_gb_limits = True
+        try:
+            gpu_value = float(gpu_gb) if gpu_gb is not None else 0.0
+            cpu_value = float(cpu_gb) if cpu_gb is not None else 0.0
+            self.max_memory_gpu_gb_spin.setValue(max(0.0, gpu_value))
+            self.max_memory_cpu_gb_spin.setValue(max(0.0, cpu_value))
+        except Exception:
+            self.max_memory_gpu_gb_spin.setValue(0.0)
+            self.max_memory_cpu_gb_spin.setValue(0.0)
+        finally:
+            self._updating_memory_gb_limits = False
+
+    def _set_vram_mode(self, value) -> None:
+        """Met a jour le profil VRAM sans declencher de sauvegarde."""
+        self._updating_vram_mode = True
+        try:
+            mode = str(value or "auto").strip().lower()
+            idx = self.vram_mode_combo.findData(mode)
+            if idx < 0:
+                idx = self.vram_mode_combo.findData("auto")
+            self.vram_mode_combo.setCurrentIndex(max(0, idx))
+        finally:
+            self._updating_vram_mode = False
+
+    def _set_skip_critic_low_vram(self, value) -> None:
+        """Met a jour l'option critic low VRAM sans declencher de sauvegarde."""
+        self._updating_skip_critic_low_vram = True
+        try:
+            parsed_value = value
+            if isinstance(value, str):
+                parsed_value = value.strip().lower() in ("1", "true", "yes", "y", "on")
+            if value is None:
+                self.skip_critic_low_vram_check.setChecked(True)
+            else:
+                self.skip_critic_low_vram_check.setChecked(bool(parsed_value))
+        finally:
+            self._updating_skip_critic_low_vram = False
 
     def _set_chunked_generation(self, value) -> None:
         """Met a jour le controle de generation fragmente sans sauvegarde."""
@@ -731,6 +821,52 @@ class AIModelTab(QWidget):
             )
         except Exception as e:
             logger.error(f"Erreur mise a jour max_memory: {e}")
+
+    def on_memory_gb_limits_changed(self, _value=None) -> None:
+        """Sauvegarde les budgets absolus max_memory."""
+        if self._updating_memory_gb_limits:
+            return
+        try:
+            from ..utils.model_config_manager import model_config_manager
+
+            gpu_gb = float(self.max_memory_gpu_gb_spin.value())
+            cpu_gb = float(self.max_memory_cpu_gb_spin.value())
+            model_config_manager.update_custom_parameters(
+                {
+                    "max_memory_gpu_gb": round(gpu_gb, 2) if gpu_gb > 0 else None,
+                    "max_memory_cpu_gb": round(cpu_gb, 2) if cpu_gb > 0 else None,
+                }
+            )
+        except Exception as e:
+            logger.error(f"Erreur mise a jour max_memory gb: {e}")
+
+    def on_vram_mode_changed(self, _index=None) -> None:
+        """Sauvegarde le profil VRAM (auto/low/med/high)."""
+        if self._updating_vram_mode:
+            return
+        try:
+            from ..utils.model_config_manager import model_config_manager
+
+            mode = self.vram_mode_combo.currentData() or "auto"
+            model_config_manager.update_custom_parameters(
+                {"vram_mode": None if mode == "auto" else mode}
+            )
+        except Exception as e:
+            logger.error(f"Erreur mise a jour vram_mode: {e}")
+
+    def on_skip_critic_low_vram_changed(self, _state=None) -> None:
+        """Sauvegarde l'option de desactivation critic en low VRAM."""
+        if self._updating_skip_critic_low_vram:
+            return
+        try:
+            from ..utils.model_config_manager import model_config_manager
+
+            value = bool(self.skip_critic_low_vram_check.isChecked())
+            model_config_manager.update_custom_parameters(
+                {"skip_critic_in_low_vram": value}
+            )
+        except Exception as e:
+            logger.error(f"Erreur mise a jour skip_critic_in_low_vram: {e}")
 
     def on_chunked_generation_changed(self, _state=None) -> None:
         """Sauvegarde le mode de generation fragmente."""
@@ -783,6 +919,7 @@ class AIModelTab(QWidget):
         default_gpu = 90
         default_cpu = 80
         self._set_memory_limits(default_gpu, default_cpu)
+        self._set_memory_gb_limits(None, None)
         try:
             from ..utils.model_config_manager import model_config_manager
 
@@ -790,6 +927,8 @@ class AIModelTab(QWidget):
                 {
                     "max_memory_gpu_percent": default_gpu,
                     "max_memory_cpu_percent": default_cpu,
+                    "max_memory_gpu_gb": None,
+                    "max_memory_cpu_gb": None,
                 }
             )
         except Exception as e:
@@ -1000,9 +1139,15 @@ class AIModelTab(QWidget):
                 gpu_percent = custom.get("max_memory_gpu_percent", 90)
                 cpu_percent = custom.get("max_memory_cpu_percent", 80)
                 self._set_memory_limits(gpu_percent, cpu_percent)
+                self._set_memory_gb_limits(
+                    custom.get("max_memory_gpu_gb"),
+                    custom.get("max_memory_cpu_gb"),
+                )
+                self._set_vram_mode(custom.get("vram_mode"))
                 self._set_chunked_generation(custom.get("chunked_generation"))
                 self._set_unload_between_stages(custom.get("unload_between_stages"))
                 self._set_subprocess_stages(custom.get("subprocess_stages"))
+                self._set_skip_critic_low_vram(custom.get("skip_critic_in_low_vram"))
             except Exception as e:
                 logger.warning(f"Erreur synchro max_memory: {e}")
 

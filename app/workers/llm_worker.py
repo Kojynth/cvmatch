@@ -865,6 +865,7 @@ class QwenManager:
         self._optimization_config = None
         self._current_model_path = None
         self._last_max_memory_map_details: Dict[str, Any] = {}
+        self._runs_since_last_load: int = 0
         self.last_model_resolution_note: Optional[str] = None
         self._initialized = True
         
@@ -943,7 +944,9 @@ class QwenManager:
         if env_flag is not None:
             return env_flag.strip().lower() in ("1", "true", "yes", "y")
         custom = self.custom_parameters or {}
-        return bool(custom.get("unload_between_stages"))
+        if "unload_between_stages" in custom:
+            return bool(custom.get("unload_between_stages"))
+        return self._is_low_vram_mode()
 
     def _should_unload_after_generation(self) -> bool:
         env_flag = os.getenv("CVMATCH_UNLOAD_AFTER_RUN")
@@ -954,6 +957,13 @@ class QwenManager:
         if "unload_after_run" in custom:
             return bool(custom.get("unload_after_run"))
 
+        recycle_every = self._get_recycle_every_runs()
+        if recycle_every > 0 and self._runs_since_last_load >= recycle_every:
+            return True
+
+        if self._is_low_vram_mode():
+            return True
+
         # Auto mode: si la marge VRAM est faible en fin de run, on libère le modèle.
         if not TORCH_AVAILABLE or not torch.cuda.is_available():
             return False
@@ -962,6 +972,89 @@ class QwenManager:
             return False
         headroom = self._get_vram_headroom_gb(free_vram_gb=free_vram)
         return free_vram < max(1.0, headroom)
+
+    def _get_total_vram_gb(self) -> float:
+        total_vram = 0.0
+        try:
+            total_vram = float(
+                getattr(gpu_manager, "gpu_info", {}).get("total_memory_gb", 0) or 0
+            )
+        except Exception:
+            total_vram = 0.0
+        if total_vram > 0:
+            return total_vram
+        try:
+            total_vram = float(
+                getattr(gpu_manager, "gpu_info", {}).get("vram_gb", 0) or 0
+            )
+        except Exception:
+            total_vram = 0.0
+        if total_vram > 0:
+            return total_vram
+        if TORCH_AVAILABLE and torch.cuda.is_available():
+            try:
+                if hasattr(torch.cuda, "mem_get_info"):
+                    _, total_bytes = torch.cuda.mem_get_info()
+                    return total_bytes / (1024**3)
+            except Exception:
+                pass
+        return 0.0
+
+    def _get_vram_mode(self) -> str:
+        env_mode = os.getenv("CVMATCH_VRAM_MODE")
+        if env_mode:
+            mode = env_mode.strip().lower()
+            if mode in {"auto", "low", "med", "high"}:
+                return mode
+        custom_mode = (self.custom_parameters or {}).get("vram_mode")
+        if isinstance(custom_mode, str):
+            mode = custom_mode.strip().lower()
+            if mode in {"auto", "low", "med", "high"}:
+                return mode
+        return "auto"
+
+    def _is_low_vram_mode(self) -> bool:
+        mode = self._get_vram_mode()
+        if mode == "low":
+            return True
+        if mode in {"med", "high"}:
+            return False
+        total_vram = self._get_total_vram_gb()
+        return total_vram > 0 and total_vram <= 10.5
+
+    def _is_med_vram_mode(self) -> bool:
+        mode = self._get_vram_mode()
+        if mode == "med":
+            return True
+        if mode in {"low", "high"}:
+            return False
+        total_vram = self._get_total_vram_gb()
+        return total_vram > 10.5 and total_vram <= 13.0
+
+    def _get_recycle_every_runs(self) -> int:
+        env_value = os.getenv("CVMATCH_RECYCLE_EVERY_RUNS")
+        if env_value is not None:
+            try:
+                return max(0, int(env_value))
+            except Exception:
+                return 0
+        custom = self.custom_parameters or {}
+        if "recycle_every_runs" in custom:
+            try:
+                return max(0, int(custom.get("recycle_every_runs")))
+            except Exception:
+                return 0
+        if self._is_low_vram_mode():
+            return 1
+        if self._is_med_vram_mode():
+            return 2
+        return 0
+
+    def mark_run_completed(self) -> None:
+        try:
+            self._runs_since_last_load = int(self._runs_since_last_load) + 1
+        except Exception:
+            self._runs_since_last_load = 1
 
     def generate_structured_json_lmfe(
         self,
@@ -1404,7 +1497,9 @@ class QwenManager:
                 total_vram = float(getattr(gpu_manager, "gpu_info", {}).get("total_memory_gb", 0) or 0)
             except Exception:
                 total_vram = 0.0
-            if total_vram > 0:
+            if self._is_low_vram_mode() and total_vram > 0:
+                threshold = max(1.8, min(3.0, total_vram * 0.28))
+            elif total_vram > 0:
                 threshold = max(1.0, min(2.5, total_vram * 0.12))
             else:
                 threshold = 1.5
@@ -1486,7 +1581,12 @@ class QwenManager:
             )
             return None
 
-        default_gpu_percent = 80 if total_vram and total_vram <= 12 else 90
+        if total_vram and total_vram <= 10.5:
+            default_gpu_percent = 72
+        elif total_vram and total_vram <= 12:
+            default_gpu_percent = 78
+        else:
+            default_gpu_percent = 90
         gpu_percent = _get_percent("max_memory_gpu_percent", default_gpu_percent)
         headroom_gb = self._get_vram_headroom_gb(
             free_vram_gb=free_vram_gb,
@@ -1899,6 +1999,17 @@ class QwenManager:
         if self.model_loaded and self._model is not None and self._current_model_path == self.model_name:
             logger.info(f"Modèle {self.model_name} déjà chargé en mémoire")
             return
+
+        try:
+            logger.info(
+                "Model load policy: vram_mode=%s low_mode=%s med_mode=%s recycle_every_runs=%s",
+                self._get_vram_mode(),
+                self._is_low_vram_mode(),
+                self._is_med_vram_mode(),
+                self._get_recycle_every_runs(),
+            )
+        except Exception:
+            pass
 
         # Évite de garder des références partielles après un échec précédent.
         if not self.model_loaded and (
@@ -2449,6 +2560,8 @@ class QwenManager:
                 disable_compile = True
             if (self.custom_parameters or {}).get("disable_torch_compile"):
                 disable_compile = True
+            if self._is_low_vram_mode():
+                disable_compile = True
 
             if disable_compile:
                 logger.info("Skip torch.compile: disabled by config.")
@@ -2474,6 +2587,7 @@ class QwenManager:
             
             self.model_loaded = True
             self._current_model_path = self.model_name
+            self._runs_since_last_load = 0
             self._log_cuda_mem("after_load")
             
             # Stats mémoire finales
@@ -3786,6 +3900,7 @@ Dans l'attente de votre retour, je vous prie d'agréer, Madame, Monsieur, mes sa
         self._tokenizer = None
         self._device = None
         self.model_loaded = False
+        self._runs_since_last_load = 0
         try:
             self.cleanup_memory()
         except Exception:
@@ -3818,7 +3933,43 @@ class CVGenerationWorker(QThread):
         if env_flag is not None:
             return env_flag.strip().lower() in ("1", "true", "yes", "y")
         custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
-        return bool(custom.get("subprocess_stages"))
+        if "subprocess_stages" in custom:
+            return bool(custom.get("subprocess_stages"))
+        try:
+            return bool(
+                self.qwen_manager._is_low_vram_mode()
+                or self.qwen_manager._is_med_vram_mode()
+            )
+        except Exception:
+            return False
+
+    def _should_skip_critic_stage(self) -> bool:
+        def _to_bool(value: Any) -> bool:
+            if isinstance(value, bool):
+                return value
+            return str(value).strip().lower() in ("1", "true", "yes", "y", "on")
+
+        env_flag = os.getenv("CVMATCH_SKIP_CRITIC")
+        if env_flag is not None:
+            return _to_bool(env_flag)
+
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        if "skip_critic" in custom:
+            return _to_bool(custom.get("skip_critic"))
+
+        if "skip_critic_in_low_vram" in custom:
+            enabled = _to_bool(custom.get("skip_critic_in_low_vram"))
+            if not enabled:
+                return False
+            try:
+                return bool(self.qwen_manager._is_low_vram_mode())
+            except Exception:
+                return enabled
+
+        try:
+            return bool(self.qwen_manager._is_low_vram_mode())
+        except Exception:
+            return False
 
     def _run_stage_subprocess(self, stage: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         from dataclasses import asdict
@@ -5127,6 +5278,23 @@ OUTPUT RULES:
                 self.qwen_manager.last_model_resolution_note = None
 
             use_subprocess = self._should_use_stage_subprocess()
+            skip_critic = self._should_skip_critic_stage()
+            try:
+                vram_mode = self.qwen_manager._get_vram_mode()
+            except Exception:
+                vram_mode = "auto"
+            try:
+                recycle_every_runs = self.qwen_manager._get_recycle_every_runs()
+            except Exception:
+                recycle_every_runs = 0
+            logger.info(
+                "VRAM policy: mode=%s subprocess=%s unload_between_stages=%s skip_critic=%s recycle_every_runs=%s",
+                vram_mode,
+                use_subprocess,
+                self.qwen_manager._should_unload_between_stages(),
+                skip_critic,
+                recycle_every_runs,
+            )
             model_name = getattr(self.qwen_manager, "current_model_id", "IA")
             progress_callback(f"[MODEL] Initialisation {model_name}...")
             if use_subprocess:
@@ -5222,20 +5390,34 @@ OUTPUT RULES:
             )
             logger.info("Draft HTML render done: html_len=%s", len(draft_html or ""))
 
-            progress_callback("[CRITIC] Reviewing draft...")
-            logger.info("Critic JSON generation start")
-            if use_subprocess:
-                critic_json = self._run_stage_subprocess(
-                    "critic", {"cv_html": draft_html}
+            if skip_critic:
+                progress_callback("[CRITIC] Skipped (low VRAM policy)...")
+                logger.warning(
+                    "Critic stage skipped by VRAM policy (mode=%s).",
+                    vram_mode,
+                )
+                critic_json = self._fallback_critic_json(
+                    reason=f"critic skipped in {vram_mode} mode",
                 )
             else:
-                critic_json = self.generate_critic_json(
-                    cv_html=draft_html,
-                    progress_callback=progress_callback,
-                )
-            logger.info("Critic JSON generation done")
+                progress_callback("[CRITIC] Reviewing draft...")
+                logger.info("Critic JSON generation start")
+                if use_subprocess:
+                    critic_json = self._run_stage_subprocess(
+                        "critic", {"cv_html": draft_html}
+                    )
+                else:
+                    critic_json = self.generate_critic_json(
+                        cv_html=draft_html,
+                        progress_callback=progress_callback,
+                    )
+                logger.info("Critic JSON generation done")
 
-            if not use_subprocess and self.qwen_manager._should_unload_between_stages():
+            if (
+                not skip_critic
+                and not use_subprocess
+                and self.qwen_manager._should_unload_between_stages()
+            ):
                 progress_callback("[VRAM] Dechargement modele apres critic...")
                 self.qwen_manager.unload_model(reason="after critic")
 
@@ -5303,6 +5485,7 @@ OUTPUT RULES:
 
             progress_callback("[CLEANUP] Releasing memory...")
             try:
+                self.qwen_manager.mark_run_completed()
                 if not use_subprocess and self.qwen_manager._should_unload_after_generation():
                     progress_callback("[VRAM] Unloading model after run (low headroom)...")
                     self.qwen_manager.unload_model(reason="after generation")
