@@ -245,6 +245,8 @@ class AIModelTab(QWidget):
         self.ml_coordinator = ml_coordinator
         self._updating_memory_limits = False
         self._updating_chunked_generation = False
+        self._updating_unload_between_stages = False
+        self._updating_subprocess_stages = False
         self.setup_ui()
 
     def setup_ui(self):
@@ -433,6 +435,22 @@ class AIModelTab(QWidget):
         gen_layout.addWidget(self.chunked_generation_auto)
         gen_layout.addWidget(self.chunked_generation_on)
         gen_layout.addWidget(self.chunked_generation_off)
+
+        self.unload_between_stages_check = QCheckBox(
+            "Decharger le modele entre les etapes (draft/critic/final)"
+        )
+        self.unload_between_stages_check.stateChanged.connect(
+            self.on_unload_between_stages_changed
+        )
+        gen_layout.addWidget(self.unload_between_stages_check)
+
+        self.subprocess_stages_check = QCheckBox(
+            "Isoler les etapes dans un sous-processus (libere VRAM)"
+        )
+        self.subprocess_stages_check.stateChanged.connect(
+            self.on_subprocess_stages_changed
+        )
+        gen_layout.addWidget(self.subprocess_stages_check)
 
         gen_hint = QLabel(
             "Auto = selon VRAM libre. "
@@ -637,6 +655,8 @@ class AIModelTab(QWidget):
             cpu_percent = custom.get("max_memory_cpu_percent", 80)
             self._set_memory_limits(gpu_percent, cpu_percent)
             self._set_chunked_generation(custom.get("chunked_generation"))
+            self._set_unload_between_stages(custom.get("unload_between_stages"))
+            self._set_subprocess_stages(custom.get("subprocess_stages"))
 
             # Désactiver les optimisations non disponibles sur Windows
             import platform
@@ -678,6 +698,22 @@ class AIModelTab(QWidget):
         finally:
             self._updating_chunked_generation = False
 
+    def _set_unload_between_stages(self, value) -> None:
+        """Met a jour le controle unload entre etapes sans sauvegarde."""
+        self._updating_unload_between_stages = True
+        try:
+            self.unload_between_stages_check.setChecked(bool(value))
+        finally:
+            self._updating_unload_between_stages = False
+
+    def _set_subprocess_stages(self, value) -> None:
+        """Met a jour le controle subprocess stages sans sauvegarde."""
+        self._updating_subprocess_stages = True
+        try:
+            self.subprocess_stages_check.setChecked(bool(value))
+        finally:
+            self._updating_subprocess_stages = False
+
     def on_memory_limits_changed(self) -> None:
         """Sauvegarde les allocations max_memory configurees."""
         if self._updating_memory_limits:
@@ -713,6 +749,34 @@ class AIModelTab(QWidget):
             )
         except Exception as e:
             logger.error(f"Erreur mise a jour generation fragmente: {e}")
+
+    def on_unload_between_stages_changed(self, _state=None) -> None:
+        """Sauvegarde l'option dechargement entre etapes."""
+        if self._updating_unload_between_stages:
+            return
+        try:
+            from ..utils.model_config_manager import model_config_manager
+
+            value = bool(self.unload_between_stages_check.isChecked())
+            model_config_manager.update_custom_parameters(
+                {"unload_between_stages": value}
+            )
+        except Exception as e:
+            logger.error(f"Erreur mise a jour unload entre etapes: {e}")
+
+    def on_subprocess_stages_changed(self, _state=None) -> None:
+        """Sauvegarde l'option subprocess stages."""
+        if self._updating_subprocess_stages:
+            return
+        try:
+            from ..utils.model_config_manager import model_config_manager
+
+            value = bool(self.subprocess_stages_check.isChecked())
+            model_config_manager.update_custom_parameters(
+                {"subprocess_stages": value}
+            )
+        except Exception as e:
+            logger.error(f"Erreur mise a jour subprocess stages: {e}")
 
     def reset_memory_limits(self) -> None:
         """Reinitialise les valeurs max_memory par defaut."""
@@ -937,6 +1001,8 @@ class AIModelTab(QWidget):
                 cpu_percent = custom.get("max_memory_cpu_percent", 80)
                 self._set_memory_limits(gpu_percent, cpu_percent)
                 self._set_chunked_generation(custom.get("chunked_generation"))
+                self._set_unload_between_stages(custom.get("unload_between_stages"))
+                self._set_subprocess_stages(custom.get("subprocess_stages"))
             except Exception as e:
                 logger.warning(f"Erreur synchro max_memory: {e}")
 

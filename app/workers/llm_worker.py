@@ -9,6 +9,9 @@ import json
 import re
 import time
 import os
+import sys
+import tempfile
+import subprocess
 import unicodedata
 import inspect
 from difflib import SequenceMatcher
@@ -934,6 +937,13 @@ class QwenManager:
             merged.update(overrides)
         return merged
 
+    def _should_unload_between_stages(self) -> bool:
+        env_flag = os.getenv("CVMATCH_UNLOAD_BETWEEN_STAGES")
+        if env_flag is not None:
+            return env_flag.strip().lower() in ("1", "true", "yes", "y")
+        custom = self.custom_parameters or {}
+        return bool(custom.get("unload_between_stages"))
+
     def generate_structured_json_lmfe(
         self,
         *,
@@ -1286,22 +1296,45 @@ class QwenManager:
         except Exception:
             free_vram_gb = 0.0
 
+        try:
+            total_vram = float(gpu_manager.gpu_info.get("total_memory_gb", 0) or 0)
+        except Exception:
+            total_vram = 0.0
+
         if not free_vram_gb:
-            try:
-                total_vram = float(gpu_manager.gpu_info.get("total_memory_gb", 0) or 0)
-            except Exception:
-                total_vram = 0.0
             free_vram_gb = total_vram
 
         if free_vram_gb <= 0:
             return None
 
-        gpu_percent = _get_percent("max_memory_gpu_percent", 90)
+        default_gpu_percent = 80 if total_vram and total_vram <= 12 else 90
+        gpu_percent = _get_percent("max_memory_gpu_percent", default_gpu_percent)
         headroom_gb = self._get_vram_headroom_gb()
+        requested_gpu_gb = None
+        try:
+            requested_gpu_gb = float((self.custom_parameters or {}).get("max_memory_gpu_gb") or 0)
+        except Exception:
+            requested_gpu_gb = None
+
+        env_gpu_gb = os.getenv("CVMATCH_MAX_MEMORY_GPU_GB")
+        if env_gpu_gb:
+            try:
+                requested_gpu_gb = float(env_gpu_gb)
+            except Exception:
+                pass
+
         usable_vram_gb = max(0.0, free_vram_gb - headroom_gb)
         if usable_vram_gb <= 0:
             usable_vram_gb = max(0.0, free_vram_gb * 0.5)
-        vram_budget_mib = max(512, int(usable_vram_gb * 1024 * (gpu_percent / 100.0)))
+
+        if requested_gpu_gb and requested_gpu_gb > 0:
+            vram_budget_gb = requested_gpu_gb
+            if usable_vram_gb > 0:
+                vram_budget_gb = min(vram_budget_gb, usable_vram_gb)
+        else:
+            vram_budget_gb = usable_vram_gb * (gpu_percent / 100.0)
+
+        vram_budget_mib = max(512, int(vram_budget_gb * 1024))
         memory_map: Dict[Union[int, str], str] = {0: f"{vram_budget_mib}MiB"}
 
         try:
@@ -1809,6 +1842,11 @@ class QwenManager:
                 if max_memory:
                     model_kwargs["max_memory"] = max_memory
                     model_kwargs["low_cpu_mem_usage"] = True
+                    logger.info("Max memory map active: %s", max_memory)
+                else:
+                    logger.warning(
+                        "Max memory map not set (device_map=auto). Offload disabled."
+                    )
 
                 force_gpu_env = os.getenv("CVMATCH_FORCE_GPU")
                 if force_gpu_env is not None:
@@ -1851,6 +1889,8 @@ class QwenManager:
                 )
             elif model_kwargs.get("device_map") == "auto" and model_kwargs.get("max_memory"):
                 logger.info("Hybrid load: device_map=auto with CPU offload enabled.")
+            elif model_kwargs.get("device_map") == "auto":
+                logger.info("device_map=auto without max_memory (no offload).")
 
             conversion_retry = False
 
@@ -2000,7 +2040,15 @@ class QwenManager:
             self._model.eval()
             
             # Optimisations post-chargement
-            if hasattr(torch, 'compile') and self._device.type == "cuda":
+            disable_compile = False
+            if os.getenv("CVMATCH_DISABLE_TORCH_COMPILE", "").strip() in ("1", "true", "yes", "y"):
+                disable_compile = True
+            if (self.custom_parameters or {}).get("disable_torch_compile"):
+                disable_compile = True
+
+            if disable_compile:
+                logger.info("Skip torch.compile: disabled by config.")
+            elif hasattr(torch, 'compile') and self._device.type == "cuda":
                 should_compile = True
                 device_map = getattr(self._model, "hf_device_map", None)
                 if isinstance(device_map, dict) and device_map:
@@ -2447,6 +2495,35 @@ class QwenManager:
             else:
                 max_new_tokens = max_new_tokens_cap
 
+            slow_device = False
+            try:
+                if getattr(self._device, "type", None) == "cpu":
+                    slow_device = True
+            except Exception:
+                pass
+            try:
+                device_map = getattr(self._model, "hf_device_map", None)
+                if isinstance(device_map, dict) and device_map:
+                    for value in device_map.values():
+                        resolved = self._normalize_device_target(value)
+                        if resolved is None:
+                            continue
+                        if resolved.type != "cuda":
+                            slow_device = True
+                            break
+            except Exception:
+                pass
+
+            max_time_s = 120.0
+            if slow_device:
+                max_time_s = 240.0
+                max_new_tokens = min(max_new_tokens, 600)
+                logger.info(
+                    "Structured JSON slow mode: cap max_new_tokens=%s max_time=%.0fs",
+                    max_new_tokens,
+                    max_time_s,
+                )
+
             use_cache = True
             try:
                 if getattr(self._device, "type", None) == "cuda" and self._should_disable_kv_cache():
@@ -2474,6 +2551,7 @@ class QwenManager:
                     repetition_penalty=1.05,
                     pad_token_id=self._tokenizer.eos_token_id,
                     eos_token_id=self._tokenizer.eos_token_id,
+                    max_time=max_time_s,
                     use_cache=use_cache,
                 )
 
@@ -3245,6 +3323,25 @@ Dans l'attente de votre retour, je vous prie d'agréer, Madame, Monsieur, mes sa
                 pass
         logger.info("Mémoire nettoyée")
 
+    def unload_model(self, reason: str = "") -> None:
+        """Décharge le modèle pour libérer la VRAM entre les étapes."""
+        note = f" ({reason})" if reason else ""
+        try:
+            if self.model_loaded or self._model is not None:
+                logger.info("Déchargement du modèle%s", note)
+        except Exception:
+            pass
+        # Forcer l'arrêt d'un serveur llama.cpp si nécessaire.
+        self._current_model_path = None
+        self._model = None
+        self._tokenizer = None
+        self._device = None
+        self.model_loaded = False
+        try:
+            self.cleanup_memory()
+        except Exception:
+            pass
+
 
 class CVGenerationWorker(QThread):
     """Worker pour générer un CV en arrière-plan.
@@ -3266,6 +3363,67 @@ class CVGenerationWorker(QThread):
         self.template = template
         # Le QwenManager se configure automatiquement selon le modèle sélectionné
         self.qwen_manager = QwenManager(self.profile_data.model_version)
+
+    def _should_use_stage_subprocess(self) -> bool:
+        env_flag = os.getenv("CVMATCH_SUBPROCESS_STAGES")
+        if env_flag is not None:
+            return env_flag.strip().lower() in ("1", "true", "yes", "y")
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        return bool(custom.get("subprocess_stages"))
+
+    def _run_stage_subprocess(self, stage: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        from dataclasses import asdict
+
+        import uuid
+
+        repo_root = Path(__file__).resolve().parents[2]
+        tmp_dir = Path(tempfile.gettempdir())
+        token = uuid.uuid4().hex
+        input_path = tmp_dir / f"cvmatch_stage_{stage}_{token}_in.json"
+        output_path = tmp_dir / f"cvmatch_stage_{stage}_{token}_out.json"
+
+        payload = dict(payload)
+        payload["profile_data"] = asdict(self.profile_data)
+        payload["offer_data"] = self.offer_data
+        payload["template"] = self.template
+
+        with open(input_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=True, default=str)
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "app.workers.llm_stage_runner",
+            "--stage",
+            stage,
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_path),
+        ]
+
+        result = subprocess.run(
+            cmd,
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            stdout = (result.stdout or "").strip()
+            details = stderr or stdout or "unknown error"
+            raise RuntimeError(f"Stage subprocess failed: {stage}: {details}")
+
+        with open(output_path, "r", encoding="utf-8") as handle:
+            result_payload = json.load(handle)
+
+        try:
+            input_path.unlink(missing_ok=True)
+            output_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+        return result_payload
 
     def _build_profile_payload(self) -> Dict[str, Any]:
         personal_info = dict(self.profile_data.extracted_personal_info or {})
@@ -3413,6 +3571,40 @@ class CVGenerationWorker(QThread):
             if reason:
                 logger.warning("Fallback CriticJSON used due to: %s", reason)
             return payload
+
+    def _fallback_offer_keywords_json(self, *, reason: str = "") -> Dict[str, Any]:
+        from ..schemas.offer_keywords_schema import OfferKeywordsJSON
+
+        language = self._resolve_language_code()
+        job_title = ""
+        company = ""
+        if isinstance(self.offer_data, dict):
+            job_title = self.offer_data.get("job_title") or ""
+            company = self.offer_data.get("company") or ""
+
+        payload = {
+            "schema_version": "offer_keywords.v1",
+            "language": language,
+            "job_title": job_title,
+            "company": company,
+            "seniority": "",
+            "keywords": [],
+            "skills": [],
+            "tools": [],
+            "soft_skills": [],
+            "responsibilities": [],
+            "education": [],
+            "certifications": [],
+        }
+
+        try:
+            parsed = OfferKeywordsJSON.model_validate(payload).model_dump()
+        except Exception:
+            parsed = payload
+
+        if reason:
+            logger.warning("Fallback OfferKeywordsJSON used due to: %s", reason)
+        return parsed
 
     def _is_slow_generation_device(self) -> bool:
         try:
@@ -4311,18 +4503,40 @@ OUTPUT RULES:
         return {"system": system_prompt, "user": user_prompt}
 
     def generate_offer_keywords_json(self, progress_callback=None) -> Dict[str, Any]:
+        from pydantic import ValidationError
         from ..schemas.offer_keywords_schema import OfferKeywordsJSON
-        from ..utils.json_strict import generate_json_with_schema
+        from ..utils.json_strict import generate_json_with_schema, JsonStrictError
 
         messages = self._build_offer_keywords_messages()
-        return generate_json_with_schema(
-            role="offer_critic",
-            schema_model=OfferKeywordsJSON,
-            messages=messages,
-            qwen_manager=self.qwen_manager,
-            retries=3,
-            progress_callback=progress_callback,
-        )
+        try:
+            return generate_json_with_schema(
+                role="offer_critic",
+                schema_model=OfferKeywordsJSON,
+                messages=messages,
+                qwen_manager=self.qwen_manager,
+                retries=3,
+                progress_callback=progress_callback,
+            )
+        except JsonStrictError as exc:
+            logger.warning(
+                "Strict OfferKeywordsJSON failed, retrying non-strict: %s", exc
+            )
+            raw = self.qwen_manager.generate_structured_json(
+                messages["system"],
+                messages["user"],
+                progress_callback,
+            )
+            payload = self._parse_json_response(raw)
+            if not payload:
+                return self._fallback_offer_keywords_json(reason=str(exc))
+            try:
+                parsed = OfferKeywordsJSON.model_validate(payload)
+            except ValidationError as val_exc:
+                logger.warning(
+                    "Non-strict OfferKeywordsJSON validation failed: %s", val_exc
+                )
+                return self._fallback_offer_keywords_json(reason=str(val_exc))
+            return parsed.model_dump()
 
     def generate_cv_json_draft(
         self,
@@ -4463,9 +4677,15 @@ OUTPUT RULES:
                 progress_callback(note)
                 self.qwen_manager.last_model_resolution_note = None
 
+            use_subprocess = self._should_use_stage_subprocess()
             model_name = getattr(self.qwen_manager, "current_model_id", "IA")
             progress_callback(f"[MODEL] Initialisation {model_name}...")
-            self.qwen_manager.load_model(progress_callback, allow_fallback=False)
+            if use_subprocess:
+                progress_callback("[MODEL] Mode VRAM: etapes isolees en sous-processus")
+            elif self.qwen_manager._should_unload_between_stages():
+                progress_callback("[MODEL] Mode VRAM: chargement paresseux par etape")
+            else:
+                self.qwen_manager.load_model(progress_callback, allow_fallback=False)
 
             progress_callback("[EXTRACTOR] Building ProfileJSON...")
             logger.info("ProfileJSON build start")
@@ -4494,9 +4714,14 @@ OUTPUT RULES:
                 progress_callback("[OFFER] Extracting keywords...")
                 logger.info("Offer keyword extraction start")
                 try:
-                    offer_keywords = self.generate_offer_keywords_json(
-                        progress_callback=progress_callback,
-                    )
+                    if use_subprocess:
+                        offer_keywords = self._run_stage_subprocess(
+                            "offer_keywords", {}
+                        )
+                    else:
+                        offer_keywords = self.generate_offer_keywords_json(
+                            progress_callback=progress_callback,
+                        )
                     self._merge_offer_keywords(offer_keywords)
                     logger.info(
                         "Offer keyword extraction done: keywords=%s skills=%s tools=%s",
@@ -4511,13 +4736,22 @@ OUTPUT RULES:
 
             progress_callback("[GENERATOR] Draft CVJSON...")
             logger.info("Draft CVJSON generation start")
-            cv_json_draft = self.generate_cv_json_draft(
-                profile_json=profile_json,
-                progress_callback=progress_callback,
-            )
+            if use_subprocess:
+                cv_json_draft = self._run_stage_subprocess(
+                    "draft", {"profile_json": profile_json}
+                )
+            else:
+                cv_json_draft = self.generate_cv_json_draft(
+                    profile_json=profile_json,
+                    progress_callback=progress_callback,
+                )
             self._apply_contact_fallback(cv_json_draft, profile_json)
             self._apply_target_fallback(cv_json_draft)
             logger.info("Draft CVJSON generation done")
+
+            if not use_subprocess and self.qwen_manager._should_unload_between_stages():
+                progress_callback("[VRAM] Dechargement modele apres draft...")
+                self.qwen_manager.unload_model(reason="after draft")
 
             try:
                 from ..utils.cv_json_storage import save_cv_json_draft
@@ -4541,19 +4775,34 @@ OUTPUT RULES:
 
             progress_callback("[CRITIC] Reviewing draft...")
             logger.info("Critic JSON generation start")
-            critic_json = self.generate_critic_json(
-                cv_html=draft_html,
-                progress_callback=progress_callback,
-            )
+            if use_subprocess:
+                critic_json = self._run_stage_subprocess(
+                    "critic", {"cv_html": draft_html}
+                )
+            else:
+                critic_json = self.generate_critic_json(
+                    cv_html=draft_html,
+                    progress_callback=progress_callback,
+                )
             logger.info("Critic JSON generation done")
+
+            if not use_subprocess and self.qwen_manager._should_unload_between_stages():
+                progress_callback("[VRAM] Dechargement modele apres critic...")
+                self.qwen_manager.unload_model(reason="after critic")
 
             progress_callback("[GENERATOR] Rewrite CVJSON...")
             logger.info("Final CVJSON generation start")
-            cv_json_final = self.generate_cv_json_final(
-                profile_json=profile_json,
-                critic_json=critic_json,
-                progress_callback=progress_callback,
-            )
+            if use_subprocess:
+                cv_json_final = self._run_stage_subprocess(
+                    "final",
+                    {"profile_json": profile_json, "critic_json": critic_json},
+                )
+            else:
+                cv_json_final = self.generate_cv_json_final(
+                    profile_json=profile_json,
+                    critic_json=critic_json,
+                    progress_callback=progress_callback,
+                )
             self._apply_contact_fallback(cv_json_final, profile_json)
             self._apply_target_fallback(cv_json_final)
             self._merge_cv_json_missing_sections(cv_json_final, cv_json_draft)
@@ -4580,9 +4829,14 @@ OUTPUT RULES:
             progress_callback("[LETTER] Generating cover letter...")
             logger.info("Cover letter generation start")
             letter_prompt = self.build_cover_letter_prompt()
-            cover_letter = self.qwen_manager.generate_cover_letter(
-                letter_prompt, progress_callback
-            )
+            if use_subprocess:
+                cover_payload = {"letter_prompt": letter_prompt}
+                cover_result = self._run_stage_subprocess("cover_letter", cover_payload)
+                cover_letter = cover_result.get("cover_letter", "")
+            else:
+                cover_letter = self.qwen_manager.generate_cover_letter(
+                    letter_prompt, progress_callback
+                )
             logger.info("Cover letter generation done: length=%s", len(cover_letter or ""))
 
             progress_callback("[SAVE] Persisting application...")

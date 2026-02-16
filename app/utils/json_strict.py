@@ -24,7 +24,8 @@ def ensure_lmfe_available() -> None:
         import lmformatenforcer  # noqa: F401
     except Exception as exc:
         raise JsonStrictError(
-            "LM Format Enforcer is required for strict JSON generation."
+            "LM Format Enforcer is required for strict JSON generation. "
+            "Install with: pip install lm-format-enforcer"
         ) from exc
 
 
@@ -34,7 +35,8 @@ def build_lmfe_generation_kwargs(tokenizer: Any, schema: Dict[str, Any]) -> Dict
         from lmformatenforcer.integrations import transformers as lmfe_transformers
     except Exception as exc:
         raise JsonStrictError(
-            "LM Format Enforcer not available for transformers integration."
+            "LM Format Enforcer not available for transformers integration. "
+            "Install/upgrade with: pip install -U lm-format-enforcer"
         ) from exc
 
     parser = JsonSchemaParser(schema)
