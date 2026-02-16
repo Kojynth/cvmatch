@@ -945,6 +945,24 @@ class QwenManager:
         custom = self.custom_parameters or {}
         return bool(custom.get("unload_between_stages"))
 
+    def _should_unload_after_generation(self) -> bool:
+        env_flag = os.getenv("CVMATCH_UNLOAD_AFTER_RUN")
+        if env_flag is not None:
+            return env_flag.strip().lower() in ("1", "true", "yes", "y")
+
+        custom = self.custom_parameters or {}
+        if "unload_after_run" in custom:
+            return bool(custom.get("unload_after_run"))
+
+        # Auto mode: si la marge VRAM est faible en fin de run, on libère le modèle.
+        if not TORCH_AVAILABLE or not torch.cuda.is_available():
+            return False
+        free_vram = self._get_free_vram_gb()
+        if free_vram <= 0:
+            return False
+        headroom = self._get_vram_headroom_gb(free_vram_gb=free_vram)
+        return free_vram < max(1.0, headroom)
+
     def generate_structured_json_lmfe(
         self,
         *,
@@ -1120,8 +1138,12 @@ class QwenManager:
         overhead_constant = 0.8
         return max(1.5, params_b * gb_per_b * overhead_factor + overhead_constant)
 
-    def _pick_fallback_model_for_memory(self, available_ram_gb: float) -> Optional[Dict[str, str]]:
-        """Choisit un modèle de fallback qui a le plus de chances de charger avec la RAM actuelle."""
+    def _pick_fallback_model_for_memory(
+        self,
+        available_ram_gb: float,
+        available_vram_gb: float = 0.0,
+    ) -> Optional[Dict[str, str]]:
+        """Choisit un modèle de fallback adapté à la RAM et, si dispo, à la VRAM."""
         try:
             from ..utils.model_manager import model_manager
         except Exception:
@@ -1142,14 +1164,25 @@ class QwenManager:
             info = model_manager.get_model_info(model_id)
             if not info:
                 continue
-            required = self._estimate_required_ram_gb(model_name=info.model_path, model_id=model_id)
-            all_candidates.append((required, model_id, info.model_path))
-            if available_ram_gb <= 0 or required <= available_ram_gb * 0.92:
+            required_ram = self._estimate_required_ram_gb(
+                model_name=info.model_path, model_id=model_id
+            )
+            required_vram = float(getattr(info, "vram_required", 0) or 0)
+            all_candidates.append((required_vram, required_ram, model_id, info.model_path))
+
+            ram_fits = available_ram_gb <= 0 or required_ram <= available_ram_gb * 0.92
+            vram_fits = True
+            if available_vram_gb > 0 and required_vram > 0:
+                # Petite tolérance pour laisser l'offload CPU/disk aider.
+                vram_fits = required_vram <= available_vram_gb + 0.5
+
+            if ram_fits and vram_fits:
                 fitting.append(
                     (
                         -info.quality_stars,
                         -info.speed_rating,
-                        required,
+                        required_vram,
+                        required_ram,
                         model_id,
                         info.model_path,
                     )
@@ -1157,14 +1190,14 @@ class QwenManager:
 
         if fitting:
             fitting.sort()
-            _, _, _, model_id, model_path = fitting[0]
+            _, _, _, _, model_id, model_path = fitting[0]
             return {"model_id": model_id, "model_path": model_path}
 
         if not all_candidates:
             return None
 
-        all_candidates.sort(key=lambda item: item[0])
-        _, model_id, model_path = all_candidates[0]
+        all_candidates.sort(key=lambda item: (item[0], item[1]))
+        _, _, model_id, model_path = all_candidates[0]
         return {"model_id": model_id, "model_path": model_path}
 
     def _check_memory_before_load(self) -> tuple:
@@ -1196,6 +1229,33 @@ class QwenManager:
             # Pour GPU, la contrainte principale est la VRAM (déjà gérée par gpu_manager).
             # On garde ici une vérification minimale de RAM pour éviter les crashs au chargement.
             if device != "cpu":
+                free_vram = self._get_free_vram_gb()
+                try:
+                    total_vram = float(
+                        getattr(gpu_manager, "gpu_info", {}).get("total_memory_gb", 0)
+                        or 0
+                    )
+                except Exception:
+                    total_vram = 0.0
+                if free_vram > 0:
+                    headroom = self._get_vram_headroom_gb(
+                        free_vram_gb=free_vram,
+                        total_vram_gb=total_vram,
+                    )
+                    if free_vram < 0.75:
+                        error_msg = (
+                            f"VRAM insuffisante pour charger {self.model_name}: "
+                            f"{free_vram:.2f}GB libres (total {total_vram:.2f}GB). "
+                            "Fermez les applis GPU (Discord/Zoom/Steam/navigateur) puis réessayez."
+                        )
+                        return False, error_msg
+                    if free_vram < max(1.0, headroom):
+                        logger.warning(
+                            "VRAM before load is tight: free=%.2fGB headroom_target=%.2fGB total=%.2fGB",
+                            free_vram,
+                            headroom,
+                            total_vram,
+                        )
                 if available_ram < 2.0:
                     error_msg = (
                         f"Mémoire système insuffisante pour charger {self.model_name}: "
@@ -1650,6 +1710,13 @@ class QwenManager:
             _fmt_bytes(max_allocated),
             _fmt_bytes(max_reserved),
         )
+        if allocated is not None and reserved is not None and reserved >= allocated:
+            cached = reserved - allocated
+            logger.info(
+                "VRAM[%s] cache=%s (PyTorch allocator cache, expected while process stays alive)",
+                label,
+                _fmt_bytes(cached),
+            )
 
     def _resolve_input_device(self) -> Optional["torch.device"]:
         """Pick the input device matching the model's device map."""
@@ -1836,10 +1903,13 @@ class QwenManager:
         # Si on change de modèle, nettoyer l'ancien
         if self.model_loaded and self._current_model_path != self.model_name:
             logger.info(f"Changement de modèle: {self._current_model_path} -> {self.model_name}")
-            self.cleanup_memory()
+            # Relâcher d'abord les références Python puis vider les caches CUDA.
             self.model_loaded = False
             self._model = None
             self._tokenizer = None
+            self._device = None
+            self._current_model_path = None
+            self.cleanup_memory()
         
         if not TRANSFORMERS_AVAILABLE:
             logger.warning("Transformers non disponible - Mode simulation")
@@ -1906,8 +1976,15 @@ class QwenManager:
                         available_ram_gb = mem.available / (1024**3)
                     except Exception:
                         available_ram_gb = 0.0
+                    try:
+                        available_vram_gb = self._get_free_vram_gb()
+                    except Exception:
+                        available_vram_gb = 0.0
 
-                    fallback = self._pick_fallback_model_for_memory(available_ram_gb)
+                    fallback = self._pick_fallback_model_for_memory(
+                        available_ram_gb,
+                        available_vram_gb,
+                    )
                     if fallback and fallback.get("model_id") and fallback.get("model_path"):
                         previous_id = getattr(self, "current_model_id", None)
                         previous_model = self.model_name
@@ -1916,16 +1993,22 @@ class QwenManager:
                         self.model_loaded = False
                         self._model = None
                         self._tokenizer = None
+                        self._device = None
                         self._current_model_path = None
                         self._optimization_config = None
                         note = (
-                            f"[WARN] RAM insuffisante pour '{previous_id or previous_model}'. "
-                            f"Fallback vers '{self.current_model_id}'."
+                            f"[WARN] Mémoire insuffisante (RAM/VRAM) pour '{previous_id or previous_model}'. "
+                            f"Fallback vers '{self.current_model_id}' "
+                            f"(ram_dispo={available_ram_gb:.1f}GB, vram_dispo={available_vram_gb:.1f}GB)."
                         )
                         self.last_model_resolution_note = note
                         logger.warning(note)
                         if progress_callback:
                             progress_callback(note)
+                        try:
+                            self.cleanup_memory()
+                        except Exception:
+                            pass
                         return self.load_model(progress_callback, allow_fallback=False)
 
                 raise MemoryError(memory_error)
@@ -2407,8 +2490,15 @@ class QwenManager:
                     available_ram_gb = mem.available / (1024**3)
                 except Exception:
                     available_ram_gb = 0.0
+                try:
+                    available_vram_gb = self._get_free_vram_gb()
+                except Exception:
+                    available_vram_gb = 0.0
 
-                fallback = self._pick_fallback_model_for_memory(available_ram_gb)
+                fallback = self._pick_fallback_model_for_memory(
+                    available_ram_gb,
+                    available_vram_gb,
+                )
                 if fallback and fallback.get("model_id") and fallback.get("model_path"):
                     previous_id = getattr(self, "current_model_id", None)
                     previous_model = self.model_name
@@ -2417,17 +2507,39 @@ class QwenManager:
                     self.model_loaded = False
                     self._model = None
                     self._tokenizer = None
+                    self._device = None
                     self._current_model_path = None
                     self._optimization_config = None
                     note = (
                         f"[WARN] OOM lors du chargement de '{previous_id or previous_model}'. "
-                        f"Fallback vers '{self.current_model_id}'."
+                        f"Fallback vers '{self.current_model_id}' "
+                        f"(ram_dispo={available_ram_gb:.1f}GB, vram_dispo={available_vram_gb:.1f}GB)."
                     )
                     self.last_model_resolution_note = note
                     logger.warning(note)
                     if progress_callback:
                         progress_callback(note)
+                    try:
+                        self.cleanup_memory()
+                    except Exception:
+                        pass
                     return self.load_model(progress_callback, allow_fallback=False)
+
+            if (
+                isinstance(e, MemoryError)
+                or "out of memory" in lowered
+                or "cuda out of memory" in lowered
+            ):
+                # Évite de conserver des références partielles après un échec OOM.
+                self.model_loaded = False
+                self._model = None
+                self._tokenizer = None
+                self._device = None
+                self._current_model_path = None
+                try:
+                    self.cleanup_memory()
+                except Exception:
+                    pass
 
             # Détecter ACCESS_VIOLATION ou cache corrompu (Windows)
             is_access_violation = (
@@ -5165,7 +5277,14 @@ OUTPUT RULES:
             logger.info("Save application done: id=%s", getattr(application, "id", "unknown"))
 
             progress_callback("[CLEANUP] Releasing memory...")
-            self.qwen_manager.cleanup_memory()
+            try:
+                if not use_subprocess and self.qwen_manager._should_unload_after_generation():
+                    progress_callback("[VRAM] Unloading model after run (low headroom)...")
+                    self.qwen_manager.unload_model(reason="after generation")
+                else:
+                    self.qwen_manager.cleanup_memory()
+            except Exception:
+                self.qwen_manager.cleanup_memory()
 
             result = {
                 "application_id": application.id,
