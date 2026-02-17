@@ -866,6 +866,9 @@ class QwenManager:
         self._current_model_path = None
         self._last_max_memory_map_details: Dict[str, Any] = {}
         self._runs_since_last_load: int = 0
+        self._consecutive_failures: int = 0
+        self._survival_mode_forced: bool = False
+        self._survival_last_reason: str = ""
         self.last_model_resolution_note: Optional[str] = None
         self._initialized = True
         
@@ -939,16 +942,246 @@ class QwenManager:
             merged.update(overrides)
         return merged
 
+    def _to_bool(self, value: Any, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in ("1", "true", "yes", "y", "on")
+
+    def _get_survival_failure_threshold(self) -> int:
+        custom = self.custom_parameters or {}
+        threshold = 2
+        try:
+            if "survival_failure_threshold" in custom:
+                threshold = max(1, int(custom.get("survival_failure_threshold")))
+        except Exception:
+            threshold = 2
+        raw_env = os.getenv("CVMATCH_SURVIVAL_FAILURE_THRESHOLD")
+        if raw_env is not None:
+            try:
+                threshold = max(1, int(raw_env))
+            except Exception:
+                pass
+        return threshold
+
+    def _is_survival_sticky(self) -> bool:
+        custom = self.custom_parameters or {}
+        sticky = True
+        if "survival_sticky" in custom:
+            sticky = self._to_bool(custom.get("survival_sticky"), True)
+        raw_env = os.getenv("CVMATCH_SURVIVAL_STICKY")
+        if raw_env is not None:
+            sticky = self._to_bool(raw_env, True)
+        return sticky
+
+    def _is_survival_mode(self) -> bool:
+        raw_env = os.getenv("CVMATCH_SURVIVAL_MODE")
+        if raw_env is not None:
+            return self._to_bool(raw_env, False)
+
+        custom = self.custom_parameters or {}
+        if "survival_mode" in custom:
+            return self._to_bool(custom.get("survival_mode"), False)
+
+        if self._survival_mode_forced:
+            return True
+
+        # Policy: VRAM <= 8GB is always Survival mode, regardless of UI profile.
+        total_vram = self._get_total_vram_gb()
+        if total_vram > 0 and total_vram <= 8.0:
+            return True
+
+        return self._is_low_vram_mode()
+
+    def _record_failure(self, reason: str) -> None:
+        try:
+            self._consecutive_failures = int(self._consecutive_failures) + 1
+        except Exception:
+            self._consecutive_failures = 1
+
+        threshold = self._get_survival_failure_threshold()
+        if self._consecutive_failures >= threshold:
+            self._survival_mode_forced = True
+            self._survival_last_reason = str(reason or "")[:240]
+            logger.warning(
+                "Survival mode auto-enabled after %s failures (threshold=%s, reason=%s).",
+                self._consecutive_failures,
+                threshold,
+                self._survival_last_reason,
+            )
+
+    def _record_success(self, reason: str = "") -> None:
+        self._consecutive_failures = 0
+        if not self._is_survival_sticky():
+            self._survival_mode_forced = False
+            self._survival_last_reason = ""
+        if reason:
+            logger.info("Reset failure counter after success: %s", reason)
+
+    def _get_survival_gpu_budget_cap_gb(self, total_vram_gb: float) -> float:
+        total_vram = float(total_vram_gb or 0.0)
+        if total_vram <= 0:
+            return 4.0
+        if total_vram <= 6.5:
+            abs_cap = 4.0
+        elif total_vram <= 8.5:
+            abs_cap = 5.0
+        elif total_vram <= 12.0:
+            abs_cap = 6.5
+        else:
+            abs_cap = 8.0
+        return min(abs_cap, total_vram * 0.60)
+
+    def _get_windows_commit_status_gb(self) -> Tuple[float, float]:
+        if os.name != "nt":
+            return 0.0, 0.0
+        try:
+            import ctypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            status = MEMORYSTATUSEX()
+            status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return 0.0, 0.0
+            total_pagefile_gb = float(status.ullTotalPageFile) / (1024**3)
+            avail_commit_gb = float(status.ullAvailPageFile) / (1024**3)
+            return total_pagefile_gb, avail_commit_gb
+        except Exception:
+            return 0.0, 0.0
+
+    def _pick_survival_model_override(
+        self, available_ram_gb: float, available_vram_gb: float
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            from ..utils.model_manager import model_manager
+        except Exception:
+            return None
+
+        ranked: List[Tuple[float, float, str, str, str, Dict[str, Any]]] = []
+        model_ids = list(getattr(model_manager, "available_models", []) or [])
+        if not model_ids:
+            model_ids = list(getattr(model_manager, "_models_map", {}).keys())
+        for model_id in model_ids:
+            info = model_manager.get_model_info(model_id)
+            if not info:
+                continue
+            required_vram = float(getattr(info, "vram_required", 0) or 0)
+            required_ram = self._estimate_required_ram_gb(
+                model_name=info.model_path,
+                model_id=model_id,
+            )
+            if available_ram_gb > 0 and required_ram > (available_ram_gb * 0.90):
+                continue
+            if available_vram_gb > 0 and required_vram > (available_vram_gb + 0.25):
+                continue
+            metadata = getattr(info, "metadata", None) or {}
+            ranked.append(
+                (
+                    required_vram,
+                    required_ram,
+                    model_id,
+                    info.model_path,
+                    getattr(info, "loader", "transformers") or "transformers",
+                    metadata,
+                )
+            )
+
+        if not ranked:
+            return None
+        ranked.sort(key=lambda item: (item[0], item[1]))
+        required_vram, required_ram, model_id, model_path, loader, metadata = ranked[0]
+        return {
+            "model_id": model_id,
+            "model_path": model_path,
+            "loader": loader,
+            "metadata": metadata,
+            "required_vram_gb": required_vram,
+            "required_ram_gb": required_ram,
+        }
+
+    def _apply_survival_model_override(self, progress_callback=None) -> None:
+        if not self._is_survival_mode():
+            return
+
+        custom = self.custom_parameters or {}
+        ignore_selected = True
+        if "survival_ignore_selected_model" in custom:
+            ignore_selected = self._to_bool(
+                custom.get("survival_ignore_selected_model"),
+                True,
+            )
+        raw_env = os.getenv("CVMATCH_SURVIVAL_IGNORE_SELECTED_MODEL")
+        if raw_env is not None:
+            ignore_selected = self._to_bool(raw_env, True)
+        if not ignore_selected:
+            return
+
+        try:
+            import psutil
+            available_ram_gb = psutil.virtual_memory().available / (1024**3)
+        except Exception:
+            available_ram_gb = 0.0
+        available_vram_gb = self._get_free_vram_gb()
+
+        choice = self._pick_survival_model_override(
+            available_ram_gb=available_ram_gb,
+            available_vram_gb=available_vram_gb,
+        )
+        if not choice:
+            return
+
+        current_id = str(getattr(self, "current_model_id", "") or "")
+        next_id = str(choice.get("model_id") or "")
+        if not next_id or current_id == next_id:
+            return
+
+        self.model_name = str(choice.get("model_path") or self.model_name)
+        self.current_model_id = next_id
+        self.current_loader = str(choice.get("loader") or "transformers")
+        metadata = choice.get("metadata")
+        if isinstance(metadata, dict):
+            self.role_params = metadata.get("role_params") or self.role_params
+
+        note = (
+            f"[SURVIVAL] Mode actif: override modele '{current_id or 'inconnu'}' -> "
+            f"'{self.current_model_id}' (ram_dispo={available_ram_gb:.1f}GB, "
+            f"vram_dispo={available_vram_gb:.1f}GB)."
+        )
+        self.last_model_resolution_note = note
+        logger.warning(note)
+        if progress_callback:
+            try:
+                progress_callback(note)
+            except Exception:
+                pass
+
     def _should_unload_between_stages(self) -> bool:
+        if self._is_survival_mode():
+            return True
         env_flag = os.getenv("CVMATCH_UNLOAD_BETWEEN_STAGES")
         if env_flag is not None:
             return env_flag.strip().lower() in ("1", "true", "yes", "y")
         custom = self.custom_parameters or {}
         if "unload_between_stages" in custom:
             return bool(custom.get("unload_between_stages"))
-        return self._is_low_vram_mode()
+        return self._is_survival_mode()
 
     def _should_unload_after_generation(self) -> bool:
+        if self._is_survival_mode():
+            return True
         env_flag = os.getenv("CVMATCH_UNLOAD_AFTER_RUN")
         if env_flag is not None:
             return env_flag.strip().lower() in ("1", "true", "yes", "y")
@@ -961,7 +1194,7 @@ class QwenManager:
         if recycle_every > 0 and self._runs_since_last_load >= recycle_every:
             return True
 
-        if self._is_low_vram_mode():
+        if self._is_survival_mode():
             return True
 
         # Auto mode: si la marge VRAM est faible en fin de run, on libère le modèle.
@@ -1020,7 +1253,7 @@ class QwenManager:
         if mode in {"med", "high"}:
             return False
         total_vram = self._get_total_vram_gb()
-        return total_vram > 0 and total_vram <= 10.5
+        return total_vram > 0 and total_vram <= 8.0
 
     def _is_med_vram_mode(self) -> bool:
         mode = self._get_vram_mode()
@@ -1029,9 +1262,11 @@ class QwenManager:
         if mode in {"low", "high"}:
             return False
         total_vram = self._get_total_vram_gb()
-        return total_vram > 10.5 and total_vram <= 13.0
+        return total_vram > 8.0 and total_vram <= 12.0
 
     def _get_recycle_every_runs(self) -> int:
+        if self._is_survival_mode():
+            return 1
         env_value = os.getenv("CVMATCH_RECYCLE_EVERY_RUNS")
         if env_value is not None:
             try:
@@ -1313,6 +1548,30 @@ class QwenManager:
                 swap_total_gb = psutil.swap_memory().total / (1024**3)
             except Exception:
                 swap_total_gb = 0.0
+            pagefile_total_gb = 0.0
+            commit_available_gb = 0.0
+            if os.name == "nt":
+                pagefile_total_gb, commit_available_gb = self._get_windows_commit_status_gb()
+                effective_pagefile_gb = max(swap_total_gb, pagefile_total_gb)
+                if effective_pagefile_gb > 0 and effective_pagefile_gb < 16.0:
+                    logger.warning(
+                        "Windows pagefile is small: %.1fGB (recommended 16-32GB on low RAM).",
+                        effective_pagefile_gb,
+                    )
+                min_commit_gb = 4.0 if self._is_survival_mode() else 2.0
+                if commit_available_gb > 0 and commit_available_gb < min_commit_gb:
+                    return (
+                        False,
+                        (
+                            f"Commit Windows insuffisant ({commit_available_gb:.1f}GB disponible). "
+                            "Augmentez le fichier d'echange a 16-32GB sur SSD/NVMe puis relancez."
+                        ),
+                    )
+            elif device != "cpu" and self._is_survival_mode() and swap_total_gb < 8.0:
+                logger.warning(
+                    "Swap Linux faible en mode Survival: %.1fGB (recommended >= 8GB).",
+                    swap_total_gb,
+                )
             if device != "cpu" and swap_total_gb < 8.0:
                 logger.warning(
                     "Swap size is low for large-model loading: swap_total=%.1fGB (recommended >= 16GB).",
@@ -1435,6 +1694,13 @@ class QwenManager:
             except Exception:
                 total_vram = 0.0
 
+        if self._is_survival_mode():
+            if total_vram > 0 and total_vram <= 8.0:
+                return max(2.0, min(3.0, total_vram * 0.35))
+            if total_vram > 0:
+                return max(1.5, min(3.0, total_vram * 0.22))
+            return 2.0
+
         try:
             factor = float(custom.get("vram_headroom_factor", 0.15) or 0.15)
         except Exception:
@@ -1487,6 +1753,8 @@ class QwenManager:
     def _should_disable_kv_cache(self) -> bool:
         if not TORCH_AVAILABLE or not torch.cuda.is_available():
             return False
+        if self._is_survival_mode():
+            return True
         custom = self.custom_parameters or {}
         try:
             threshold = float(custom.get("disable_kv_cache_below_gb", 0) or 0)
@@ -1581,7 +1849,9 @@ class QwenManager:
             )
             return None
 
-        if total_vram and total_vram <= 10.5:
+        if self._is_survival_mode():
+            default_gpu_percent = 60
+        elif total_vram and total_vram <= 8.0:
             default_gpu_percent = 72
         elif total_vram and total_vram <= 12:
             default_gpu_percent = 78
@@ -1603,6 +1873,13 @@ class QwenManager:
         else:
             requested_base = total_vram if total_vram > 0 else free_vram_gb
             requested_vram_budget_gb = requested_base * (gpu_percent / 100.0)
+
+        survival_cap_gb = 0.0
+        if self._is_survival_mode():
+            survival_cap_gb = self._get_survival_gpu_budget_cap_gb(total_vram or free_vram_gb)
+            if survival_cap_gb > 0 and requested_vram_budget_gb > survival_cap_gb:
+                requested_vram_budget_gb = survival_cap_gb
+                gpu_mode = "survival_cap_gb"
 
         available_vram_gb = max(0.0, free_vram_gb - headroom_gb)
         clamp_reason = ""
@@ -1708,6 +1985,8 @@ class QwenManager:
             "cpu_budget_final_gb": round(cpu_applied_gb, 3),
             "cpu_clamp_reason": cpu_clamp_reason,
             "memory_map": dict(memory_map),
+            "survival_mode": self._is_survival_mode(),
+            "survival_gpu_cap_gb": round(survival_cap_gb, 3) if survival_cap_gb > 0 else 0.0,
         }
         self._last_max_memory_map_details = details
         logger.info("Max memory map computed: %s", details)
@@ -1990,6 +2269,11 @@ class QwenManager:
 
     def load_model(self, progress_callback=None, allow_fallback: bool = True):
         """Charge le modèle sélectionné avec optimisations automatiques."""
+        try:
+            self._apply_survival_model_override(progress_callback=progress_callback)
+        except Exception as exc:
+            logger.warning("Unable to apply survival model override: %s", exc)
+
         # Backend llama.cpp (GGUF): ne dépend pas de Transformers et gère son propre chargement.
         if getattr(self, "current_loader", "transformers") == "llama_cpp":
             self._load_llama_cpp_model(progress_callback)
@@ -2002,11 +2286,13 @@ class QwenManager:
 
         try:
             logger.info(
-                "Model load policy: vram_mode=%s low_mode=%s med_mode=%s recycle_every_runs=%s",
+                "Model load policy: vram_mode=%s low_mode=%s med_mode=%s survival_mode=%s recycle_every_runs=%s failures=%s",
                 self._get_vram_mode(),
                 self._is_low_vram_mode(),
                 self._is_med_vram_mode(),
+                self._is_survival_mode(),
                 self._get_recycle_every_runs(),
+                self._consecutive_failures,
             )
         except Exception:
             pass
@@ -2240,6 +2526,8 @@ class QwenManager:
                 "trust_remote_code": True,
                 "torch_dtype": self._optimization_config["dtype"],
             }
+            if self._is_survival_mode():
+                model_kwargs["attn_implementation"] = "sdpa"
             force_gpu = False
             auto_kwargs: Optional[Dict[str, Any]] = None
             last_load_kwargs: Dict[str, Any] = {}
@@ -2278,6 +2566,8 @@ class QwenManager:
                     os.getenv("CVMATCH_DISK_OFFLOAD"),
                     True,
                 )
+                if self._is_survival_mode():
+                    disk_offload_enabled = True
                 if disk_offload_enabled:
                     custom_offload_folder = (self.custom_parameters or {}).get("offload_folder")
                     env_offload_folder = os.getenv("CVMATCH_OFFLOAD_FOLDER")
@@ -2294,6 +2584,8 @@ class QwenManager:
                             os.getenv("CVMATCH_OFFLOAD_STATE_DICT"),
                             True,
                         )
+                        if self._is_survival_mode():
+                            offload_state_dict = True
                         model_kwargs["offload_folder"] = offload_folder_resolved
                         model_kwargs["offload_state_dict"] = offload_state_dict
                         logger.info(
@@ -2314,6 +2606,8 @@ class QwenManager:
                     force_gpu = force_gpu_env.strip() == "1"
                 else:
                     force_gpu = bool(self.custom_parameters.get("force_cuda"))
+                if self._is_survival_mode():
+                    force_gpu = False
             else:
                 model_kwargs["device_map"] = None
 
@@ -2389,6 +2683,17 @@ class QwenManager:
                         alt_kwargs = dict(kwargs)
                         alt_kwargs.pop("offload_state_dict", None)
                         alt_kwargs.pop("offload_folder", None)
+                        last_load_kwargs = dict(alt_kwargs)
+                        return AutoModelForCausalLM.from_pretrained(model_ref, **alt_kwargs)
+                    if (
+                        "unexpected keyword argument" in lowered_msg
+                        and "attn_implementation" in lowered_msg
+                    ):
+                        logger.warning(
+                            "Transformers version does not support attn_implementation; retrying without it."
+                        )
+                        alt_kwargs = dict(kwargs)
+                        alt_kwargs.pop("attn_implementation", None)
                         last_load_kwargs = dict(alt_kwargs)
                         return AutoModelForCausalLM.from_pretrained(model_ref, **alt_kwargs)
                     if (
@@ -2560,7 +2865,7 @@ class QwenManager:
                 disable_compile = True
             if (self.custom_parameters or {}).get("disable_torch_compile"):
                 disable_compile = True
-            if self._is_low_vram_mode():
+            if self._is_survival_mode():
                 disable_compile = True
 
             if disable_compile:
@@ -2601,6 +2906,7 @@ class QwenManager:
             error_msg = str(e)
             error_code = getattr(e, 'winerror', None) or ""
             lowered = error_msg.lower()
+            self._record_failure(f"load_model: {error_msg[:240]}")
 
             # Si le chargement a échoué en OOM, tenter un fallback automatique (une seule fois).
             if allow_fallback and (
@@ -2975,6 +3281,7 @@ class QwenManager:
             
         except Exception as e:
             logger.error(f"Erreur generation CV: {e}")
+            self._record_failure(f"generate_cv: {str(e)[:240]}")
             lowered = str(e).lower()
             if "out of memory" in lowered or "cuda out of memory" in lowered:
                 logger.warning("Generation OOM detected; unloading model to recover VRAM.")
@@ -3117,6 +3424,7 @@ class QwenManager:
             return self._extract_structured_content(generated_text)
         except Exception as e:
             logger.error(f"Structured JSON generation error: {e}")
+            self._record_failure(f"structured_json: {str(e)[:240]}")
             lowered = str(e).lower()
             if "out of memory" in lowered or "cuda out of memory" in lowered:
                 logger.warning("Structured JSON OOM detected; unloading model to recover VRAM.")
@@ -3740,6 +4048,7 @@ Activités en lien avec le poste ou démontrant des soft skills pertinentes.
                 return letter_content
             except Exception as e:
                 logger.error(f"Erreur génération lettre (llama.cpp): {e}")
+                self._record_failure(f"cover_letter_llama_cpp: {str(e)[:240]}")
                 return self._generate_fallback_letter()
         
         if not TRANSFORMERS_AVAILABLE or self._model is None:
@@ -3803,6 +4112,7 @@ Activités en lien avec le poste ou démontrant des soft skills pertinentes.
             
         except Exception as e:
             logger.error(f"Erreur génération lettre: {e}")
+            self._record_failure(f"cover_letter: {str(e)[:240]}")
             return self._generate_fallback_letter()
     
     def _letter_system_prompt(self) -> str:
@@ -3929,6 +4239,11 @@ class CVGenerationWorker(QThread):
         self.qwen_manager = QwenManager(self.profile_data.model_version)
 
     def _should_use_stage_subprocess(self) -> bool:
+        try:
+            if self.qwen_manager._is_survival_mode():
+                return True
+        except Exception:
+            pass
         env_flag = os.getenv("CVMATCH_SUBPROCESS_STAGES")
         if env_flag is not None:
             return env_flag.strip().lower() in ("1", "true", "yes", "y")
@@ -3948,6 +4263,12 @@ class CVGenerationWorker(QThread):
             if isinstance(value, bool):
                 return value
             return str(value).strip().lower() in ("1", "true", "yes", "y", "on")
+
+        try:
+            if self.qwen_manager._is_survival_mode():
+                return True
+        except Exception:
+            pass
 
         env_flag = os.getenv("CVMATCH_SKIP_CRITIC")
         if env_flag is not None:
@@ -4002,9 +4323,18 @@ class CVGenerationWorker(QThread):
             str(output_path),
         ]
 
+        run_env = dict(os.environ)
+        try:
+            if self.qwen_manager._is_survival_mode():
+                run_env["CVMATCH_SURVIVAL_MODE"] = "1"
+                run_env.setdefault("CVMATCH_SURVIVAL_IGNORE_SELECTED_MODEL", "1")
+        except Exception:
+            pass
+
         result = subprocess.run(
             cmd,
             cwd=str(repo_root),
+            env=run_env,
             capture_output=True,
             text=True,
         )
@@ -4012,6 +4342,12 @@ class CVGenerationWorker(QThread):
             stderr = (result.stderr or "").strip()
             stdout = (result.stdout or "").strip()
             details = stderr or stdout or "unknown error"
+            try:
+                self.qwen_manager._record_failure(
+                    f"stage_subprocess:{stage}:{details[:200]}"
+                )
+            except Exception:
+                pass
             raise RuntimeError(f"Stage subprocess failed: {stage}: {details}")
 
         with open(output_path, "r", encoding="utf-8") as handle:
@@ -5486,6 +5822,7 @@ OUTPUT RULES:
             progress_callback("[CLEANUP] Releasing memory...")
             try:
                 self.qwen_manager.mark_run_completed()
+                self.qwen_manager._record_success("pipeline completed")
                 if not use_subprocess and self.qwen_manager._should_unload_after_generation():
                     progress_callback("[VRAM] Unloading model after run (low headroom)...")
                     self.qwen_manager.unload_model(reason="after generation")
@@ -5516,6 +5853,10 @@ OUTPUT RULES:
         except JsonStrictError as exc:
             logger.error("Strict JSON pipeline failed: %s", exc)
             try:
+                self.qwen_manager._record_failure(f"pipeline_json_strict: {str(exc)[:240]}")
+            except Exception:
+                pass
+            try:
                 if self.qwen_manager._should_unload_after_generation():
                     self.qwen_manager.unload_model(reason="after strict error")
                 else:
@@ -5525,6 +5866,10 @@ OUTPUT RULES:
             self.error_occurred.emit(str(exc))
         except Exception as e:
             logger.error(f"Erreur génération CV : {e}")
+            try:
+                self.qwen_manager._record_failure(f"pipeline_error: {str(e)[:240]}")
+            except Exception:
+                pass
             try:
                 if self.qwen_manager._should_unload_after_generation():
                     self.qwen_manager.unload_model(reason="after generation error")

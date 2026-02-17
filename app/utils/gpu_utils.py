@@ -276,6 +276,19 @@ class GPUManager:
             # Activer optimisations CUDA
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
+            try:
+                if hasattr(torch.backends, "cuda"):
+                    # Prefer memory-efficient SDPA path when available.
+                    if hasattr(torch.backends.cuda, "enable_mem_efficient_sdp"):
+                        torch.backends.cuda.enable_mem_efficient_sdp(True)
+                    if hasattr(torch.backends.cuda, "enable_math_sdp"):
+                        torch.backends.cuda.enable_math_sdp(True)
+                    if hasattr(torch.backends.cuda, "enable_flash_sdp"):
+                        torch.backends.cuda.enable_flash_sdp(True)
+                    if hasattr(torch.backends.cuda, "matmul") and hasattr(torch.backends.cuda.matmul, "allow_tf32"):
+                        torch.backends.cuda.matmul.allow_tf32 = True
+            except Exception as exc:
+                logger.debug(f"CUDA SDPA optimization setup skipped: {exc}")
             
             # Vider le cache CUDA
             torch.cuda.empty_cache()

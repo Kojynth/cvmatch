@@ -266,15 +266,15 @@ set "AI_CHECK_RESULT=%ERRORLEVEL%"
 if "%AI_CHECK_RESULT%"=="2" (
     if /I "%CVMATCH_SKIP_LLM%"=="1" goto ai_fallback_done
     "%VENV_PYTHON%" scripts\check_ai_models.py --mode %AI_MODE% >nul 2>&1
-    if "%ERRORLEVEL%"=="0" (
-        echo [WARN] Modeles IA de base detectes (mode: %AI_MODE%) - LLM manquant. >> "%SESSION_LOG%"
-        powershell -Command "%COLOR_WARNING% 'Modeles IA de base detectes (mode: %AI_MODE%) - LLM manquant.'"
+    if !ERRORLEVEL! EQU 0 (
+        echo [WARN] Modeles IA de base detectes [mode: %AI_MODE%] - LLM manquant. >> "%SESSION_LOG%"
+        powershell -Command "%COLOR_WARNING% 'Modeles IA de base detectes [mode: %AI_MODE%] - LLM manquant.'"
         set "AI_CHECK_RESULT=0"
         goto ai_fallback_done
     )
     if /I "%AI_MODE%"=="lite" (
         "%VENV_PYTHON%" scripts\check_ai_models.py --mode full >nul 2>&1
-        if "%ERRORLEVEL%"=="0" (
+        if !ERRORLEVEL! EQU 0 (
             set "AI_MODE=full"
             set "CVMATCH_AI_MODE=full"
             echo [WARN] Modeles IA detectes en mode full; passage automatique en full. >> "%SESSION_LOG%"
