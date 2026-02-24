@@ -801,6 +801,12 @@ def _markdown_skeleton_for_template(template: Optional[str], language: Optional[
 
 from .qwen_manager import QwenManager  # noqa: F401 — backward-compat re-export
 
+try:
+    from ..utils.pipeline_orchestrator import build_default_pipeline, PipelineState
+except ImportError:
+    build_default_pipeline = None
+    PipelineState = None
+
 
 class CVGenerationWorker(QThread):
     """Worker pour générer un CV en arrière-plan.
@@ -821,6 +827,12 @@ class CVGenerationWorker(QThread):
         self.template = template
         # Le QwenManager se configure automatiquement selon le modèle sélectionné
         self.qwen_manager = QwenManager(self.profile_data.model_version)
+        self.application_id: Optional[int] = None
+        self.user_instruction: str = ""
+        self.cv_only_regen: bool = False
+        self.previous_generation_audit: dict = {}
+        self._pipeline_cv_json_draft: dict = {}
+        self._pipeline_offer_keywords: dict = {}
 
     def _should_use_stage_subprocess(self) -> bool:
         try:
@@ -906,6 +918,10 @@ class CVGenerationWorker(QThread):
             "--output",
             str(output_path),
         ]
+
+        mock_path = os.environ.get("CVMATCH_STAGE_MOCK_PATH")
+        if mock_path:
+            cmd = [sys.executable, mock_path, str(input_path), str(output_path)]
 
         run_env = dict(os.environ)
         try:
@@ -1268,7 +1284,211 @@ class CVGenerationWorker(QThread):
         if preferred:
             return _normalize_language(preferred)
         return "fr"
+    # Stage model routing
+    def _is_stage_model_routing_enabled(self) -> bool:
+        from ..utils.stage_model_routing import is_stage_model_routing_enabled
+        return is_stage_model_routing_enabled()
 
+    def _resolve_stage_model_override(self, stage: str) -> Optional[str]:
+        from ..utils.stage_model_routing import resolve_stage_model_override
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        current = getattr(self.qwen_manager, "current_model_id", "")
+        resolution = resolve_stage_model_override(
+            stage, custom_parameters=custom, current_model_id=current
+        )
+        return resolution.model_id if resolution.requires_switch else None
+
+    def _apply_stage_model_override(self, stage: str, progress_callback=None) -> None:
+        from ..utils.stage_model_routing import resolve_stage_model_override
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        current = getattr(self.qwen_manager, "current_model_id", "")
+        resolution = resolve_stage_model_override(
+            stage, custom_parameters=custom, current_model_id=current
+        )
+        if resolution.requires_switch and resolution.model_id:
+            try:
+                self.qwen_manager._load_selected_model_config(
+                    model_id=resolution.model_id
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Stage model override failed for %s: %s", stage, exc
+                )
+
+    # Language consistency
+    def _ensure_cv_json_language_consistency(
+        self, cv_json: dict, stage: str = ""
+    ) -> dict:
+        from ..utils.language_policy import normalize_language_code
+        lang = normalize_language_code(self._resolve_language_code())
+        if isinstance(cv_json, dict) and cv_json.get("language") != lang:
+            cv_json = dict(cv_json)
+            cv_json["language"] = lang
+        return cv_json
+
+    # CV postprocessing
+    def _postprocess_final_candidate_wrapper(
+        self, cv_json: dict, critic_json: dict = None
+    ) -> dict:
+        try:
+            from ..utils.cv_postprocessing import coerce_generated_cv_payload
+            profile_json = getattr(self, "_pipeline_cv_json_draft", {}) or {}
+            personal_info = self._build_profile_payload().get("personal_info", {})
+            return coerce_generated_cv_payload(
+                payload=cv_json or {},
+                profile_json=profile_json,
+                fallback_generator=lambda pj, reason: self._fallback_cv_json(
+                    profile_json=pj, reason=reason
+                ),
+                critic_json=critic_json,
+                job_title=str(
+                    self.offer_data.get("job_title") or ""
+                ) if isinstance(self.offer_data, dict) else "",
+                company=str(
+                    self.offer_data.get("company") or ""
+                ) if isinstance(self.offer_data, dict) else "",
+                profile_name=personal_info.get("full_name", ""),
+                profile_email=personal_info.get("email", ""),
+                profile_phone=personal_info.get("phone", ""),
+                profile_linkedin=personal_info.get("linkedin_url", ""),
+                language_code=self._resolve_language_code(),
+            )
+        except Exception as exc:
+            logger.warning("_postprocess_final_candidate_wrapper failed: %s", exc)
+            return cv_json or {}
+
+    # Alignment scoring
+    def _score_cv_offer_alignment(
+        self, cv_json: dict, critic_json: dict = None
+    ) -> dict:
+        try:
+            from ..utils.alignment_scoring import build_alignment_audit
+            from ..utils.alignment_retry_controller import get_alignment_thresholds
+            from ..utils.keyword_alignment import normalize_keyword_for_match
+
+            probe_parts: List[str] = []
+            if isinstance(cv_json, dict):
+                for field in ("summary", "target_job_title", "target_company"):
+                    val = cv_json.get(field)
+                    if isinstance(val, str):
+                        probe_parts.append(val)
+                for section_key in ("skills", "ats_keywords", "experience", "projects"):
+                    items = cv_json.get(section_key)
+                    if isinstance(items, list):
+                        for item in items:
+                            if isinstance(item, str):
+                                probe_parts.append(item)
+                            elif isinstance(item, dict):
+                                for v in item.values():
+                                    if isinstance(v, str):
+                                        probe_parts.append(v)
+            normalized_probe = normalize_keyword_for_match(" ".join(probe_parts))
+
+            offer_kw = self._collect_offer_keywords_only(critic_json=critic_json)
+            required_exact_terms = [normalize_keyword_for_match(k) for k in offer_kw]
+
+            offer_kw_json = self._get_offer_keywords_json() or {}
+            keyword_families: Dict[str, List[str]] = {}
+            families_raw = offer_kw_json.get("keyword_families") if isinstance(offer_kw_json, dict) else None
+            if isinstance(families_raw, dict):
+                for fam_key, fam_terms in families_raw.items():
+                    if isinstance(fam_terms, list):
+                        keyword_families[str(fam_key)] = [
+                            normalize_keyword_for_match(t) for t in fam_terms if t
+                        ]
+
+            thresholds = get_alignment_thresholds()
+
+            def _term_present(term: str, probe: str) -> bool:
+                return term in probe if term else False
+
+            return build_alignment_audit(
+                normalized_probe=normalized_probe,
+                required_exact_terms=required_exact_terms,
+                keyword_families=keyword_families,
+                thresholds=thresholds,
+                term_present_fn=_term_present,
+            )
+        except Exception as exc:
+            logger.warning("_score_cv_offer_alignment failed: %s", exc)
+            return {"overall_score": 0.0, "sufficient": True, "error": str(exc)}
+
+    def _get_alignment_retry_attempts(self) -> int:
+        from ..utils.alignment_retry_controller import get_alignment_retry_attempts
+        return get_alignment_retry_attempts()
+
+    def _augment_critic_with_alignment_feedback(
+        self, critic_json: dict, alignment_audit: dict
+    ) -> dict:
+        from ..utils.alignment_retry_controller import (
+            augment_critic_with_alignment_feedback,
+        )
+        return augment_critic_with_alignment_feedback(critic_json, alignment_audit)
+
+    # Cover letter methods
+    def _ensure_cover_letter_language_consistency(
+        self, letter: str, lang: str
+    ) -> str:
+        try:
+            from ..utils.cover_letter_pipeline import (
+                ensure_cover_letter_language_consistency,
+            )
+            return ensure_cover_letter_language_consistency(letter, lang)
+        except Exception as exc:
+            logger.warning("Cover letter language check failed: %s", exc)
+            return letter
+
+    def _is_cover_letter_structure_coherent(self, letter: str) -> bool:
+        try:
+            from ..utils.cover_letter_rules import is_cover_letter_structure_coherent
+            lang = self._resolve_language_code()
+            return is_cover_letter_structure_coherent(letter, language_code=lang)
+        except Exception as exc:
+            logger.warning("Cover letter structure check failed: %s", exc)
+            return True
+
+    def _enforce_cover_letter_offer_alignment(
+        self, letter: str, offer_data: dict
+    ) -> str:
+        return letter
+
+    def critique_and_rewrite_cover_letter(
+        self,
+        cover_letter: str,
+        language_code: str,
+        progress_callback=None,
+    ) -> str:
+        try:
+            from ..utils.cover_letter_pipeline import build_cover_letter_rewrite_prompt
+            base_prompt = self.build_cover_letter_prompt()
+            prompt = build_cover_letter_rewrite_prompt(
+                base_prompt=base_prompt,
+                cover_letter=cover_letter,
+                review={},
+                language_code=language_code,
+            )
+            return self.qwen_manager.generate_cover_letter(prompt, progress_callback)
+        except Exception as exc:
+            logger.warning("critique_and_rewrite_cover_letter failed: %s", exc)
+            return cover_letter
+
+    def _fallback_cover_letter(
+        self, offer_data: dict, lang: str, progress_callback=None
+    ) -> str:
+        try:
+            from ..utils.cover_letter_fallback import generate_fallback_cover_letter
+            return generate_fallback_cover_letter(
+                profile_data=self.profile_data,
+                offer_data=offer_data,
+                language_code=lang,
+                offer_keywords_collector=self._collect_offer_keywords,
+            )
+        except Exception as exc:
+            logger.warning("_fallback_cover_letter failed: %s", exc)
+            return ""
+
+    def _should_run_cover_letter_critic_stage(self) -> bool:
+        return bool(getattr(self, "cover_letter_critic_enabled", False))
     def _text_has_review_markers(self, text: str) -> bool:
         if not text:
             return False
@@ -2175,293 +2395,84 @@ OUTPUT RULES:
                     )
             return self._fallback_critic_json(reason=str(exc))
 
-    def run(self):
-        """Run the Extractor/Critic/Generator pipeline."""
-        from ..utils.json_strict import JsonStrictError
-        from ..utils.cv_json_renderer import cv_json_to_html, cv_json_to_markdown
-
+    def run(self) -> None:
+        """Run the CV generation pipeline via PipelineOrchestrator."""
         try:
-            def progress_callback(message):
-                self.progress_updated.emit(message)
-
-            start_ts = time.time()
-            logger.info(
-                "Generation start: profile_id=%s template=%s",
-                getattr(self.profile_data, "id", "unknown"),
-                self.template,
-            )
-
-            self.qwen_manager._load_selected_model_config()
-            note = getattr(self.qwen_manager, "last_model_resolution_note", None)
-            if note:
-                progress_callback(note)
-                self.qwen_manager.last_model_resolution_note = None
-
-            use_subprocess = self._should_use_stage_subprocess()
-            skip_critic = self._should_skip_critic_stage()
-            try:
-                vram_mode = self.qwen_manager._get_vram_mode()
-            except Exception:
-                vram_mode = "auto"
-            try:
-                recycle_every_runs = self.qwen_manager._get_recycle_every_runs()
-            except Exception:
-                recycle_every_runs = 0
-            logger.info(
-                "VRAM policy: mode=%s subprocess=%s unload_between_stages=%s skip_critic=%s recycle_every_runs=%s",
-                vram_mode,
-                use_subprocess,
-                self.qwen_manager._should_unload_between_stages(),
-                skip_critic,
-                recycle_every_runs,
-            )
-            model_name = getattr(self.qwen_manager, "current_model_id", "IA")
-            progress_callback(f"[MODEL] Initialisation {model_name}...")
-            if use_subprocess:
-                progress_callback("[MODEL] Mode VRAM: etapes isolees en sous-processus")
-            elif self.qwen_manager._should_unload_between_stages():
-                progress_callback("[MODEL] Mode VRAM: chargement paresseux par etape")
-            else:
-                self.qwen_manager.load_model(progress_callback, allow_fallback=False)
-
-            progress_callback("[EXTRACTOR] Building ProfileJSON...")
-            logger.info("ProfileJSON build start")
             profile_json = self._build_profile_json()
-            logger.info(
-                "ProfileJSON build done: experiences=%s education=%s skills=%s projects=%s languages=%s",
-                len(profile_json.get("experiences") or []),
-                len(profile_json.get("education") or []),
-                len(profile_json.get("skills") or []),
-                len(profile_json.get("projects") or []),
-                len(profile_json.get("languages") or []),
+            existing_snapshot = self._load_application_snapshot()
+
+            orchestrator, state = build_default_pipeline(
+                worker=self, qwen_manager=self.qwen_manager
             )
-            language_code = self._resolve_language_code()
-            if isinstance(self.offer_data, dict):
-                analysis = self.offer_data.get("analysis")
-                if isinstance(analysis, dict) and analysis.get("language") != language_code:
-                    updated = dict(analysis)
-                    updated["language"] = language_code
-                    self.offer_data["analysis"] = updated
-                    logger.info("Offer language set to %s", language_code)
+            state.profile_json = profile_json
+            state.existing_snapshot = existing_snapshot
+            state.progress_callback = self.progress_updated.emit
 
-            offer_text = (
-                self.offer_data.get("text") if isinstance(self.offer_data, dict) else ""
-            )
-            if offer_text and len(str(offer_text).strip()) >= 50:
-                progress_callback("[OFFER] Extracting keywords...")
-                logger.info("Offer keyword extraction start")
-                try:
-                    if use_subprocess:
-                        offer_keywords = self._run_stage_subprocess(
-                            "offer_keywords", {}
-                        )
-                    else:
-                        offer_keywords = self.generate_offer_keywords_json(
-                            progress_callback=progress_callback,
-                        )
-                    self._merge_offer_keywords(offer_keywords)
-                    logger.info(
-                        "Offer keyword extraction done: keywords=%s skills=%s tools=%s",
-                        len((offer_keywords or {}).get("keywords") or []),
-                        len((offer_keywords or {}).get("skills") or []),
-                        len((offer_keywords or {}).get("tools") or []),
-                    )
-                except JsonStrictError as exc:
-                    logger.warning("Offer keyword extraction failed: %s", exc)
-                except Exception as exc:
-                    logger.warning("Offer keyword extraction error: %s", exc)
+            success, _phase_results = orchestrator.run(state)
 
-            progress_callback("[GENERATOR] Draft CVJSON...")
-            logger.info("Draft CVJSON generation start")
-            if use_subprocess:
-                cv_json_draft = self._run_stage_subprocess(
-                    "draft", {"profile_json": profile_json}
-                )
-            else:
-                cv_json_draft = self.generate_cv_json_draft(
-                    profile_json=profile_json,
-                    progress_callback=progress_callback,
-                )
-            self._apply_contact_fallback(cv_json_draft, profile_json)
-            self._apply_target_fallback(cv_json_draft)
-            logger.info("Draft CVJSON generation done")
+            if not success:
+                self._complete_with_deterministic_fallback()
+                return
 
-            if not use_subprocess and self.qwen_manager._should_unload_between_stages():
-                progress_callback("[VRAM] Dechargement modele apres draft...")
-                self.qwen_manager.unload_model(reason="after draft")
+            self.generation_finished.emit(self._build_result_dict(state))
 
+        except Exception as exc:
+            logger.error("CVGenerationWorker.run failed: %s", exc)
             try:
-                from ..utils.cv_json_storage import save_cv_json_draft
-
-                draft_path = save_cv_json_draft(
-                    cv_json_draft,
-                    profile_id=self.profile_data.id,
-                    job_title=self.offer_data.get("job_title"),
-                    company=self.offer_data.get("company"),
+                self.qwen_manager._record_failure(
+                    f"pipeline_error: {str(exc)[:240]}"
                 )
-                logger.info("Draft CVJSON saved: %s", draft_path)
-            except Exception as exc:
-                logger.warning("Draft CVJSON save failed: %s", exc)
-
-            progress_callback("[RENDER] Draft HTML...")
-            logger.info("Draft HTML render start")
-            draft_html = cv_json_to_html(
-                cv_json_draft, template=self.template, language=language_code
-            )
-            logger.info("Draft HTML render done: html_len=%s", len(draft_html or ""))
-
-            if skip_critic:
-                progress_callback("[CRITIC] Skipped (low VRAM policy)...")
-                logger.warning(
-                    "Critic stage skipped by VRAM policy (mode=%s).",
-                    vram_mode,
-                )
-                critic_json = self._fallback_critic_json(
-                    reason=f"critic skipped in {vram_mode} mode",
-                )
-            else:
-                progress_callback("[CRITIC] Reviewing draft...")
-                logger.info("Critic JSON generation start")
-                if use_subprocess:
-                    critic_json = self._run_stage_subprocess(
-                        "critic", {"cv_html": draft_html}
-                    )
-                else:
-                    critic_json = self.generate_critic_json(
-                        cv_html=draft_html,
-                        progress_callback=progress_callback,
-                    )
-                logger.info("Critic JSON generation done")
-
-            if (
-                not skip_critic
-                and not use_subprocess
-                and self.qwen_manager._should_unload_between_stages()
-            ):
-                progress_callback("[VRAM] Dechargement modele apres critic...")
-                self.qwen_manager.unload_model(reason="after critic")
-
-            progress_callback("[GENERATOR] Rewrite CVJSON...")
-            logger.info("Final CVJSON generation start")
-            if use_subprocess:
-                cv_json_final = self._run_stage_subprocess(
-                    "final",
-                    {"profile_json": profile_json, "critic_json": critic_json},
-                )
-            else:
-                cv_json_final = self.generate_cv_json_final(
-                    profile_json=profile_json,
-                    critic_json=critic_json,
-                    progress_callback=progress_callback,
-                )
-            self._apply_contact_fallback(cv_json_final, profile_json)
-            self._apply_target_fallback(cv_json_final)
-            self._merge_cv_json_missing_sections(cv_json_final, cv_json_draft)
-            self._sanitize_cv_json_output(cv_json_final)
-            self._repair_summary_if_needed(cv_json_final, cv_json_draft)
-            progress_callback("[POST] Aligning keywords...")
-            logger.info("Keyword alignment start")
-            self._apply_keyword_alignment(cv_json_final, critic_json=critic_json)
-            logger.info("Keyword alignment done")
-            logger.info("Final CVJSON generation done")
-
-            progress_callback("[RENDER] Final output...")
-            logger.info("Final render start")
-            cv_markdown = cv_json_to_markdown(cv_json_final, language=language_code)
-            cv_html = cv_json_to_html(
-                cv_json_final, template=self.template, language=language_code
-            )
-            logger.info(
-                "Final render done: markdown_len=%s html_len=%s",
-                len(cv_markdown or ""),
-                len(cv_html or ""),
-            )
-
-            progress_callback("[LETTER] Generating cover letter...")
-            logger.info("Cover letter generation start")
-            letter_prompt = self.build_cover_letter_prompt()
-            if use_subprocess:
-                cover_payload = {"letter_prompt": letter_prompt}
-                cover_result = self._run_stage_subprocess("cover_letter", cover_payload)
-                cover_letter = cover_result.get("cover_letter", "")
-            else:
-                cover_letter = self.qwen_manager.generate_cover_letter(
-                    letter_prompt, progress_callback
-                )
-            logger.info("Cover letter generation done: length=%s", len(cover_letter or ""))
-
-            progress_callback("[SAVE] Persisting application...")
-            logger.info("Save application start")
-            application = self.save_application(
-                cv_markdown,
-                cover_letter,
-                profile_json=profile_json,
-                critic_json=critic_json,
-                cv_json_draft=cv_json_draft,
-                cv_json_final=cv_json_final,
-                cv_html=cv_html,
-            )
-            logger.info("Save application done: id=%s", getattr(application, "id", "unknown"))
-
-            progress_callback("[CLEANUP] Releasing memory...")
-            try:
-                self.qwen_manager.mark_run_completed()
-                self.qwen_manager._record_success("pipeline completed")
-                if not use_subprocess and self.qwen_manager._should_unload_after_generation():
-                    progress_callback("[VRAM] Unloading model after run (low headroom)...")
-                    self.qwen_manager.unload_model(reason="after generation")
-                else:
-                    self.qwen_manager.cleanup_memory()
             except Exception:
+                pass
+            try:
                 self.qwen_manager.cleanup_memory()
+            except Exception:
+                pass
+            self.error_occurred.emit(f"Erreur generation: {str(exc)}")
+    def _build_result_dict(self, state) -> dict:
+        """Build generation_finished payload from completed pipeline state."""
+        return {
+            "application_id": getattr(state, "saved_application_id", None),
+            "cv_markdown": getattr(state, "cv_markdown", ""),
+            "cv_html": getattr(state, "cv_html", ""),
+            "cover_letter": getattr(state, "cover_letter", ""),
+            "cv_json_draft": getattr(state, "cv_json_draft", {}),
+            "cv_json_final": getattr(state, "cv_json_final", {}),
+            "critic_json": getattr(state, "critic_json", {}),
+            "profile_json": getattr(state, "profile_json", {}),
+            "template": self.template,
+            "model_version": self.profile_data.model_version,
+            "model_used": getattr(self.qwen_manager, "current_model_id", "unknown"),
+            "gpu_used": gpu_manager.gpu_info["available"],
+            "degraded_mode": state.is_degraded() if hasattr(state, "is_degraded") else False,
+            "degraded_reasons": getattr(state, "degraded_reasons", []),
+        }
 
-            result = {
-                "application_id": application.id,
-                "cv_markdown": cv_markdown,
-                "cv_html": cv_html,
-                "cover_letter": cover_letter,
-                "cv_json_draft": cv_json_draft,
-                "cv_json_final": cv_json_final,
-                "critic_json": critic_json,
-                "profile_json": profile_json,
-                "template": self.template,
-                "model_version": self.profile_data.model_version,
-                "model_used": getattr(self.qwen_manager, "current_model_id", "unknown"),
-                "gpu_used": gpu_manager.gpu_info["available"],
-            }
+    def _load_application_snapshot(self) -> dict:
+        """Load existing application snapshot for cv_only_regen mode."""
+        if not self.cv_only_regen:
+            return {}
+        try:
+            from ..models.database import get_session
+            from ..models.job_application import JobApplication
+            with get_session() as session:
+                app = session.get(JobApplication, self.application_id)
+                if app:
+                    return {
+                        "cv_json_draft": app.cv_json_draft or {},
+                        "cv_json_final": app.cv_json_final or {},
+                        "cv_markdown": app.cv_markdown or "",
+                    }
+        except Exception as exc:
+            logger.warning("Could not load application snapshot: %s", exc)
+        return {}
 
-            progress_callback("[OK] Generation complete.")
-            self.generation_finished.emit(result)
-            logger.info("Generation complete: elapsed=%.2fs", time.time() - start_ts)
-
-        except JsonStrictError as exc:
-            logger.error("Strict JSON pipeline failed: %s", exc)
-            try:
-                self.qwen_manager._record_failure(f"pipeline_json_strict: {str(exc)[:240]}")
-            except Exception:
-                pass
-            try:
-                if self.qwen_manager._should_unload_after_generation():
-                    self.qwen_manager.unload_model(reason="after strict error")
-                else:
-                    self.qwen_manager.cleanup_memory()
-            except Exception:
-                pass
-            self.error_occurred.emit(str(exc))
-        except Exception as e:
-            logger.error(f"Erreur génération CV : {e}")
-            try:
-                self.qwen_manager._record_failure(f"pipeline_error: {str(e)[:240]}")
-            except Exception:
-                pass
-            try:
-                if self.qwen_manager._should_unload_after_generation():
-                    self.qwen_manager.unload_model(reason="after generation error")
-                else:
-                    self.qwen_manager.cleanup_memory()
-            except Exception:
-                pass
-            self.error_occurred.emit(f"Erreur génération: {str(e)}")
+    def _complete_with_deterministic_fallback(self) -> None:
+        """Emit error when orchestrator pipeline fails with no recoverable path."""
+        self.error_occurred.emit(
+            "La generation a echoue apres plusieurs tentatives. "
+            "Consultez les logs pour les details."
+        )
 
     def build_prompt(self) -> str:
         """Construit le prompt optimisé pour Qwen2.5-32B."""
