@@ -1,5 +1,5 @@
 """
-Survival Mode Selector Module (Sprint 5)
+Survival Mode Selector Module 
 
 Centralizes survival mode detection, model selection, and quality-first
 policies for low-memory scenarios. This module extracts survival mode logic
@@ -511,9 +511,14 @@ def is_memory_pressure_failure(reason: str) -> bool:
         "memoryerror",
         "out of memory",
         "cuda out of memory",
+        "fichier de pagination",
+        "pagefile",
+        "os error 1455",
         "mémoire système insuffisante",
         "memoire systeme insuffisante",
         "commit windows insuffisant",
+        "insufficient windows commit memory",
+        "commit memory",
         "lowram",
         "vram insuffisante",
         "oom",

@@ -311,6 +311,7 @@ main_fallback.py
 # Script output artifacts (may include local paths/PII)
 scripts/*.txt
 scripts/*.json
+scripts/_tee_probe.py
 !scripts/README.txt
 
 # =============================================================================
@@ -499,3 +500,10 @@ tests/unit/workers/linkedin/fixtures*.html
 #
 # This ensures NO personal data will be committed to the repository.
 # =============================================================================
+
+refactorizationplan_llmworker V2.md
+sprint_k_import_cleanup.py
+sprint_t_blank_line_cleanup.py
+# Runtime reset artifacts
+reset_operations.log
+reset_history.json

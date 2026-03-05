@@ -179,7 +179,7 @@ def mask_ssn(text: str) -> str:
 def mask_all_pii(text: str) -> str:
     """Apply all PII masking functions to text."""
     if not isinstance(text, str):
-        return text
+        return ""
 
     masked = text
     masked = mask_email(masked)

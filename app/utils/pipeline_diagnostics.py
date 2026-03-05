@@ -1,5 +1,5 @@
 """
-Pipeline Diagnostics Module (PR-02)
+Pipeline Diagnostics Module
 
 Centralized logging and diagnostics for the CV generation pipeline.
 Extracted from llm_worker.py for better maintainability.

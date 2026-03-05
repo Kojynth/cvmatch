@@ -1,5 +1,5 @@
 """
-Generation Role Parameters Module (PR-11)
+Generation Role Parameters Module 
 
 Centralized generation parameter configuration by role/stage.
 This module extracts role-based parameter logic from QwenManager
@@ -122,24 +122,24 @@ ROLE_PARAMS_OFFER_CRITIC = GenerationParams(
 )
 
 ROLE_PARAMS_GENERATOR = GenerationParams(
-    temperature=0.3,
-    top_p=0.9,
-    top_k=50,
-    max_input_tokens=2400,
+    temperature=0.46,
+    top_p=0.92,
+    top_k=60,
+    max_input_tokens=2600,
     max_new_tokens=2200,
     max_total_tokens=5200,
-    repetition_penalty=1.05,
+    repetition_penalty=1.06,
     do_sample=True,
 )
 
 ROLE_PARAMS_COVER_LETTER = GenerationParams(
-    temperature=0.7,
-    top_p=0.9,
-    top_k=50,
-    max_input_tokens=2400,
-    max_new_tokens=1800,
-    max_total_tokens=4200,
-    repetition_penalty=1.1,
+    temperature=0.46,
+    top_p=0.92,
+    top_k=60,
+    max_input_tokens=2600,
+    max_new_tokens=1200,
+    max_total_tokens=5200,
+    repetition_penalty=1.08,
     do_sample=True,
 )
 

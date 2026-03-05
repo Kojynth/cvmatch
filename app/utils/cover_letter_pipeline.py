@@ -1,5 +1,5 @@
 """
-Cover Letter Pipeline Utilities (Sprint 6)
+Cover Letter Pipeline Utilities 
 
 Centralized cover letter generation, validation, and scoring logic.
 This module extracts cover letter-related processing from CVGenerationWorker
@@ -426,7 +426,7 @@ def build_cover_letter_critic_messages(
         Dict with "system" and "user" prompt keys
     """
     offer_keywords_text = (
-        _trim_text(json.dumps(offer_keywords, ensure_ascii=True), max_keywords_chars)
+        _trim_text(json.dumps(offer_keywords, ensure_ascii=False), max_keywords_chars)
         if isinstance(offer_keywords, dict)
         else "N/A"
     )
@@ -493,7 +493,7 @@ def build_cover_letter_rewrite_prompt(
         Complete rewrite prompt string
     """
     review_block = _trim_text(
-        json.dumps(review or {}, ensure_ascii=True, indent=2),
+        json.dumps(review or {}, ensure_ascii=False, indent=2),
         max_review_chars,
     )
 

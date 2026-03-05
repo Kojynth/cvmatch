@@ -1,5 +1,5 @@
 """
-QwenMemoryManager Module (Sprint 8.1)
+QwenMemoryManager Module 
 
 Centralizes memory management logic extracted from QwenManager.
 Handles VRAM tracking, survival mode state, RAM profiling, and

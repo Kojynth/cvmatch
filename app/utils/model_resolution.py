@@ -1,5 +1,5 @@
 """
-Model Resolution Module (PR-11)
+Model Resolution Module
 
 Centralized model selection and ranking logic.
 This module extracts model selection from QwenManager to provide

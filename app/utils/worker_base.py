@@ -1,5 +1,5 @@
 """
-Worker Base Utilities Module (Sprint 3)
+Worker Base Utilities Module 
 
 Common utilities and helper functions shared between CVGenerationWorker
 and CoverLetterGenerationWorker. This module eliminates code duplication

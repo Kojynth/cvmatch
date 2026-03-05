@@ -1,5 +1,5 @@
 """
-Memory Preflight Check Module (Sprint 4)
+Memory Preflight Check Module
 
 High-level memory validation before model loading.
 Combines runtime_memory_policy.py and gpu_memory_budget.py to provide
@@ -249,6 +249,11 @@ def check_memory_before_load(
                 )
 
         # RAM check for GPU mode
+        model_size_gb = estimate_model_size_gb(
+            model_name=model_name,
+            model_id=model_id,
+        )
+        memory_profile["model_size_gb"] = model_size_gb
         result = _check_ram_for_gpu_load(
             available_ram=available_ram,
             total_ram=total_ram,
@@ -256,6 +261,7 @@ def check_memory_before_load(
             swap_total_gb=swap_total_gb,
             writer_first_attempt=writer_first_attempt,
             model_name=model_name,
+            model_size_gb=model_size_gb,
             memory_profile=memory_profile,
         )
         if result:
@@ -319,12 +325,38 @@ def _check_ram_for_gpu_load(
     swap_total_gb: float,
     writer_first_attempt: bool,
     model_name: Optional[str],
+    model_size_gb: float,
     memory_profile: Dict[str, Any],
 ) -> Optional[PreflightResult]:
     """Check RAM availability for GPU model loading.
 
     Returns PreflightResult if check fails, None if OK.
     """
+    # Guard quality-first writer attempts on large models when host memory is already constrained.
+    if model_size_gb >= 6.5 and available_ram < 3.0:
+        if os.name == "nt" and commit_available_gb < 4.0:
+            error_msg = (
+                f"Insufficient RAM/commit for {model_name or 'large model'}: "
+                f"ram={available_ram:.1f}GB commit={commit_available_gb:.1f}GB. "
+                "Large-model loading cancelled to avoid late-stage OOM."
+            )
+            return PreflightResult(
+                can_proceed=False,
+                error_message=error_msg,
+                memory_profile=memory_profile,
+            )
+        if os.name != "nt" and swap_total_gb < LOW_SWAP_GB:
+            error_msg = (
+                f"Insufficient RAM/swap for {model_name or 'large model'}: "
+                f"ram={available_ram:.1f}GB swap={swap_total_gb:.1f}GB. "
+                "Large-model loading cancelled to avoid late-stage OOM."
+            )
+            return PreflightResult(
+                can_proceed=False,
+                error_message=error_msg,
+                memory_profile=memory_profile,
+            )
+
     if available_ram < CRITICAL_RAM_GB:
         if os.name == "nt":
             if commit_available_gb > 1.5:

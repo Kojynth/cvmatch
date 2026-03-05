@@ -9,7 +9,7 @@ avec hf_xet et huggingface_hub.
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from loguru import logger
 
 try:
@@ -31,9 +31,162 @@ except ImportError:
 class ModelOptimizer:
     """Gestionnaire optimisé pour les modèles Hugging Face."""
     
+    ALLOWED_LLM_REPO_PREFIXES = (
+        "qwen/",
+        "mistralai/",
+    )
+    LLM_REPO_HINTS = (
+        "instruct",
+        "chat",
+        "llama",
+        "qwen",
+        "mistral",
+        "mixtral",
+        "phi",
+        "gemma",
+        "falcon",
+        "deepseek",
+        "gpt",
+        "mpt",
+        "internlm",
+    )
+
     def __init__(self, cache_dir: Optional[str] = None):
-        self.cache_dir = cache_dir or os.path.expanduser("~/.cache/huggingface/hub")
+        self.cache_dir = cache_dir or self._resolve_cache_dir_from_env()
         self.api = HfApi() if HF_HUB_AVAILABLE else None
+
+    def _cache_candidates(self) -> List[str]:
+        candidates = [self.cache_dir]
+        default_cache = os.path.expanduser("~/.cache/huggingface/hub")
+        if os.path.normcase(os.path.abspath(default_cache)) != os.path.normcase(
+            os.path.abspath(self.cache_dir)
+        ):
+            candidates.append(default_cache)
+        return candidates
+
+    @staticmethod
+    def _is_local_model_ref(model_name: str) -> bool:
+        model_ref = str(model_name or "").strip()
+        lowered = model_ref.lower()
+
+        if not model_ref:
+            return True
+        if lowered.startswith((".", "..")):
+            return True
+        if os.path.isabs(model_ref):
+            return True
+        if "\\" in model_ref:
+            return True
+        if ":" in model_ref:
+            return True
+        if lowered.endswith(".gguf"):
+            return True
+        return False
+
+    def _is_llm_repo(self, model_name: str) -> bool:
+        model_ref = str(model_name or "").strip()
+        if not model_ref or self._is_local_model_ref(model_ref):
+            return False
+        if "/" not in model_ref:
+            return False
+        lowered = model_ref.lower()
+        return any(hint in lowered for hint in self.LLM_REPO_HINTS)
+
+    def _is_allowed_llm_repo(self, model_name: str) -> bool:
+        lowered = str(model_name or "").strip().lower()
+        return any(lowered.startswith(prefix) for prefix in self.ALLOWED_LLM_REPO_PREFIXES)
+
+    def _resolve_cached_model_snapshot(self, model_name: str) -> Optional[str]:
+        model_ref = str(model_name or "").strip()
+        if not model_ref or "/" not in model_ref:
+            return None
+
+        model_dir_name = f"models--{model_ref.replace('/', '--')}"
+        for cache_candidate in self._cache_candidates():
+            snapshots_dir = Path(cache_candidate) / model_dir_name / "snapshots"
+            if not snapshots_dir.exists():
+                continue
+            try:
+                snapshots = sorted(
+                    [p for p in snapshots_dir.iterdir() if p.is_dir()],
+                    key=lambda p: p.stat().st_mtime,
+                    reverse=True,
+                )
+            except Exception:
+                snapshots = [p for p in snapshots_dir.iterdir() if p.is_dir()]
+
+            for snapshot in snapshots:
+                if (snapshot / "config.json").exists():
+                    return str(snapshot)
+
+        return None
+
+    @staticmethod
+    def _model_ref_to_cache_slug(model_name: str) -> str:
+        return str(model_name or "").strip().replace("/", "--").replace("\\", "--").replace(":", "_")
+
+    def _build_plain_local_dir(self, model_name: str) -> Path:
+        return Path(self.cache_dir) / "plain_snapshots" / self._model_ref_to_cache_slug(model_name)
+
+    def _resolve_plain_local_snapshot(self, model_name: str) -> Optional[str]:
+        local_dir = self._build_plain_local_dir(model_name)
+        if (local_dir / "config.json").exists():
+            return str(local_dir)
+        return None
+
+    @staticmethod
+    def _is_windows_privilege_error(error: Exception) -> bool:
+        message = str(error or "").lower()
+        return (
+            "winerror 1314" in message
+            or "privilège nécessaire" in message
+            or "privilege" in message
+        )
+
+    def _apply_llm_download_policy(self, model_name: str) -> Optional[str]:
+        if not self._is_llm_repo(model_name):
+            return None
+        if self._is_allowed_llm_repo(model_name):
+            return None
+
+        cached_snapshot = self._resolve_cached_model_snapshot(model_name)
+        if cached_snapshot:
+            logger.warning(
+                "Model download blocked by policy for %s; using cached snapshot %s",
+                model_name,
+                cached_snapshot,
+            )
+            return cached_snapshot
+
+        allowed = ", ".join(self.ALLOWED_LLM_REPO_PREFIXES)
+        raise RuntimeError(
+            f"Model download blocked by policy: {model_name}. "
+            f"Allowed LLM families: {allowed}"
+        )
+
+    @staticmethod
+    def _resolve_cache_dir_from_env() -> str:
+        """Resolve HF cache directory from runtime env with project-friendly fallbacks."""
+        hub_cache = str(os.getenv("HUGGINGFACE_HUB_CACHE") or "").strip()
+        if hub_cache:
+            return hub_cache
+
+        hf_home = str(os.getenv("HF_HOME") or "").strip()
+        if hf_home:
+            hf_home_path = Path(hf_home)
+            if hf_home_path.name.lower() == "hub":
+                return str(hf_home_path)
+            return str(hf_home_path / "hub")
+
+        transformers_cache = str(os.getenv("TRANSFORMERS_CACHE") or "").strip()
+        if transformers_cache:
+            return transformers_cache
+
+        project_cache = Path.cwd() / ".hf_cache"
+        if project_cache.exists():
+            return str(project_cache)
+
+        return os.path.expanduser("~/.cache/huggingface/hub")
         
     def check_hf_xet_status(self) -> Dict[str, Any]:
         """Vérifie le statut des optimisations hf_xet."""
@@ -76,16 +229,34 @@ class ModelOptimizer:
             # Évite les re-téléchargements inutiles si le modèle est déjà en cache
             if not force_download:
                 try:
-                    from huggingface_hub import try_to_load_from_cache
-                    cached_path = try_to_load_from_cache(model_name, "config.json")
-                    if cached_path is not None and str(cached_path) != "_CACHED_NO_EXIST":
-                        model_dir = Path(cached_path).parent
-                        logger.info(f"✅ Modèle {model_name} trouvé en cache: {model_dir}")
+                    plain_snapshot = self._resolve_plain_local_snapshot(model_name)
+                    if plain_snapshot:
+                        logger.info(f"Model {model_name} found in local plain cache: {plain_snapshot}")
                         if progress_callback:
-                            progress_callback(f"✅ Modèle en cache (pas de téléchargement)")
-                        return str(model_dir)
+                            progress_callback("Model in local plain cache (no download)")
+                        return plain_snapshot
+
+                    from huggingface_hub import try_to_load_from_cache
+                    for cache_candidate in self._cache_candidates():
+                        cached_path = try_to_load_from_cache(
+                            model_name,
+                            "config.json",
+                            cache_dir=cache_candidate,
+                        )
+                        if cached_path is not None and str(cached_path) != "_CACHED_NO_EXIST":
+                            model_dir = Path(cached_path).parent
+                            logger.info(f"Model {model_name} found in cache: {model_dir}")
+                            if progress_callback:
+                                progress_callback("Model in cache (no download)")
+                            return str(model_dir)
                 except Exception as e:
-                    logger.debug(f"Vérification cache échouée (téléchargement prévu): {e}")
+                    logger.debug(f"Cache check failed (download planned): {e}")
+
+            cached_policy_path = self._apply_llm_download_policy(model_name)
+            if cached_policy_path:
+                if progress_callback:
+                    progress_callback("Model in cache (download policy)")
+                return cached_policy_path
 
             if progress_callback:
                 if HF_XET_AVAILABLE:
@@ -108,7 +279,28 @@ class ModelOptimizer:
                 download_kwargs["local_dir_use_symlinks"] = False
 
             # Si hf_xet est disponible, il sera utilisé automatiquement
-            model_path = snapshot_download(**download_kwargs)
+            try:
+                model_path = snapshot_download(**download_kwargs)
+            except Exception as download_exc:
+                if sys.platform == "win32" and self._is_windows_privilege_error(download_exc):
+                    local_dir = self._build_plain_local_dir(model_name)
+                    local_dir.mkdir(parents=True, exist_ok=True)
+                    retry_kwargs = dict(download_kwargs)
+                    retry_kwargs["local_dir"] = str(local_dir)
+                    retry_kwargs["local_dir_use_symlinks"] = False
+                    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+                    os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
+                    if progress_callback:
+                        progress_callback("Windows sans privilèges symlink détecté: retry en mode copie locale...")
+                    logger.warning(
+                        "Windows privilege issue while downloading %s; retrying with local_dir=%s and symlinks disabled.",
+                        model_name,
+                        local_dir,
+                    )
+                    snapshot_download(**retry_kwargs)
+                    model_path = str(local_dir)
+                else:
+                    raise
             
             if progress_callback:
                 cache_size = self.get_cache_size()

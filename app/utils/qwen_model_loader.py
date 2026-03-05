@@ -1,5 +1,5 @@
 """
-Qwen Model Loader Utilities (Sprint 4)
+Qwen Model Loader Utilities
 
 Reusable model loading utilities extracted from QwenManager.
 These functions help with model loading configuration, error handling,

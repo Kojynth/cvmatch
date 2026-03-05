@@ -43,6 +43,63 @@ profiles:
     speed_rating: 3
     description: "Meilleur compromis FR/EN pour generation de CV, instruction-following solide."
     tags: ["gpu", "default"]
+  ministral-8b:
+    display_name: "Ministral-8B Instruct (Writer FR)"
+    model_id: "mistralai/Ministral-8B-Instruct-2410"
+    loader: "transformers"
+    quantization: "nf4"
+    min_vram_gb: 8
+    min_ram_gb: 18
+    quality_stars: 5
+    speed_rating: 2
+    description: "Writer FR haut niveau pour CV/lettre. Plus lourd que les profils 7B."
+    tags: ["gpu", "default", "writer", "multilingual"]
+    license_hint: "MRL"
+    context_hint: "Long context selon backend/configuration"
+    recommended_usage: "writer"
+    role_params:
+      generator:
+        temperature: 0.46
+        top_p: 0.92
+        top_k: 60
+        max_input_tokens: 2600
+        max_new_tokens: 2200
+        max_total_tokens: 5200
+      critic:
+        temperature: 0.2
+        top_p: 0.9
+        top_k: 50
+        max_input_tokens: 2800
+        max_new_tokens: 900
+        max_total_tokens: 3700
+  llama3.1-8b:
+    display_name: "Llama 3.1-8B Instruct (General Writer)"
+    model_id: "meta-llama/Llama-3.1-8B-Instruct"
+    loader: "transformers"
+    quantization: "nf4"
+    min_vram_gb: 8
+    min_ram_gb: 18
+    quality_stars: 4
+    speed_rating: 2
+    description: "Writer generaliste multilingue, stable pour CV/lettres adaptees."
+    tags: ["gpu", "default", "writer", "multilingual"]
+    license_hint: "Llama"
+    context_hint: "Long context selon backend/configuration"
+    recommended_usage: "writer"
+  llama3.2-3b:
+    display_name: "Llama 3.2-3B Instruct (LowVRAM fallback)"
+    model_id: "meta-llama/Llama-3.2-3B-Instruct"
+    loader: "transformers"
+    quantization: "int8"
+    min_vram_gb: 4
+    min_ram_gb: 8
+    quality_stars: 3
+    speed_rating: 3
+    description: "Fallback robuste pour 4-6GB VRAM quand un 7B/8B est trop limite."
+    tags: ["gpu", "default", "fallback", "multilingual"]
+    license_hint: "Llama"
+    context_hint: "Contexte utile mais plus limite selon runtime"
+    recommended_usage: "fallback"
   qwen2-3b:
     display_name: "Qwen2.5-3B (Compact)"
     model_id: "Qwen/Qwen2.5-3B-Instruct"
@@ -110,20 +167,20 @@ hardware_tiers:
   gpu_entry:
     label: "GPU 4-6GB"
     min_vram_gb: 4
-    default_model: "qwen2-7b"
-    fallback_models: ["qwen2-3b"]
+    default_model: "qwen2-3b"
+    fallback_models: ["qwen2-1.5b", "qwen2-0.5b"]
   gpu_mid:
     label: "GPU 8-12GB"
     min_vram_gb: 8
     default_model: "qwen2-7b"
-    fallback_models: ["qwen2-3b"]
+    fallback_models: ["mistral-7b", "qwen2-3b", "qwen2-1.5b"]
   gpu_high:
     label: "GPU 16GB+"
     min_vram_gb: 16
     default_model: "qwen2-7b"
-    fallback_models: ["qwen2-3b"]
+    fallback_models: ["ministral-8b", "mistral-7b", "qwen2-3b"]
   gpu_extreme:
     label: "GPU 24GB+"
     min_vram_gb: 24
-    default_model: "qwen2-7b"
-    fallback_models: ["qwen2-3b"]
+    default_model: "ministral-8b"
+    fallback_models: ["mistral-7b", "qwen2-7b"]

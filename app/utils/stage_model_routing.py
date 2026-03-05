@@ -1,5 +1,5 @@
 """
-Stage Model Routing Module (PR-11)
+Stage Model Routing Module
 
 Per-stage model routing and selection logic.
 This module extracts stage-aware model selection from CVGenerationWorker

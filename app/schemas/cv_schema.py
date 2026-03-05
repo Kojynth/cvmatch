@@ -50,6 +50,7 @@ class ProjectItem(BaseModel):
 class LanguageItem(BaseModel):
     language: str = ""
     level: str = ""
+    certification: str = ""
 
 
 class CertificationItem(BaseModel):

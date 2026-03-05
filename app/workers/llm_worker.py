@@ -2,7 +2,7 @@
 LLM Worker
 ==========
 
-Worker pour la génération de CV avec le modèle Qwen2.5-32B-Instruct.
+Worker pour la génération de CV.
 """
 import json
 import re
@@ -56,6 +56,27 @@ except ImportError:
             if progress_callback: progress_callback("📥 Téléchargement standard...")
             return model_name
     model_optimizer = MockModelOptimizer()
+
+from ..utils.llm_worker_fallbacks import (
+    build_cv_json_fallback,
+    build_offer_keywords_fallback,
+)
+from ..utils.offer_keywords_quality import (
+    extract_offer_text_from_offer_data,
+    stabilize_offer_keywords_payload,
+)
+from ..utils.offer_keywords_llm_retry import run_offer_keywords_second_pass
+from ..utils.model_quality_routing import resolve_writer_quality_override
+from ..utils.stage_attempts_config import (
+    resolve_stage_attempts,
+    resolve_stage_timeout_seconds,
+)
+from ..utils.stage_subprocess_utils import (
+    build_stage_subprocess_env,
+    extract_stage_subprocess_error,
+    is_transient_stage_memory_error,
+    persist_stage_subprocess_diagnostics,
+)
 
 
 def _normalize_template_name(template: Optional[str]) -> str:
@@ -608,7 +629,17 @@ def _format_profile_detailed_data(profile: Union[UserProfile, ProfileWorkerData]
                 if isinstance(entry, dict):
                     name = entry.get("language") or entry.get("name") or ""
                     level = entry.get("level") or entry.get("proficiency") or ""
-                    rendered.append(_join_nonempty([str(name), str(level)], sep=": "))
+                    certification = (
+                        entry.get("certification")
+                        or entry.get("certificate")
+                        or entry.get("organization")
+                        or entry.get("issuer")
+                        or ""
+                    )
+                    descriptor = str(level)
+                    if certification:
+                        descriptor = f"{descriptor} ({certification})" if descriptor else str(certification)
+                    rendered.append(_join_nonempty([str(name), descriptor], sep=": "))
                 elif isinstance(entry, str) and entry.strip():
                     rendered.append(entry.strip())
             rendered = [item for item in rendered if item]
@@ -799,19 +830,61 @@ class CVGenerationWorker(QThread):
     # Signal pour incrémenter les stats du profil (exécuté dans le thread principal)
     profile_stats_updated = Signal(int)  # profile_id
 
-    def __init__(self, profile_data: ProfileWorkerData, offer_data: dict, template: str):
+    def __init__(
+        self,
+        profile_data: ProfileWorkerData,
+        offer_data: dict,
+        template: str,
+        application_id: Optional[int] = None,
+        user_instruction: str = "",
+        cv_only_regen: bool = False,
+        previous_generation_audit: Optional[Dict[str, Any]] = None,
+    ):
         super().__init__()
         self.profile_data = profile_data
         self.offer_data = offer_data
         self.template = template
         # Le QwenManager se configure automatiquement selon le modèle sélectionné
         self.qwen_manager = QwenManager(self.profile_data.model_version)
-        self.application_id: Optional[int] = None
-        self.user_instruction: str = ""
-        self.cv_only_regen: bool = False
-        self.previous_generation_audit: dict = {}
+        self.application_id: Optional[int] = (
+            application_id if isinstance(application_id, int) else None
+        )
+        self.user_instruction: str = str(user_instruction or "").strip()
+        self.cv_only_regen: bool = bool(cv_only_regen)
+        self.previous_generation_audit: dict = (
+            dict(previous_generation_audit)
+            if isinstance(previous_generation_audit, dict)
+            else {}
+        )
+        self._pipeline_profile_json: dict = {}
         self._pipeline_cv_json_draft: dict = {}
         self._pipeline_offer_keywords: dict = {}
+
+    def _get_runtime_memory_pressure_level(self, *, force_refresh: bool = False) -> str:
+        try:
+            snapshot = self.qwen_manager._collect_memory_pressure_snapshot(
+                force_refresh=force_refresh
+            ) or {}
+            pressure = str(snapshot.get("pressure_level") or "").strip().lower()
+            if pressure in {"elevated", "tight", "critical"}:
+                return pressure
+            lowram = str(snapshot.get("lowram_level") or "").strip().lower()
+            if lowram in {"tight", "critical"}:
+                return lowram
+        except Exception:
+            pass
+
+        try:
+            profile = self.qwen_manager._get_lowram_profile(
+                force_refresh=force_refresh
+            ) or {}
+            lowram = str(profile.get("level") or "normal").strip().lower()
+            if lowram in {"tight", "critical"}:
+                return lowram
+        except Exception:
+            pass
+
+        return "normal"
 
     def _should_use_stage_subprocess(self) -> bool:
         try:
@@ -825,13 +898,116 @@ class CVGenerationWorker(QThread):
         custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
         if "subprocess_stages" in custom:
             return bool(custom.get("subprocess_stages"))
+
+        pressure = self._get_runtime_memory_pressure_level(force_refresh=True)
+        if pressure in {"tight", "critical"}:
+            return True
+        if pressure == "elevated":
+            try:
+                return bool(self.qwen_manager._is_low_vram_mode())
+            except Exception:
+                return True
+
         try:
-            return bool(
-                self.qwen_manager._is_low_vram_mode()
-                or self.qwen_manager._is_med_vram_mode()
-            )
+            return bool(self.qwen_manager._is_low_vram_mode() and pressure != "normal")
         except Exception:
             return False
+
+    @staticmethod
+    def _to_bool_setting(value: Any, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in ("1", "true", "yes", "y", "on")
+
+    def _is_memory_ready_gate_enabled(self) -> bool:
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        env_value = os.getenv("CVMATCH_REQUIRE_MEMORY_READY")
+        if env_value is not None:
+            return self._to_bool_setting(env_value, False)
+        if "require_memory_ready" in custom:
+            return self._to_bool_setting(custom.get("require_memory_ready"), False)
+        try:
+            pressure = self._get_runtime_memory_pressure_level(force_refresh=True)
+            return pressure in {"tight", "critical"}
+        except Exception:
+            return False
+
+    def _is_memory_ready_wait_enabled(self) -> bool:
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        env_value = os.getenv("CVMATCH_WAIT_FOR_MEMORY_READY")
+        if env_value is not None:
+            return self._to_bool_setting(env_value, True)
+        if "wait_for_memory_ready" in custom:
+            return self._to_bool_setting(custom.get("wait_for_memory_ready"), True)
+        return True
+
+    def _memory_ready_timeout_seconds(self) -> int:
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        env_value = os.getenv("CVMATCH_MEMORY_READY_TIMEOUT_S")
+        raw = env_value if env_value is not None else custom.get("memory_ready_timeout_s")
+        try:
+            return max(5, int(raw))
+        except Exception:
+            return 90
+
+    def _memory_ready_poll_seconds(self) -> float:
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        env_value = os.getenv("CVMATCH_MEMORY_READY_POLL_S")
+        raw = env_value if env_value is not None else custom.get("memory_ready_poll_s")
+        try:
+            return max(1.0, float(raw))
+        except Exception:
+            return 4.0
+
+    def _ensure_stage_memory_ready(self, stage: str, stage_model_id: Optional[str], progress_callback=None) -> None:
+        stage_key = str(stage or "").strip().lower()
+
+        try:
+            self.qwen_manager.set_runtime_stage(stage_key)
+        except Exception:
+            pass
+
+        if not self._is_memory_ready_gate_enabled():
+            return
+
+        if stage_model_id:
+            try:
+                self.qwen_manager.apply_model_profile(
+                    stage_model_id,
+                    reason=f"memory_guard:{stage_key}",
+                )
+            except Exception as exc:
+                logger.warning("Memory guard model apply failed for stage %s (%s): %s", stage_key, stage_model_id, exc)
+
+        wait_enabled = self._is_memory_ready_wait_enabled()
+        timeout_s = self._memory_ready_timeout_seconds()
+        poll_s = self._memory_ready_poll_seconds()
+        started = time.time()
+        last_error = ""
+
+        while True:
+            can_proceed, error_message = self.qwen_manager._check_memory_before_load()
+            if can_proceed:
+                return
+
+            last_error = str(error_message or "Insufficient memory to load the stage model.")
+            if not wait_enabled:
+                raise RuntimeError(f"Memory guard blocked stage '{stage_key}': {last_error}")
+
+            elapsed = time.time() - started
+            remaining = timeout_s - elapsed
+            if remaining <= 0:
+                raise RuntimeError(
+                    f"Memory guard timeout for stage '{stage_key}' after {timeout_s}s: {last_error}"
+                )
+
+            if progress_callback:
+                progress_callback(
+                    f"[WAIT] Memory gate for '{stage_key}' ({int(remaining)}s left): {last_error}"
+                )
+            time.sleep(poll_s)
 
     def _should_skip_critic_stage(self) -> bool:
         def _to_bool(value: Any) -> bool:
@@ -882,9 +1058,17 @@ class CVGenerationWorker(QThread):
         payload["profile_data"] = asdict(self.profile_data)
         payload["offer_data"] = self.offer_data
         payload["template"] = self.template
+        try:
+            stage_model_id = self._choose_stage_model_override(stage)
+        except Exception:
+            stage_model_id = None
+        if stage_model_id:
+            payload["stage_model_id"] = str(stage_model_id).strip()
+
+        self._ensure_stage_memory_ready(stage, stage_model_id)
 
         with open(input_path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=True, default=str)
+            json.dump(payload, handle, ensure_ascii=False, default=str)
 
         cmd = [
             sys.executable,
@@ -902,43 +1086,151 @@ class CVGenerationWorker(QThread):
         if mock_path:
             cmd = [sys.executable, mock_path, str(input_path), str(output_path)]
 
-        run_env = dict(os.environ)
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
         try:
-            if self.qwen_manager._is_survival_mode():
-                run_env["CVMATCH_SURVIVAL_MODE"] = "1"
-                run_env.setdefault("CVMATCH_SURVIVAL_IGNORE_SELECTED_MODEL", "1")
+            survival_mode = bool(self.qwen_manager._is_survival_mode())
         except Exception:
-            pass
-
-        result = subprocess.run(
-            cmd,
-            cwd=str(repo_root),
-            env=run_env,
-            capture_output=True,
-            text=True,
+            survival_mode = False
+        stage_attempts = resolve_stage_attempts(
+            stage,
+            survival_mode=survival_mode,
+            custom_parameters=custom,
+            env=os.environ,
         )
-        if result.returncode != 0:
-            stderr = (result.stderr or "").strip()
-            stdout = (result.stdout or "").strip()
-            details = stderr or stdout or "unknown error"
-            try:
-                self.qwen_manager._record_failure(
-                    f"stage_subprocess:{stage}:{details[:200]}"
+        stage_timeout_seconds = resolve_stage_timeout_seconds(
+            custom_parameters=custom,
+            env=os.environ,
+            default=0,
+        )
+
+        try:
+            last_error = "unknown stage subprocess error"
+            for attempt in range(1, stage_attempts + 1):
+                run_env = build_stage_subprocess_env(
+                    base_env=dict(os.environ),
+                    stage=stage,
+                    attempt=attempt,
+                    attempts=stage_attempts,
+                    force_survival_retry=survival_mode,
                 )
+                if survival_mode:
+                    run_env["CVMATCH_SURVIVAL_MODE"] = "1"
+                    run_env.setdefault("CVMATCH_SURVIVAL_IGNORE_SELECTED_MODEL", "1")
+                if attempt > 1:
+                    # Retry in RAM-first mode: keep selected model and reduce GPU fragility.
+                    run_env.setdefault("CVMATCH_PREFER_RAM_OFFLOAD", "1")
+                    run_env.setdefault("CVMATCH_FORCE_DISK_OFFLOAD", "0")
+                    run_env.setdefault("CVMATCH_DISABLE_TORCH_COMPILE", "1")
+                    run_env.setdefault("CVMATCH_CPU_HEADROOM_GB", "0.5")
+                    run_env.setdefault("CVMATCH_MAX_MEMORY_CPU_GB", "12")
+                    run_env.setdefault("CVMATCH_FORCE_GPU", "0")
+                    run_env.setdefault("CVMATCH_KEEP_SELECTED_STAGE_MODEL", "1")
+
+                run_kwargs = {
+                    "args": cmd,
+                    "cwd": str(repo_root),
+                    "env": run_env,
+                    "capture_output": True,
+                    "text": True,
+                    "encoding": "utf-8",
+                    "errors": "replace",
+                }
+                if stage_timeout_seconds > 0:
+                    run_kwargs["timeout"] = stage_timeout_seconds
+
+                try:
+                    result = subprocess.run(**run_kwargs)
+                except subprocess.TimeoutExpired as exc:
+                    details = (
+                        f"timeout after {stage_timeout_seconds}s"
+                        if stage_timeout_seconds > 0
+                        else "timeout"
+                    )
+                    stderr = str(getattr(exc, "stderr", "") or "")
+                    stdout = str(getattr(exc, "stdout", "") or "")
+                    diag_path = persist_stage_subprocess_diagnostics(
+                        repo_root=repo_root,
+                        stage=stage,
+                        attempt=attempt,
+                        attempts=stage_attempts,
+                        return_code=-1,
+                        stdout=stdout,
+                        stderr=stderr,
+                        details=details,
+                    )
+                    detail_with_diag = (
+                        f"{details} (diagnostic: {diag_path})"
+                        if diag_path
+                        else details
+                    )
+                    last_error = detail_with_diag
+                    try:
+                        self.qwen_manager._record_failure(
+                            f"stage_subprocess:{stage}:{detail_with_diag[:200]}"
+                        )
+                    except Exception:
+                        pass
+                    if attempt < stage_attempts:
+                        logger.warning(
+                            "Stage subprocess timeout, retrying: stage=%s attempt=%s/%s detail=%s",
+                            stage,
+                            attempt,
+                            stage_attempts,
+                            detail_with_diag,
+                        )
+                        continue
+                    raise RuntimeError(
+                        f"Stage subprocess failed: {stage}: {detail_with_diag}"
+                    ) from exc
+
+                if result.returncode != 0:
+                    stderr = str(result.stderr or "")
+                    stdout = str(result.stdout or "")
+                    details = extract_stage_subprocess_error(stdout, stderr)
+                    diag_path = persist_stage_subprocess_diagnostics(
+                        repo_root=repo_root,
+                        stage=stage,
+                        attempt=attempt,
+                        attempts=stage_attempts,
+                        return_code=result.returncode,
+                        stdout=stdout,
+                        stderr=stderr,
+                        details=details,
+                    )
+                    detail_with_diag = (
+                        f"{details} (diagnostic: {diag_path})"
+                        if diag_path
+                        else details
+                    )
+                    last_error = detail_with_diag
+                    try:
+                        self.qwen_manager._record_failure(
+                            f"stage_subprocess:{stage}:{detail_with_diag[:200]}"
+                        )
+                    except Exception:
+                        pass
+                    is_transient = is_transient_stage_memory_error(details)
+                    if is_transient and attempt < stage_attempts:
+                        logger.warning(
+                            "Stage subprocess memory failure, retrying: stage=%s attempt=%s/%s detail=%s",
+                            stage,
+                            attempt,
+                            stage_attempts,
+                            details,
+                        )
+                        continue
+                    raise RuntimeError(f"Stage subprocess failed: {stage}: {detail_with_diag}")
+
+                with open(output_path, "r", encoding="utf-8") as handle:
+                    return json.load(handle)
+
+            raise RuntimeError(f"Stage subprocess failed: {stage}: {last_error}")
+        finally:
+            try:
+                input_path.unlink(missing_ok=True)
+                output_path.unlink(missing_ok=True)
             except Exception:
                 pass
-            raise RuntimeError(f"Stage subprocess failed: {stage}: {details}")
-
-        with open(output_path, "r", encoding="utf-8") as handle:
-            result_payload = json.load(handle)
-
-        try:
-            input_path.unlink(missing_ok=True)
-            output_path.unlink(missing_ok=True)
-        except Exception:
-            pass
-
-        return result_payload
 
     def _build_profile_payload(self) -> Dict[str, Any]:
         personal_info = dict(self.profile_data.extracted_personal_info or {})
@@ -969,24 +1261,35 @@ class CVGenerationWorker(QThread):
 
     def _build_profile_json(self) -> Dict[str, Any]:
         from ..utils.profile_json import (
-            build_profile_json_from_extracted_profile,
+            compute_profile_json_fingerprint,
             has_profile_json_content,
             load_profile_json_cache,
+            map_payload_to_profile_json,
             save_profile_json_cache,
         )
 
+        profile_payload = self._build_profile_payload()
+        extracted = map_payload_to_profile_json(profile_payload, source="profile")
+        profile_fingerprint = compute_profile_json_fingerprint(extracted)
+
         profile_id = getattr(self.profile_data, "id", None) or 0
         if profile_id:
-            cached = load_profile_json_cache(profile_id)
+            cached = load_profile_json_cache(
+                profile_id,
+                expected_fingerprint=profile_fingerprint,
+            )
             if cached:
                 logger.info("Profile JSON cache hit: profile_id=%s", profile_id)
                 return cached
 
-        extracted = build_profile_json_from_extracted_profile(self.profile_data)
         if has_profile_json_content(extracted):
             if profile_id:
                 try:
-                    save_profile_json_cache(profile_id, extracted)
+                    save_profile_json_cache(
+                        profile_id,
+                        extracted,
+                        fingerprint=profile_fingerprint,
+                    )
                 except Exception as exc:
                     logger.warning(
                         "Unable to persist profile JSON cache: %s", exc
@@ -1023,7 +1326,7 @@ class CVGenerationWorker(QThread):
             profile_text = ""
             if isinstance(profile_json, dict):
                 try:
-                    profile_text = json.dumps(profile_json, ensure_ascii=True).lower()
+                    profile_text = json.dumps(profile_json, ensure_ascii=False).lower()
                 except Exception:
                     profile_text = ""
             filtered = []
@@ -1042,6 +1345,9 @@ class CVGenerationWorker(QThread):
         return sanitized
 
     def _fallback_critic_json(self, *, reason: str = "") -> Dict[str, Any]:
+        if not self._allow_content_fallback():
+            raise RuntimeError(reason or "Critic fallback disabled")
+
         language = self._resolve_language_code()
         job_title = ""
         company = ""
@@ -1088,38 +1394,15 @@ class CVGenerationWorker(QThread):
             return payload
 
     def _fallback_offer_keywords_json(self, *, reason: str = "") -> Dict[str, Any]:
-        from ..schemas.offer_keywords_schema import OfferKeywordsJSON
+        if not self._allow_content_fallback():
+            raise RuntimeError(reason or "Offer keywords fallback disabled")
 
-        language = self._resolve_language_code()
-        job_title = ""
-        company = ""
-        if isinstance(self.offer_data, dict):
-            job_title = self.offer_data.get("job_title") or ""
-            company = self.offer_data.get("company") or ""
-
-        payload = {
-            "schema_version": "offer_keywords.v1",
-            "language": language,
-            "job_title": job_title,
-            "company": company,
-            "seniority": "",
-            "keywords": [],
-            "skills": [],
-            "tools": [],
-            "soft_skills": [],
-            "responsibilities": [],
-            "education": [],
-            "certifications": [],
-        }
-
-        try:
-            parsed = OfferKeywordsJSON.model_validate(payload).model_dump()
-        except Exception:
-            parsed = payload
-
-        if reason:
-            logger.warning("Fallback OfferKeywordsJSON used due to: %s", reason)
-        return parsed
+        return build_offer_keywords_fallback(
+            offer_data=self.offer_data if isinstance(self.offer_data, dict) else {},
+            language_code=self._resolve_language_code(),
+            reason=reason,
+            logger=logger,
+        )
 
     def _is_slow_generation_device(self) -> bool:
         try:
@@ -1144,7 +1427,109 @@ class CVGenerationWorker(QThread):
         return False
 
     def _strict_generator_retries(self) -> int:
-        return 1 if self._is_slow_generation_device() else 2
+        retries = 1 if self._is_slow_generation_device() else 2
+        if not self._allow_content_fallback():
+            # When content fallback is disabled, keep one extra strict attempt
+            # to reduce hard pipeline failures on transient empty JSON outputs.
+            retries = max(retries, 2)
+        return retries
+
+    def _allow_content_fallback(self) -> bool:
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        env_value = os.getenv("CVMATCH_DISABLE_CONTENT_FALLBACK")
+        if env_value is not None:
+            return not self._to_bool_setting(env_value, False)
+        if self._to_bool_setting(custom.get("disable_model_fallback"), False):
+            return False
+        return not self._to_bool_setting(custom.get("disable_content_fallback"), False)
+
+    def _get_max_model_size_cap_b(self) -> float:
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        default_cap = 0.0
+
+        raw_env = os.getenv("CVMATCH_MAX_MODEL_SIZE_B")
+        raw_custom = custom.get("max_model_size_b")
+        raw_value = raw_env if raw_env is not None else raw_custom
+        if raw_value not in (None, ""):
+            try:
+                default_cap = float(raw_value)
+            except Exception:
+                default_cap = 0.0
+
+        small_mode = self._to_bool_setting(
+            os.getenv("CVMATCH_SMALL_MODELS_ONLY"),
+            self._to_bool_setting(custom.get("small_models_only"), False),
+        )
+        if small_mode and default_cap <= 0:
+            default_cap = 2.0
+
+        return max(0.0, default_cap)
+
+    @staticmethod
+    def _estimate_model_size_for_id(model_id: str) -> float:
+        model_key = str(model_id or "").strip()
+        if not model_key:
+            return 0.0
+        try:
+            from ..utils.model_manager import model_manager
+
+            info = model_manager.get_model_info(model_key)
+            if not info:
+                return 0.0
+            model_path = str(getattr(info, "model_path", "") or "")
+            return float(
+                _estimate_model_size_gb(
+                    model_name=model_path,
+                    model_id=model_key,
+                )
+            )
+        except Exception:
+            return 0.0
+
+    def _is_model_within_size_cap(self, model_id: str, max_model_size_b: float) -> bool:
+        cap = float(max_model_size_b or 0.0)
+        if cap <= 0:
+            return True
+        estimate = self._estimate_model_size_for_id(model_id)
+        if estimate <= 0:
+            return True
+        return estimate <= cap + 1e-6
+
+    def _consume_qwen_runtime_error(self) -> str:
+        getter = getattr(self.qwen_manager, "get_last_generation_error", None)
+        if not callable(getter):
+            return ""
+        try:
+            return str(getter(clear=True) or "").strip()
+        except TypeError:
+            try:
+                return str(getter() or "").strip()
+            except Exception:
+                return ""
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _compose_fallback_reason(*, strict_error: Any = "", retry_error: Any = "") -> str:
+        strict_text = str(strict_error or "").strip()
+        retry_text = str(retry_error or "").strip()
+        if strict_text and retry_text:
+            return f"strict={strict_text}; retry={retry_text}"
+        return strict_text or retry_text
+
+    @staticmethod
+    def _is_strict_missing_required_error(error: Any) -> bool:
+        text = str(error or "").lower()
+        if "validation errors for cvjson" not in text:
+            return False
+        required_markers = (
+            "target_job_title",
+            "target_company",
+            "contact",
+            "summary",
+            "field required",
+        )
+        return all(marker in text for marker in required_markers)
 
     def _apply_contact_fallback(
         self, cv_json: Dict[str, Any], profile_json: Dict[str, Any]
@@ -1210,40 +1595,517 @@ class CVGenerationWorker(QThread):
         if not cv_json.get("target_company") and company:
             cv_json["target_company"] = company
 
+    def _build_minimum_summary(
+        self,
+        *,
+        profile_json: Dict[str, Any],
+        target_job_title: str = "",
+        target_company: str = "",
+    ) -> str:
+        profile_data = profile_json if isinstance(profile_json, dict) else {}
+        personal = profile_data.get("personal_info")
+        if not isinstance(personal, dict):
+            personal = {}
+
+        headline = str(personal.get("summary") or personal.get("headline") or "").strip()
+        if headline and not self._text_has_review_markers(headline):
+            return _trim_text(headline, 420)
+
+        exp_titles: List[str] = []
+        for entry in profile_data.get("experiences") or []:
+            if not isinstance(entry, dict):
+                continue
+            title = str(
+                entry.get("title")
+                or entry.get("position")
+                or entry.get("role")
+                or entry.get("job_title")
+                or ""
+            ).strip()
+            if title and title not in exp_titles:
+                exp_titles.append(title)
+            if len(exp_titles) >= 2:
+                break
+
+        skill_terms: List[str] = []
+        for entry in profile_data.get("skills") or []:
+            if isinstance(entry, str):
+                candidate = entry.strip()
+                if candidate and candidate not in skill_terms:
+                    skill_terms.append(candidate)
+            elif isinstance(entry, dict):
+                direct = str(
+                    entry.get("name")
+                    or entry.get("skill")
+                    or entry.get("label")
+                    or ""
+                ).strip()
+                if direct and direct not in skill_terms:
+                    skill_terms.append(direct)
+                items = entry.get("items")
+                if isinstance(items, list):
+                    for item in items:
+                        text = str(item or "").strip()
+                        if text and text not in skill_terms:
+                            skill_terms.append(text)
+                        if len(skill_terms) >= 6:
+                            break
+            if len(skill_terms) >= 6:
+                break
+
+        lang = self._resolve_language_code()
+        role_text = str(target_job_title or "").strip() or ("target role" if lang == "en" else "poste cible")
+        company_text = str(target_company or "").strip()
+
+        if lang == "en":
+            summary = f"Profile aligned with {role_text}"
+            if company_text:
+                summary += f" at {company_text}"
+            if exp_titles:
+                summary += f". Experience in {', '.join(exp_titles[:2])}"
+            if skill_terms:
+                summary += f". Core skills: {', '.join(skill_terms[:5])}"
+            summary += "."
+        else:
+            summary = f"Profil aligne sur le poste {role_text}"
+            if company_text:
+                summary += f" chez {company_text}"
+            if exp_titles:
+                summary += f". Experience en {', '.join(exp_titles[:2])}"
+            if skill_terms:
+                summary += f". Competences cles: {', '.join(skill_terms[:5])}"
+            summary += "."
+
+        return _trim_text(summary, 420)
+
+    @staticmethod
+    def _normalize_language_identity(value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        folded = (
+            unicodedata.normalize("NFKD", text)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+            .lower()
+            .strip()
+        )
+        if not folded:
+            return ""
+        folded = re.sub(r"[^a-z0-9+#]+", " ", folded).strip()
+        aliases = {
+            "en": "english",
+            "eng": "english",
+            "english": "english",
+            "anglais": "english",
+            "fr": "french",
+            "fra": "french",
+            "french": "french",
+            "francais": "french",
+            "francais langue maternelle": "french",
+            "de": "german",
+            "ger": "german",
+            "german": "german",
+            "allemand": "german",
+            "es": "spanish",
+            "spa": "spanish",
+            "spanish": "spanish",
+            "espagnol": "spanish",
+            "it": "italian",
+            "ita": "italian",
+            "italian": "italian",
+            "italien": "italian",
+            "pt": "portuguese",
+            "por": "portuguese",
+            "portuguese": "portuguese",
+            "portugais": "portuguese",
+            "ja": "japanese",
+            "jp": "japanese",
+            "jpn": "japanese",
+            "japanese": "japanese",
+            "japonais": "japanese",
+            "zh": "chinese",
+            "cn": "chinese",
+            "chinese": "chinese",
+            "chinois": "chinese",
+            "mandarin": "chinese",
+            "ru": "russian",
+            "rus": "russian",
+            "russian": "russian",
+            "russe": "russian",
+            "ar": "arabic",
+            "ara": "arabic",
+            "arabic": "arabic",
+            "arabe": "arabic",
+        }
+        if folded in aliases:
+            return aliases[folded]
+        compact = folded.replace(" ", "")
+        if compact in aliases:
+            return aliases[compact]
+        if compact.startswith("fran") and compact.endswith("ais"):
+            return "french"
+        if compact.startswith("angl"):
+            return "english"
+        if compact.startswith("japon"):
+            return "japanese"
+        if compact.startswith("allem"):
+            return "german"
+        if compact.startswith("espagn"):
+            return "spanish"
+        return folded
+
+    @staticmethod
+    def _normalize_language_level(value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        cefr_match = re.search(r"\b([ABC][12])\b", text.upper())
+        if cefr_match:
+            return cefr_match.group(1)
+
+        folded = (
+            unicodedata.normalize("NFKD", text)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+            .lower()
+            .strip()
+        )
+        synonyms = {
+            "native": "C2",
+            "natif": "C2",
+            "mother tongue": "C2",
+            "langue maternelle": "C2",
+            "bilingual": "C2",
+            "bilingue": "C2",
+            "fluent": "C1",
+            "courant": "C1",
+            "advanced": "B2",
+            "avance": "B2",
+            "upper intermediate": "B2",
+            "intermediaire superieur": "B2",
+            "intermediate": "B1",
+            "intermediaire": "B1",
+            "elementary": "A2",
+            "elementaire": "A2",
+            "beginner": "A1",
+            "debutant": "A1",
+            "basic": "A1",
+            "notions": "A1",
+        }
+        for marker, mapped in synonyms.items():
+            if marker in folded:
+                return mapped
+        return text
+
+    @staticmethod
+    def _is_generic_language_level(value: Any) -> bool:
+        text = str(value or "").strip()
+        if not text:
+            return True
+        if re.search(r"\b([ABC][12])\b", text.upper()):
+            return False
+        folded = (
+            unicodedata.normalize("NFKD", text)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+            .lower()
+            .strip()
+        )
+        generic_markers = (
+            "native",
+            "natif",
+            "mother tongue",
+            "langue maternelle",
+            "bilingual",
+            "bilingue",
+            "fluent",
+            "courant",
+            "advanced",
+            "avance",
+            "intermediate",
+            "intermediaire",
+            "beginner",
+            "debutant",
+            "basic",
+            "elementary",
+            "elementaire",
+        )
+        return any(marker in folded for marker in generic_markers)
+
+    def _merge_languages_with_profile(
+        self,
+        generated_languages: Any,
+        profile_languages: Any,
+    ) -> List[Dict[str, str]]:
+        profile_map: Dict[str, Dict[str, str]] = {}
+        profile_order: List[str] = []
+
+        for entry in profile_languages or []:
+            if not isinstance(entry, dict):
+                continue
+            language = str(entry.get("language") or entry.get("name") or "").strip()
+            key = self._normalize_language_identity(language)
+            if not key:
+                continue
+            level = self._normalize_language_level(
+                entry.get("level") or entry.get("proficiency") or ""
+            )
+            certification = str(
+                entry.get("certification")
+                or entry.get("certificate")
+                or entry.get("organization")
+                or entry.get("issuer")
+                or ""
+            ).strip()
+            if key not in profile_map:
+                profile_map[key] = {
+                    "language": language,
+                    "level": level,
+                    "certification": certification,
+                }
+                profile_order.append(key)
+            else:
+                if level and not profile_map[key].get("level"):
+                    profile_map[key]["level"] = level
+                if certification and not profile_map[key].get("certification"):
+                    profile_map[key]["certification"] = certification
+                if language and len(language) > len(profile_map[key].get("language") or ""):
+                    profile_map[key]["language"] = language
+
+        merged: List[Dict[str, str]] = []
+        seen: set = set()
+
+        for entry in generated_languages or []:
+            if not isinstance(entry, dict):
+                continue
+            language = str(entry.get("language") or entry.get("name") or "").strip()
+            key = self._normalize_language_identity(language)
+            if not key or key in seen:
+                continue
+            raw_level = entry.get("level") or entry.get("proficiency") or ""
+            level = self._normalize_language_level(raw_level)
+            certification = str(
+                entry.get("certification")
+                or entry.get("certificate")
+                or entry.get("organization")
+                or entry.get("issuer")
+                or ""
+            ).strip()
+
+            if key in profile_map:
+                profile_entry = profile_map[key]
+                profile_level = profile_entry.get("level") or ""
+                profile_certification = profile_entry.get("certification") or ""
+                if profile_level and (not level or self._is_generic_language_level(raw_level)):
+                    selected_level = profile_level
+                else:
+                    selected_level = level or profile_level
+                selected_certification = certification or profile_certification
+                merged.append(
+                    {
+                        "language": profile_entry.get("language") or language,
+                        "level": selected_level,
+                        "certification": selected_certification,
+                    }
+                )
+            else:
+                merged.append(
+                    {
+                        "language": language,
+                        "level": level,
+                        "certification": certification,
+                    }
+                )
+            seen.add(key)
+
+        for key in profile_order:
+            if key in seen:
+                continue
+            merged.append(profile_map[key])
+            seen.add(key)
+
+        return merged[:4]
+
+    def _ensure_required_cv_fields(
+        self,
+        *,
+        cv_json: Dict[str, Any],
+        profile_json: Dict[str, Any],
+        stage: str = "",
+    ) -> Dict[str, Any]:
+        base = self._coerce_minimum_cv_json_payload(
+            cv_json if isinstance(cv_json, dict) else {},
+            profile_json=profile_json,
+            reason=f"{stage or 'cv'}_required_fields",
+        )
+
+        lang = self._resolve_language_code()
+        job_title = str(base.get("target_job_title") or "").strip()
+        company = str(base.get("target_company") or "").strip()
+        if not job_title:
+            job_title = "Target Role" if lang == "en" else "Poste cible"
+            base["target_job_title"] = job_title
+        if not company:
+            company = "Target Company" if lang == "en" else "Entreprise cible"
+            base["target_company"] = company
+
+        contact = base.get("contact")
+        if not isinstance(contact, dict):
+            contact = {}
+            base["contact"] = contact
+        if not str(contact.get("full_name") or "").strip():
+            contact["full_name"] = (
+                str(self.profile_data.name or "").strip()
+                or ("Candidate" if lang == "en" else "Candidat")
+            )
+
+        summary = str(base.get("summary") or "").strip()
+        if not summary or self._summary_needs_rewrite(summary):
+            base["summary"] = self._build_minimum_summary(
+                profile_json=profile_json,
+                target_job_title=job_title,
+                target_company=company,
+            )
+
+        return base
+
+    def _fallback_or_minimum_cv_json(
+        self,
+        *,
+        profile_json: Dict[str, Any],
+        reason: str = "",
+        stage: str = "",
+    ) -> Dict[str, Any]:
+        try:
+            return self._fallback_cv_json(profile_json=profile_json, reason=reason)
+        except Exception as fallback_exc:
+            logger.warning(
+                "CV fallback unavailable, using deterministic minimum payload: stage=%s reason=%s error=%s",
+                stage or "-",
+                reason,
+                fallback_exc,
+            )
+            recovered = self._ensure_required_cv_fields(
+                cv_json={},
+                profile_json=profile_json,
+                stage=stage or "minimum_recovery",
+            )
+            try:
+                from ..schemas.cv_schema import CVJSON
+
+                return CVJSON.model_validate(recovered).model_dump()
+            except Exception:
+                return recovered
+
+    def _coerce_minimum_cv_json_payload(
+        self,
+        payload: Dict[str, Any],
+        *,
+        profile_json: Dict[str, Any],
+        reason: str = "",
+    ) -> Dict[str, Any]:
+        """Coerce payload to a minimally valid CVJSON shape.
+
+        This is a deterministic schema guard, not a model fallback.
+        It prevents pipeline aborts when the model returns `{}` or
+        partial JSON under memory pressure.
+        """
+        base = dict(payload or {}) if isinstance(payload, dict) else {}
+        profile_data = profile_json if isinstance(profile_json, dict) else {}
+        personal = profile_data.get("personal_info")
+        if not isinstance(personal, dict):
+            personal = {}
+
+        contact = base.get("contact")
+        if not isinstance(contact, dict):
+            contact = {}
+        base["contact"] = contact
+        self._apply_contact_fallback(base, profile_data)
+        self._apply_target_fallback(base)
+
+        if not isinstance(base.get("target_job_title"), str):
+            base["target_job_title"] = str(base.get("target_job_title") or "").strip()
+        if not isinstance(base.get("target_company"), str):
+            base["target_company"] = str(base.get("target_company") or "").strip()
+
+        if not str(base.get("target_job_title") or "").strip():
+            if isinstance(self.offer_data, dict):
+                base["target_job_title"] = str(
+                    self.offer_data.get("job_title")
+                    or ((self.offer_data.get("analysis") or {}).get("title") if isinstance(self.offer_data.get("analysis"), dict) else "")
+                    or ""
+                ).strip()
+        if not str(base.get("target_company") or "").strip():
+            if isinstance(self.offer_data, dict):
+                base["target_company"] = str(self.offer_data.get("company") or "").strip()
+
+        summary = base.get("summary")
+        if not isinstance(summary, str):
+            summary = "" if summary is None else str(summary)
+        summary = summary.strip()
+        if not summary:
+            summary = str(personal.get("summary") or personal.get("headline") or "").strip()
+        base["summary"] = summary
+
+        for list_key in ("skills", "experience", "education"):
+            value = base.get(list_key)
+            if value is None:
+                base[list_key] = []
+            elif not isinstance(value, list):
+                base[list_key] = []
+            else:
+                base[list_key] = [item for item in value if isinstance(item, dict)]
+
+        for optional_list_key in ("projects", "languages", "certifications"):
+            value = base.get(optional_list_key)
+            if value is not None and not isinstance(value, list):
+                base[optional_list_key] = []
+            elif isinstance(value, list):
+                base[optional_list_key] = [item for item in value if isinstance(item, dict)]
+
+        base["languages"] = self._merge_languages_with_profile(
+            base.get("languages") or [],
+            profile_data.get("languages") or [],
+        )
+
+        ats_keywords = base.get("ats_keywords")
+        if ats_keywords is not None and not isinstance(ats_keywords, list):
+            base["ats_keywords"] = []
+        elif isinstance(ats_keywords, list):
+            cleaned_keywords = []
+            for item in ats_keywords:
+                text = str(item or "").strip()
+                if text:
+                    cleaned_keywords.append(text)
+            base["ats_keywords"] = cleaned_keywords
+
+        render_hints = base.get("render_hints")
+        if render_hints is not None and not isinstance(render_hints, dict):
+            base["render_hints"] = None
+
+        if reason:
+            logger.warning(
+                "CVJSON payload coerced to minimum schema shape: %s",
+                reason,
+            )
+        return base
+
     def _fallback_cv_json(
         self, *, profile_json: Dict[str, Any], reason: str = ""
     ) -> Dict[str, Any]:
-        from ..schemas.cv_schema import CVJSON
+        if not self._allow_content_fallback():
+            raise RuntimeError(reason or "CV fallback disabled")
 
-        payload = {
-            "schema_version": "cv.v1",
-            "target_job_title": "",
-            "target_company": "",
-            "contact": {},
-            "summary": "",
-            "skills": [],
-            "experience": [],
-            "education": [],
-            "projects": [],
-            "languages": [],
-            "certifications": [],
-            "ats_keywords": [],
-            "render_hints": {
-                "notes": "",
-                "section_order": [],
-                "emphasis": [],
-                "tone": "",
-            },
-        }
-
-        try:
-            parsed = CVJSON.model_validate(payload).model_dump()
-        except Exception:
-            parsed = payload
-
-        if reason:
-            logger.warning("Fallback CVJSON used due to: %s", reason)
-        return parsed
+        return build_cv_json_fallback(
+            profile_json=profile_json or {},
+            profile_data=self.profile_data,
+            offer_data=self.offer_data if isinstance(self.offer_data, dict) else {},
+            language_code=self._resolve_language_code(),
+            offer_keywords_collector=self._collect_offer_keywords,
+            reason=reason,
+            logger=logger,
+        )
 
     def _resolve_language_code(self) -> str:
         analysis = self.offer_data.get("analysis") if isinstance(self.offer_data, dict) else None
@@ -1268,31 +2130,162 @@ class CVGenerationWorker(QThread):
         from ..utils.stage_model_routing import is_stage_model_routing_enabled
         return is_stage_model_routing_enabled()
 
-    def _resolve_stage_model_override(self, stage: str) -> Optional[str]:
-        from ..utils.stage_model_routing import resolve_stage_model_override
+    def _choose_stage_model_override(self, stage: str) -> Optional[str]:
+        from ..utils.stage_model_routing import (
+            StageModelConfig,
+            is_writer_stage,
+            resolve_stage_model_override,
+        )
+
         custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
         current = getattr(self.qwen_manager, "current_model_id", "")
-        resolution = resolve_stage_model_override(
-            stage, custom_parameters=custom, current_model_id=current
+        try:
+            allow_model_fallback = bool(self.qwen_manager._allow_model_fallback())
+        except Exception:
+            allow_model_fallback = True
+        try:
+            prefer_ram_offload = bool(self.qwen_manager._prefer_ram_offload_mode())
+        except Exception:
+            prefer_ram_offload = False
+        lock_selected_model = (not allow_model_fallback) or prefer_ram_offload
+        max_model_size_b = self._get_max_model_size_cap_b()
+        pressure = self._get_runtime_memory_pressure_level(force_refresh=True)
+        snapshot: Dict[str, Any] = {}
+        try:
+            snapshot = self.qwen_manager._collect_memory_pressure_snapshot(
+                force_refresh=True
+            ) or {}
+        except Exception:
+            snapshot = {}
+        try:
+            ram_available_gb = float(snapshot.get("ram_available_gb") or 0.0)
+        except Exception:
+            ram_available_gb = 0.0
+        try:
+            commit_available_gb = float(snapshot.get("commit_available_gb") or 0.0)
+        except Exception:
+            commit_available_gb = 0.0
+        lowram_level = pressure if pressure in {"tight", "critical"} else "normal"
+        base_config = StageModelConfig.from_env_and_custom(custom)
+        routing_config = StageModelConfig(
+            enabled=base_config.enabled,
+            keep_selected_model=(True if lock_selected_model else base_config.keep_selected_model),
+            prefer_small_extractor=(bool(base_config.prefer_small_extractor) and not lock_selected_model),
+            extractor_model_id=base_config.extractor_model_id,
+            writer_model_id=base_config.writer_model_id,
+            lowram_level=lowram_level,
         )
-        return resolution.model_id if resolution.requires_switch else None
+        resolution = resolve_stage_model_override(
+            stage,
+            config=routing_config,
+            custom_parameters=custom,
+            current_model_id=current,
+        )
+
+        if lock_selected_model and resolution.requires_switch and not resolution.is_explicit:
+            logger.info(
+                "Stage override ignored (keep selected model): stage=%s target=%s current=%s",
+                stage,
+                resolution.model_id,
+                current,
+            )
+        elif resolution.requires_switch and resolution.model_id:
+            if self._is_model_within_size_cap(resolution.model_id, max_model_size_b):
+                return resolution.model_id
+            logger.info(
+                "Stage override skipped by model size cap: stage=%s model=%s cap=%.2fB",
+                stage,
+                resolution.model_id,
+                max_model_size_b,
+            )
+
+        # Low-memory route for writer stages: proactively downshift from heavy models
+        # to avoid mid-stage OOM and degraded deterministic fallback.
+        writer_low_headroom = is_writer_stage(stage) and (
+            pressure in {"tight", "critical"}
+            or (ram_available_gb > 0 and ram_available_gb < 3.5)
+            or (commit_available_gb > 0 and commit_available_gb < 4.0)
+        )
+        if writer_low_headroom and allow_model_fallback and not lock_selected_model:
+            try:
+                from ..utils.model_manager import model_manager
+
+                available = {
+                    str(mid or "").strip().lower()
+                    for mid in getattr(model_manager, "available_models", [])
+                    if str(mid or "").strip()
+                }
+
+                preferred = []
+
+                env_pref = str(os.getenv("CVMATCH_WRITER_LOWRAM_MODEL_ID") or "").strip()
+                if env_pref:
+                    preferred.append(env_pref)
+
+                custom_pref = str(custom.get("writer_lowram_model_id") or "").strip()
+                if custom_pref:
+                    preferred.append(custom_pref)
+
+                # Keep writer quality as high as possible under pressure.
+                preferred.extend(["qwen2-1.5b", "qwen2-0.5b", "qwen2-3b", "mistral-7b"])
+
+                current_key = str(current or "").strip().lower()
+                for candidate in preferred:
+                    candidate_key = str(candidate or "").strip().lower()
+                    if not candidate_key or candidate_key == current_key:
+                        continue
+                    if candidate_key in available:
+                        if not self._is_model_within_size_cap(candidate_key, max_model_size_b):
+                            continue
+                        return candidate_key
+            except Exception:
+                pass
+
+        try:
+            from ..utils.model_manager import model_manager
+
+            quality_candidate = resolve_writer_quality_override(
+                stage=stage,
+                current_model_id=current,
+                available_model_ids=getattr(model_manager, "available_models", []),
+            )
+            if (
+                quality_candidate
+                and quality_candidate != current
+                and self._is_model_within_size_cap(quality_candidate, max_model_size_b)
+            ):
+                return quality_candidate
+        except Exception:
+            pass
+
+        return None
+
+    def _resolve_stage_model_override(self, stage: str) -> Optional[str]:
+        return self._choose_stage_model_override(stage)
 
     def _apply_stage_model_override(self, stage: str, progress_callback=None) -> None:
-        from ..utils.stage_model_routing import resolve_stage_model_override
-        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
-        current = getattr(self.qwen_manager, "current_model_id", "")
-        resolution = resolve_stage_model_override(
-            stage, custom_parameters=custom, current_model_id=current
-        )
-        if resolution.requires_switch and resolution.model_id:
-            try:
-                self.qwen_manager._load_selected_model_config(
-                    model_id=resolution.model_id
-                )
-            except Exception as exc:
+        target_model_id = self._choose_stage_model_override(stage)
+        if not target_model_id:
+            return
+
+        try:
+            applied = self.qwen_manager.apply_model_profile(
+                target_model_id,
+                reason=f"stage:{stage}",
+            )
+            if not applied:
                 logger.warning(
-                    "Stage model override failed for %s: %s", stage, exc
+                    "Stage model override not applied for %s: %s",
+                    stage,
+                    target_model_id,
                 )
+        except Exception as exc:
+            logger.warning(
+                "Stage model override failed for %s (%s): %s",
+                stage,
+                target_model_id,
+                exc,
+            )
 
     # Language consistency
     def _ensure_cv_json_language_consistency(
@@ -1311,14 +2304,40 @@ class CVGenerationWorker(QThread):
     ) -> dict:
         try:
             from ..utils.cv_postprocessing import coerce_generated_cv_payload
-            profile_json = getattr(self, "_pipeline_cv_json_draft", {}) or {}
+            profile_json = getattr(self, "_pipeline_profile_json", {}) or {}
+            if not isinstance(profile_json, dict) or not profile_json:
+                try:
+                    profile_json = self._build_profile_json()
+                except Exception as profile_exc:
+                    logger.warning(
+                        "Unable to refresh profile_json for final postprocess: %s",
+                        profile_exc,
+                    )
+                    profile_json = {}
             personal_info = self._build_profile_payload().get("personal_info", {})
+
+            def safe_fallback_generator(pj: Dict[str, Any], reason: str) -> Dict[str, Any]:
+                source_profile = pj if isinstance(pj, dict) else {}
+                try:
+                    return self._fallback_cv_json(
+                        profile_json=source_profile,
+                        reason=reason,
+                    )
+                except Exception as fallback_exc:
+                    logger.warning(
+                        "CV fallback unavailable during final postprocess; using deterministic minimum payload: %s",
+                        fallback_exc,
+                    )
+                    return self._coerce_minimum_cv_json_payload(
+                        {},
+                        profile_json=source_profile,
+                        reason=f"postprocess_minimum:{reason or fallback_exc}",
+                    )
+
             return coerce_generated_cv_payload(
                 payload=cv_json or {},
                 profile_json=profile_json,
-                fallback_generator=lambda pj, reason: self._fallback_cv_json(
-                    profile_json=pj, reason=reason
-                ),
+                fallback_generator=safe_fallback_generator,
                 critic_json=critic_json,
                 job_title=str(
                     self.offer_data.get("job_title") or ""
@@ -1331,6 +2350,10 @@ class CVGenerationWorker(QThread):
                 profile_phone=personal_info.get("phone", ""),
                 profile_linkedin=personal_info.get("linkedin_url", ""),
                 language_code=self._resolve_language_code(),
+                keyword_alignment_fn=lambda candidate, review: self._apply_keyword_alignment(
+                    candidate,
+                    critic_json=review,
+                ),
             )
         except Exception as exc:
             logger.warning("_postprocess_final_candidate_wrapper failed: %s", exc)
@@ -1378,7 +2401,7 @@ class CVGenerationWorker(QThread):
 
             thresholds = get_alignment_thresholds()
 
-            def _term_present(term: str, probe: str) -> bool:
+            def _term_present(probe: str, term: str) -> bool:
                 return term in probe if term else False
 
             return build_alignment_audit(
@@ -1417,10 +2440,12 @@ class CVGenerationWorker(QThread):
             logger.warning("Cover letter language check failed: %s", exc)
             return letter
 
-    def _is_cover_letter_structure_coherent(self, letter: str) -> bool:
+    def _is_cover_letter_structure_coherent(
+        self, letter: str, language_code: Optional[str] = None
+    ) -> bool:
         try:
             from ..utils.cover_letter_rules import is_cover_letter_structure_coherent
-            lang = self._resolve_language_code()
+            lang = language_code or self._resolve_language_code()
             return is_cover_letter_structure_coherent(letter, language_code=lang)
         except Exception as exc:
             logger.warning("Cover letter structure check failed: %s", exc)
@@ -1454,6 +2479,9 @@ class CVGenerationWorker(QThread):
     def _fallback_cover_letter(
         self, offer_data: dict, lang: str, progress_callback=None
     ) -> str:
+        if not self._allow_content_fallback():
+            raise RuntimeError("Cover letter fallback disabled")
+
         try:
             from ..utils.cover_letter_fallback import generate_fallback_cover_letter
             return generate_fallback_cover_letter(
@@ -1663,9 +2691,16 @@ class CVGenerationWorker(QThread):
                 continue
             language = clean_text(entry.get("language") or "")
             level = clean_text(entry.get("level") or "")
+            certification = clean_text(entry.get("certification") or "")
             if not language:
                 continue
-            cleaned_languages.append({"language": language, "level": level})
+            cleaned_languages.append(
+                {
+                    "language": language,
+                    "level": level,
+                    "certification": certification,
+                }
+            )
         cv_json["languages"] = cleaned_languages
 
         cleaned_certs = []
@@ -1962,7 +2997,9 @@ class CVGenerationWorker(QThread):
         return _dedup_preserve([k for k in keywords if isinstance(k, str) and k.strip()])[:60]
 
     def _prepare_offer_text(self, *, max_chars: int) -> str:
-        offer_text = self.offer_data.get("text") if isinstance(self.offer_data, dict) else ""
+        offer_text = extract_offer_text_from_offer_data(
+            self.offer_data if isinstance(self.offer_data, dict) else {}
+        )
         offer_text = offer_text or ""
         if not offer_text:
             return ""
@@ -2069,6 +3106,8 @@ JOB_OFFER_TEXT:
   OUTPUT RULES:
   - Return JSON only.
   - Keep lists short (max 12 items per list).
+  - If JOB_OFFER_TEXT is non-empty, avoid empty extraction lists.
+  - Prefer at least: keywords>=8, skills>=4, tools>=2 when evidence exists in offer text.
   - Use short noun phrases (2-5 words).
   - skills = hard skills/tech stack only.
   - soft_skills = interpersonal traits only.
@@ -2093,7 +3132,7 @@ JOB_OFFER_TEXT:
         language_code = self._resolve_language_code()
 
         compact_profile = _compact_profile_json_for_prompt(profile_json)
-        profile_block = json.dumps(compact_profile, indent=2, ensure_ascii=True)
+        profile_block = json.dumps(compact_profile, indent=2, ensure_ascii=False)
         profile_block = _trim_text(profile_block, 2600)
         matched_keywords = _match_offer_keywords(
             offer_text, _collect_candidate_keywords(self.profile_data)
@@ -2113,7 +3152,7 @@ JOB_OFFER_TEXT:
         if offer_keywords:
             offer_keywords_block = (
                 "\n\nOFFER_KEYWORDS_JSON (job offer summary):\n"
-                f"{_trim_text(json.dumps(offer_keywords, indent=2, ensure_ascii=True), 1400)}"
+                f"{_trim_text(json.dumps(offer_keywords, indent=2, ensure_ascii=False), 1400)}"
             )
         matched_keywords_block = ""
         if matched_keywords_text:
@@ -2130,7 +3169,7 @@ JOB_OFFER_TEXT:
             if critic_payload:
                 critic_block = (
                     "\n\nCRITIC_JSON (feedback to apply):\n"
-                    f"{_trim_text(json.dumps(critic_payload, indent=2, ensure_ascii=True), 2000)}"
+                    f"{_trim_text(json.dumps(critic_payload, indent=2, ensure_ascii=False), 2000)}"
                 )
 
         user_prompt = f"""
@@ -2159,18 +3198,25 @@ OUTPUT RULES:
 - If OFFER_KEYWORDS_JSON is present, prioritize it for relevance and ATS terms.
 - render_hints.notes can be freeform guidance for rendering.
 - render_hints.section_order/emphasis/tone are structured hints.
-  - Do not include review or instruction text in any field (no critique, no "this CV needs", no "should").
-  - Summary must be candidate-focused (role, strengths, impact). Do not describe employer mission/history.
-  - If MATCHED_KEYWORDS is present, ensure those terms appear in summary/skills/experience when relevant.
-  - If PROFILE_JSON text is in another language, translate it to LANGUAGE (keep proper nouns, tools, company names).
-  - Keep output compact:
-  * experience <= 4 items, highlights <= 3 each.
-  * skills <= 4 categories, items <= 8 each.
-  * education <= 3 items.
-  * projects <= 3 items.
-  * languages <= 4 items.
-  * certifications <= 3 items.
-  * ats_keywords <= 15 items.
+- Do not include review or instruction text in any field (no critique, no "this CV needs", no "should").
+- Summary must be candidate-focused (role, strengths, impact). Do not describe employer mission/history.
+- If MATCHED_KEYWORDS is present, ensure those terms appear in summary/skills/experience when relevant.
+- If PROFILE_JSON text is in another language, translate it to LANGUAGE (keep proper nouns, tools, company names).
+- Avoid repetition:
+  - Never repeat the same sentence, clause, or employer description twice.
+  - Do not copy the company mission text into candidate achievements.
+- For each experience item, prefer:
+  - a concise context in summary
+  - 2-4 distinct highlights focused on actions, tools, and outcomes
+- For each language item, keep `certification` when PROFILE_JSON provides one (issuer/certificate name).
+- Keep output focused but informative:
+  - experience <= 5 items, highlights <= 4 each.
+  - skills <= 5 categories, items <= 10 each.
+  - education <= 3 items.
+  - projects <= 3 items.
+  - languages <= 4 items.
+  - certifications <= 3 items.
+  - ats_keywords <= 18 items.
 """.strip()
 
         if stage == "final":
@@ -2227,8 +3273,37 @@ OUTPUT RULES:
         from ..utils.json_strict import generate_json_with_schema, JsonStrictError
 
         messages = self._build_offer_keywords_messages()
+        language_code = self._resolve_language_code()
+        offer_data = self.offer_data if isinstance(self.offer_data, dict) else {}
+
+        def _stabilize(payload: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
+            return stabilize_offer_keywords_payload(
+                payload=payload if isinstance(payload, dict) else {},
+                offer_data=offer_data,
+                language_code=language_code,
+                reason=reason,
+                logger=logger,
+            )
+
+        def _second_pass_if_needed(payload: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
+            retry_payload = run_offer_keywords_second_pass(
+                base_messages=messages,
+                current_payload=payload if isinstance(payload, dict) else {},
+                offer_data=offer_data,
+                language_code=language_code,
+                qwen_manager=self.qwen_manager,
+                parse_json_response=self._parse_json_response,
+                progress_callback=progress_callback,
+                logger=logger,
+            )
+            if isinstance(retry_payload, dict) and retry_payload:
+                if retry_payload != payload:
+                    logger.info("Offer keywords second-pass applied (%s).", reason)
+                return retry_payload
+            return payload
+
         try:
-            return generate_json_with_schema(
+            payload = generate_json_with_schema(
                 role="offer_critic",
                 schema_model=OfferKeywordsJSON,
                 messages=messages,
@@ -2236,26 +3311,67 @@ OUTPUT RULES:
                 retries=3,
                 progress_callback=progress_callback,
             )
+            payload = _second_pass_if_needed(payload, reason="strict_weak_output")
+            return _stabilize(payload, reason="strict_offer_keywords")
         except JsonStrictError as exc:
             logger.warning(
                 "Strict OfferKeywordsJSON failed, retrying non-strict: %s", exc
             )
-            raw = self.qwen_manager.generate_structured_json(
-                messages["system"],
-                messages["user"],
-                progress_callback,
-            )
-            payload = self._parse_json_response(raw)
-            if not payload:
-                return self._fallback_offer_keywords_json(reason=str(exc))
             try:
-                parsed = OfferKeywordsJSON.model_validate(payload)
-            except ValidationError as val_exc:
-                logger.warning(
-                    "Non-strict OfferKeywordsJSON validation failed: %s", val_exc
+                raw = self.qwen_manager.generate_structured_json(
+                    messages["system"],
+                    messages["user"],
+                    progress_callback,
+                    role="offer_critic",
                 )
-                return self._fallback_offer_keywords_json(reason=str(val_exc))
-            return parsed.model_dump()
+                payload = self._parse_json_response(raw)
+                if not payload:
+                    retry_reason = self._consume_qwen_runtime_error() or "non-strict empty output"
+                    fallback_reason = self._compose_fallback_reason(
+                        strict_error=exc,
+                        retry_error=retry_reason,
+                    )
+                    return _stabilize(
+                        self._fallback_offer_keywords_json(reason=fallback_reason),
+                        reason=fallback_reason,
+                    )
+                try:
+                    parsed = OfferKeywordsJSON.model_validate(payload)
+                except ValidationError as val_exc:
+                    logger.warning(
+                        "Non-strict OfferKeywordsJSON validation failed: %s", val_exc
+                    )
+                    fallback_reason = self._compose_fallback_reason(
+                        strict_error=exc,
+                        retry_error=val_exc,
+                    )
+                    return _stabilize(
+                        self._fallback_offer_keywords_json(reason=fallback_reason),
+                        reason=fallback_reason,
+                    )
+                payload = _second_pass_if_needed(
+                    parsed.model_dump(), reason="non_strict_weak_output"
+                )
+                return _stabilize(payload, reason="non_strict_offer_keywords")
+            except Exception as retry_exc:
+                logger.error(
+                    "OfferKeywords non-strict retry failed, using fallback: %s",
+                    retry_exc,
+                )
+                fallback_reason = self._compose_fallback_reason(
+                    strict_error=exc,
+                    retry_error=retry_exc,
+                )
+                return _stabilize(
+                    self._fallback_offer_keywords_json(reason=fallback_reason),
+                    reason=fallback_reason,
+                )
+        except Exception as exc:
+            logger.error("OfferKeywords generation failed, using fallback: %s", exc)
+            return _stabilize(
+                self._fallback_offer_keywords_json(reason=str(exc)),
+                reason=str(exc),
+            )
 
     def generate_cv_json_draft(
         self,
@@ -2271,7 +3387,7 @@ OUTPUT RULES:
             profile_json=profile_json, stage="draft"
         )
         try:
-            return generate_json_with_schema(
+            strict_payload = generate_json_with_schema(
                 role="generator",
                 schema_model=CVJSON,
                 messages=messages,
@@ -2279,22 +3395,114 @@ OUTPUT RULES:
                 retries=self._strict_generator_retries(),
                 progress_callback=progress_callback,
             )
-        except JsonStrictError as exc:
-            logger.warning("Strict CVJSON draft failed, retrying non-strict: %s", exc)
-            raw = self.qwen_manager.generate_structured_json(
-                messages["system"],
-                messages["user"],
-                progress_callback,
+            strict_payload = self._ensure_required_cv_fields(
+                cv_json=strict_payload,
+                profile_json=profile_json,
+                stage="draft_strict",
             )
-            payload = self._parse_json_response(raw)
-            if not payload:
-                return self._fallback_cv_json(profile_json=profile_json, reason=str(exc))
+            return CVJSON.model_validate(strict_payload).model_dump()
+        except JsonStrictError as exc:
+            if self._is_strict_missing_required_error(exc):
+                logger.warning(
+                    "Strict CVJSON draft returned missing required fields; using deterministic required-field payload."
+                )
+                recovered = self._ensure_required_cv_fields(
+                    cv_json={},
+                    profile_json=profile_json,
+                    stage="draft_strict_missing_required",
+                )
+                return CVJSON.model_validate(recovered).model_dump()
+            logger.warning("Strict CVJSON draft failed, retrying non-strict: %s", exc)
             try:
-                parsed = CVJSON.model_validate(payload)
-            except ValidationError as val_exc:
-                logger.warning("Non-strict CVJSON draft validation failed: %s", val_exc)
-                return self._fallback_cv_json(profile_json=profile_json, reason=str(val_exc))
-            return parsed.model_dump()
+                raw = self.qwen_manager.generate_structured_json(
+                    messages["system"],
+                    messages["user"],
+                    progress_callback,
+                    role="generator",
+                )
+                payload = self._parse_json_response(raw)
+                if not payload:
+                    retry_reason = self._consume_qwen_runtime_error() or "non-strict empty output"
+                    recovered = self._coerce_minimum_cv_json_payload(
+                        {},
+                        profile_json=profile_json,
+                        reason=f"draft_non_strict_empty:{retry_reason}",
+                    )
+                    try:
+                        parsed = CVJSON.model_validate(recovered)
+                        logger.warning(
+                            "Draft CVJSON recovered from empty non-strict output via minimum schema coercion."
+                        )
+                        enriched = self._ensure_required_cv_fields(
+                            cv_json=parsed.model_dump(),
+                            profile_json=profile_json,
+                            stage="draft_recovered_empty",
+                        )
+                        return CVJSON.model_validate(enriched).model_dump()
+                    except ValidationError as recover_exc:
+                        fallback_reason = self._compose_fallback_reason(
+                            strict_error=exc,
+                            retry_error=f"{retry_reason}; recover={recover_exc}",
+                        )
+                        return self._fallback_or_minimum_cv_json(
+                            profile_json=profile_json,
+                            reason=fallback_reason,
+                            stage="draft",
+                        )
+                try:
+                    parsed = CVJSON.model_validate(payload)
+                except ValidationError as val_exc:
+                    logger.warning("Non-strict CVJSON draft validation failed: %s", val_exc)
+                    recovered = self._coerce_minimum_cv_json_payload(
+                        payload,
+                        profile_json=profile_json,
+                        reason=f"draft_non_strict_invalid:{val_exc}",
+                    )
+                    try:
+                        parsed = CVJSON.model_validate(recovered)
+                        logger.warning(
+                            "Draft CVJSON recovered from invalid non-strict payload via minimum schema coercion."
+                        )
+                        enriched = self._ensure_required_cv_fields(
+                            cv_json=parsed.model_dump(),
+                            profile_json=profile_json,
+                            stage="draft_recovered_invalid",
+                        )
+                        return CVJSON.model_validate(enriched).model_dump()
+                    except ValidationError as recover_exc:
+                        fallback_reason = self._compose_fallback_reason(
+                            strict_error=exc,
+                            retry_error=f"{val_exc}; recover={recover_exc}",
+                        )
+                        return self._fallback_or_minimum_cv_json(
+                            profile_json=profile_json,
+                            reason=fallback_reason,
+                            stage="draft",
+                        )
+                enriched = self._ensure_required_cv_fields(
+                    cv_json=parsed.model_dump(),
+                    profile_json=profile_json,
+                    stage="draft_non_strict",
+                )
+                return CVJSON.model_validate(enriched).model_dump()
+            except Exception as retry_exc:
+                logger.error("Draft CVJSON non-strict retry failed, using fallback: %s", retry_exc)
+                fallback_reason = self._compose_fallback_reason(
+                    strict_error=exc,
+                    retry_error=retry_exc,
+                )
+                return self._fallback_or_minimum_cv_json(
+                    profile_json=profile_json,
+                    reason=fallback_reason,
+                    stage="draft",
+                )
+        except Exception as exc:
+            logger.error("Draft CVJSON generation failed, using fallback: %s", exc)
+            return self._fallback_or_minimum_cv_json(
+                profile_json=profile_json,
+                reason=str(exc),
+                stage="draft",
+            )
 
     def generate_cv_json_final(
         self,
@@ -2313,7 +3521,7 @@ OUTPUT RULES:
             stage="final",
         )
         try:
-            return generate_json_with_schema(
+            strict_payload = generate_json_with_schema(
                 role="generator",
                 schema_model=CVJSON,
                 messages=messages,
@@ -2321,22 +3529,114 @@ OUTPUT RULES:
                 retries=self._strict_generator_retries(),
                 progress_callback=progress_callback,
             )
-        except JsonStrictError as exc:
-            logger.warning("Strict CVJSON final failed, retrying non-strict: %s", exc)
-            raw = self.qwen_manager.generate_structured_json(
-                messages["system"],
-                messages["user"],
-                progress_callback,
+            strict_payload = self._ensure_required_cv_fields(
+                cv_json=strict_payload,
+                profile_json=profile_json,
+                stage="final_strict",
             )
-            payload = self._parse_json_response(raw)
-            if not payload:
-                return self._fallback_cv_json(profile_json=profile_json, reason=str(exc))
+            return CVJSON.model_validate(strict_payload).model_dump()
+        except JsonStrictError as exc:
+            if self._is_strict_missing_required_error(exc):
+                logger.warning(
+                    "Strict CVJSON final returned missing required fields; using deterministic required-field payload."
+                )
+                recovered = self._ensure_required_cv_fields(
+                    cv_json={},
+                    profile_json=profile_json,
+                    stage="final_strict_missing_required",
+                )
+                return CVJSON.model_validate(recovered).model_dump()
+            logger.warning("Strict CVJSON final failed, retrying non-strict: %s", exc)
             try:
-                parsed = CVJSON.model_validate(payload)
-            except ValidationError as val_exc:
-                logger.warning("Non-strict CVJSON final validation failed: %s", val_exc)
-                return self._fallback_cv_json(profile_json=profile_json, reason=str(val_exc))
-            return parsed.model_dump()
+                raw = self.qwen_manager.generate_structured_json(
+                    messages["system"],
+                    messages["user"],
+                    progress_callback,
+                    role="generator",
+                )
+                payload = self._parse_json_response(raw)
+                if not payload:
+                    retry_reason = self._consume_qwen_runtime_error() or "non-strict empty output"
+                    recovered = self._coerce_minimum_cv_json_payload(
+                        {},
+                        profile_json=profile_json,
+                        reason=f"final_non_strict_empty:{retry_reason}",
+                    )
+                    try:
+                        parsed = CVJSON.model_validate(recovered)
+                        logger.warning(
+                            "Final CVJSON recovered from empty non-strict output via minimum schema coercion."
+                        )
+                        enriched = self._ensure_required_cv_fields(
+                            cv_json=parsed.model_dump(),
+                            profile_json=profile_json,
+                            stage="final_recovered_empty",
+                        )
+                        return CVJSON.model_validate(enriched).model_dump()
+                    except ValidationError as recover_exc:
+                        fallback_reason = self._compose_fallback_reason(
+                            strict_error=exc,
+                            retry_error=f"{retry_reason}; recover={recover_exc}",
+                        )
+                        return self._fallback_or_minimum_cv_json(
+                            profile_json=profile_json,
+                            reason=fallback_reason,
+                            stage="final",
+                        )
+                try:
+                    parsed = CVJSON.model_validate(payload)
+                except ValidationError as val_exc:
+                    logger.warning("Non-strict CVJSON final validation failed: %s", val_exc)
+                    recovered = self._coerce_minimum_cv_json_payload(
+                        payload,
+                        profile_json=profile_json,
+                        reason=f"final_non_strict_invalid:{val_exc}",
+                    )
+                    try:
+                        parsed = CVJSON.model_validate(recovered)
+                        logger.warning(
+                            "Final CVJSON recovered from invalid non-strict payload via minimum schema coercion."
+                        )
+                        enriched = self._ensure_required_cv_fields(
+                            cv_json=parsed.model_dump(),
+                            profile_json=profile_json,
+                            stage="final_recovered_invalid",
+                        )
+                        return CVJSON.model_validate(enriched).model_dump()
+                    except ValidationError as recover_exc:
+                        fallback_reason = self._compose_fallback_reason(
+                            strict_error=exc,
+                            retry_error=f"{val_exc}; recover={recover_exc}",
+                        )
+                        return self._fallback_or_minimum_cv_json(
+                            profile_json=profile_json,
+                            reason=fallback_reason,
+                            stage="final",
+                        )
+                enriched = self._ensure_required_cv_fields(
+                    cv_json=parsed.model_dump(),
+                    profile_json=profile_json,
+                    stage="final_non_strict",
+                )
+                return CVJSON.model_validate(enriched).model_dump()
+            except Exception as retry_exc:
+                logger.error("Final CVJSON non-strict retry failed, using fallback: %s", retry_exc)
+                fallback_reason = self._compose_fallback_reason(
+                    strict_error=exc,
+                    retry_error=retry_exc,
+                )
+                return self._fallback_or_minimum_cv_json(
+                    profile_json=profile_json,
+                    reason=fallback_reason,
+                    stage="final",
+                )
+        except Exception as exc:
+            logger.error("Final CVJSON generation failed, using fallback: %s", exc)
+            return self._fallback_or_minimum_cv_json(
+                profile_json=profile_json,
+                reason=str(exc),
+                stage="final",
+            )
 
     def generate_critic_json(
         self,
@@ -2360,24 +3660,46 @@ OUTPUT RULES:
             )
         except JsonStrictError as exc:
             logger.warning("Strict CriticJSON failed, retrying non-strict: %s", exc)
-            raw = self.qwen_manager.generate_structured_json(
-                messages["system"], messages["user"], progress_callback
-            )
-            payload = self._parse_json_response(raw)
-            if payload:
-                try:
-                    parsed = CriticJSON.model_validate(payload)
-                    return parsed.model_dump()
-                except ValidationError as val_exc:
-                    logger.warning(
-                        "Non-strict CriticJSON validation failed: %s", val_exc
-                    )
+            try:
+                raw = self.qwen_manager.generate_structured_json(
+                    messages["system"], messages["user"], progress_callback, role="critic"
+                )
+                payload = self._parse_json_response(raw)
+                if payload:
+                    try:
+                        parsed = CriticJSON.model_validate(payload)
+                        return parsed.model_dump()
+                    except ValidationError as val_exc:
+                        logger.warning(
+                            "Non-strict CriticJSON validation failed: %s", val_exc
+                        )
+                        fallback_reason = self._compose_fallback_reason(
+                            strict_error=exc,
+                            retry_error=val_exc,
+                        )
+                        return self._fallback_critic_json(reason=fallback_reason)
+                retry_reason = self._consume_qwen_runtime_error() or "non-strict empty output"
+                fallback_reason = self._compose_fallback_reason(
+                    strict_error=exc,
+                    retry_error=retry_reason,
+                )
+                return self._fallback_critic_json(reason=fallback_reason)
+            except Exception as retry_exc:
+                logger.error("CriticJSON non-strict retry failed, using fallback: %s", retry_exc)
+                fallback_reason = self._compose_fallback_reason(
+                    strict_error=exc,
+                    retry_error=retry_exc,
+                )
+                return self._fallback_critic_json(reason=fallback_reason)
+        except Exception as exc:
+            logger.error("Critic JSON generation failed, using fallback: %s", exc)
             return self._fallback_critic_json(reason=str(exc))
 
     def run(self) -> None:
         """Run the CV generation pipeline via PipelineOrchestrator."""
         try:
             profile_json = self._build_profile_json()
+            self._pipeline_profile_json = profile_json if isinstance(profile_json, dict) else {}
             existing_snapshot = self._load_application_snapshot()
 
             orchestrator, state = build_default_pipeline(
@@ -2426,6 +3748,9 @@ OUTPUT RULES:
             "gpu_used": gpu_manager.gpu_info["available"],
             "degraded_mode": state.is_degraded() if hasattr(state, "is_degraded") else False,
             "degraded_reasons": getattr(state, "degraded_reasons", []),
+            "alignment_audit": dict(state.alignment_audit) if isinstance(getattr(state, "alignment_audit", None), dict) else {},
+            "cover_letter_review": dict(state.cover_letter_review) if isinstance(getattr(state, "cover_letter_review", None), dict) else {},
+            "generation_audit": dict(state.generation_audit) if isinstance(getattr(state, "generation_audit", None), dict) else {},
         }
 
     def _load_application_snapshot(self) -> dict:
@@ -2438,10 +3763,19 @@ OUTPUT RULES:
             with get_session() as session:
                 app = session.get(JobApplication, self.application_id)
                 if app:
+                    offer_analysis = app.offer_analysis if isinstance(app.offer_analysis, dict) else {}
+                    generation_audit = (
+                        offer_analysis.get("generation_audit")
+                        if isinstance(offer_analysis.get("generation_audit"), dict)
+                        else {}
+                    )
                     return {
                         "cv_json_draft": app.cv_json_draft or {},
                         "cv_json_final": app.cv_json_final or {},
-                        "cv_markdown": app.cv_markdown or "",
+                        "cv_markdown": app.final_cv_markdown or app.generated_cv_markdown or "",
+                        "cv_html": app.final_cv_html or app.generated_cv_html or "",
+                        "cover_letter": app.final_cover_letter or app.generated_cover_letter or "",
+                        "generation_audit": generation_audit,
                     }
         except Exception as exc:
             logger.warning("Could not load application snapshot: %s", exc)
@@ -2573,7 +3907,7 @@ OFFRE CIBLE:
 {_trim_text(offer_text, 2000 if isinstance(offer_keywords, dict) else 3000)}
 
 OFFER_KEYWORDS_JSON (si disponible):
-{_trim_text(json.dumps(offer_keywords, indent=2, ensure_ascii=True), 1200) if isinstance(offer_keywords, dict) else "N/A"}
+{_trim_text(json.dumps(offer_keywords, indent=2, ensure_ascii=False), 1200) if isinstance(offer_keywords, dict) else "N/A"}
 
 DONNEES CANDIDAT (Profil detaille + CV de reference + lettre type si fournie):
 {profile_block}
@@ -2598,27 +3932,96 @@ STRUCTURE:
         cv_json_draft: Optional[Dict[str, Any]] = None,
         cv_json_final: Optional[Dict[str, Any]] = None,
         cv_html: Optional[str] = None,
+        generation_audit: Optional[Dict[str, Any]] = None,
+        alignment_audit: Optional[Dict[str, Any]] = None,
+        cover_letter_review: Optional[Dict[str, Any]] = None,
+        application_id: Optional[int] = None,
+        preserve_cover_letter: bool = False,
     ) -> JobApplication:
         """Sauvegarde la candidature en base."""
-        application = JobApplication(
-            profile_id=self.profile_data.id,
-            job_title=self.offer_data['job_title'],
-            company=self.offer_data['company'],
-            offer_text=self.offer_data['text'],
-            offer_analysis=self.offer_data.get('analysis', {}),
-            template_used=self.template,
-            model_version_used=self.profile_data.model_version,
-            generated_cv_markdown=cv_markdown,
-            generated_cv_html=cv_html,
-            generated_cover_letter=cover_letter,
-            profile_json=profile_json,
-            critic_json=critic_json,
-            cv_json_draft=cv_json_draft,
-            cv_json_final=cv_json_final,
-            status=ApplicationStatus.DRAFT
+        from datetime import datetime
+
+        prune_draft_on_final = self._to_bool_setting(
+            os.getenv("CVMATCH_PRUNE_DRAFT_ON_SUCCESS"),
+            True,
+        )
+        has_final_cv = isinstance(cv_json_final, dict) and bool(cv_json_final)
+        stored_cv_json_draft = (
+            None if (prune_draft_on_final and has_final_cv) else cv_json_draft
         )
 
+        target_application_id = (
+            application_id
+            if isinstance(application_id, int)
+            else (self.application_id if isinstance(self.application_id, int) else None)
+        )
+        offer_analysis_payload: Dict[str, Any] = {}
+        if isinstance(self.offer_data, dict):
+            base_analysis = self.offer_data.get("analysis")
+            if isinstance(base_analysis, dict):
+                offer_analysis_payload = dict(base_analysis)
+        if isinstance(generation_audit, dict) and generation_audit:
+            offer_analysis_payload["generation_audit"] = dict(generation_audit)
+        if isinstance(alignment_audit, dict) and alignment_audit:
+            offer_analysis_payload["alignment_audit"] = dict(alignment_audit)
+        if isinstance(cover_letter_review, dict) and cover_letter_review:
+            offer_analysis_payload["cover_letter_review"] = dict(cover_letter_review)
+
         with get_session() as session:
+            application = (
+                session.get(JobApplication, target_application_id)
+                if target_application_id
+                else None
+            )
+
+            if application is None:
+                if isinstance(self.offer_data, dict):
+                    self.offer_data["analysis"] = dict(offer_analysis_payload)
+                application = JobApplication(
+                    profile_id=self.profile_data.id,
+                    job_title=self.offer_data['job_title'],
+                    company=self.offer_data['company'],
+                    offer_text=self.offer_data['text'],
+                    offer_analysis=offer_analysis_payload,
+                    template_used=self.template,
+                    model_version_used=self.profile_data.model_version,
+                    generated_cv_markdown=cv_markdown,
+                    generated_cv_html=cv_html,
+                    generated_cover_letter=cover_letter,
+                    profile_json=profile_json,
+                    critic_json=critic_json,
+                    cv_json_draft=stored_cv_json_draft,
+                    cv_json_final=cv_json_final,
+                    status=ApplicationStatus.DRAFT
+                )
+            else:
+                application.profile_id = self.profile_data.id
+                application.job_title = self.offer_data['job_title']
+                application.company = self.offer_data['company']
+                application.offer_text = self.offer_data['text']
+                existing_analysis = (
+                    dict(application.offer_analysis)
+                    if isinstance(application.offer_analysis, dict)
+                    else {}
+                )
+                existing_analysis.update(offer_analysis_payload)
+                application.offer_analysis = existing_analysis
+                if isinstance(self.offer_data, dict):
+                    self.offer_data["analysis"] = dict(existing_analysis)
+                application.template_used = self.template
+                application.model_version_used = self.profile_data.model_version
+                application.generated_cv_markdown = cv_markdown
+                application.generated_cv_html = cv_html
+                if not preserve_cover_letter:
+                    application.generated_cover_letter = cover_letter
+                elif not application.generated_cover_letter and cover_letter:
+                    application.generated_cover_letter = cover_letter
+                application.profile_json = profile_json
+                application.critic_json = critic_json
+                application.cv_json_draft = stored_cv_json_draft
+                application.cv_json_final = cv_json_final
+                application.updated_at = datetime.now()
+
             session.add(application)
             session.commit()
             session.refresh(application)
@@ -2654,12 +4057,20 @@ class CoverLetterGenerationWorker(QThread):
         offer_data: dict,
         template: str,
         application_id: Optional[int] = None,
+        user_instruction: str = "",
+        previous_generation_audit: Optional[Dict[str, Any]] = None,
     ):
         super().__init__()
         self.profile_data = profile_data
         self.offer_data = offer_data
         self.template = template
-        self.application_id = application_id
+        self.application_id = application_id if isinstance(application_id, int) else None
+        self.user_instruction = str(user_instruction or "").strip()
+        self.previous_generation_audit = (
+            dict(previous_generation_audit)
+            if isinstance(previous_generation_audit, dict)
+            else {}
+        )
         self.qwen_manager = QwenManager(self.profile_data.model_version)
 
     def run(self):
@@ -2689,9 +4100,17 @@ class CoverLetterGenerationWorker(QThread):
             progress_callback("💌 Génération de la lettre de motivation...")
             cover_letter = self.qwen_manager.generate_cover_letter(prompt, progress_callback)
 
+            generation_audit, cover_letter_review = self._build_cover_letter_generation_audit(
+                cover_letter
+            )
+
             # Étape 4: Sauvegarde
             progress_callback("💾 Sauvegarde de la lettre...")
-            application = self.save_cover_letter(cover_letter)
+            application = self.save_cover_letter(
+                cover_letter,
+                generation_audit=generation_audit,
+                cover_letter_review=cover_letter_review,
+            )
 
             # Étape 5: Nettoyage mémoire
             progress_callback("🧹 Nettoyage mémoire...")
@@ -2704,7 +4123,16 @@ class CoverLetterGenerationWorker(QThread):
                 "template": self.template,
                 "model_version": self.profile_data.model_version,
                 "model_used": getattr(self.qwen_manager, 'current_model_id', 'unknown'),
-                "gpu_used": gpu_manager.gpu_info["available"]
+                "gpu_used": gpu_manager.gpu_info["available"],
+                "generation_audit": generation_audit,
+                "cover_letter_review": cover_letter_review,
+                "alignment_audit": (
+                    generation_audit.get("breakdown", {}).get("cv")
+                    if isinstance(generation_audit, dict)
+                    and isinstance(generation_audit.get("breakdown"), dict)
+                    and isinstance(generation_audit.get("breakdown", {}).get("cv"), dict)
+                    else {}
+                ),
             }
 
             progress_callback("✅ Lettre générée avec succès !")
@@ -2798,7 +4226,7 @@ OFFRE CIBLE:
 {_trim_text(offer_text, 2000 if isinstance(offer_keywords, dict) else 3000)}
 
 OFFER_KEYWORDS_JSON (si disponible):
-{_trim_text(json.dumps(offer_keywords, indent=2, ensure_ascii=True), 1200) if isinstance(offer_keywords, dict) else "N/A"}
+{_trim_text(json.dumps(offer_keywords, indent=2, ensure_ascii=False), 1200) if isinstance(offer_keywords, dict) else "N/A"}
 
 DONNEES CANDIDAT (Profil detaille + CV de reference + lettre type si fournie):
 {profile_block}
@@ -2813,8 +4241,119 @@ STRUCTURE:
 {letter_skeleton}
 """.strip()
 
-    def save_cover_letter(self, cover_letter: str) -> JobApplication:
+    def _resolve_letter_language_code(self) -> str:
+        analysis = self.offer_data.get("analysis") if isinstance(self.offer_data, dict) else None
+        analysis_language = analysis.get("language") if isinstance(analysis, dict) else None
+        if isinstance(analysis_language, str) and analysis_language.strip():
+            return _normalize_language(analysis_language)
+        preferred = getattr(self.profile_data, "preferred_language", None)
+        return _normalize_language(preferred)
+
+    def _build_cover_letter_generation_audit(
+        self,
+        cover_letter: str,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        language_code = self._resolve_letter_language_code()
+        previous = (
+            dict(self.previous_generation_audit)
+            if isinstance(self.previous_generation_audit, dict)
+            else {}
+        )
+        previous_letter = {}
+        if isinstance(previous.get("breakdown"), dict):
+            previous_letter = previous.get("breakdown", {}).get("letter") or {}
+
+        try:
+            letter_score = int(float(previous_letter.get("relevance_score") or 80))
+        except Exception:
+            letter_score = 80
+        letter_score = max(0, min(100, letter_score))
+
+        structure_ok = True
+        try:
+            from ..utils.cover_letter_rules import is_cover_letter_structure_coherent
+            structure_ok = bool(
+                is_cover_letter_structure_coherent(cover_letter or "", language_code=language_code)
+            )
+        except Exception:
+            structure_ok = True
+
+        try:
+            from ..utils.cover_letter_pipeline import build_generation_audit_for_letter
+            generation_audit = build_generation_audit_for_letter(
+                letter_score=letter_score,
+                structure_ok=structure_ok,
+                language_code=language_code,
+                previous_audit=previous,
+            )
+        except Exception:
+            generation_audit = {
+                "cv_score": float(previous.get("cv_score") or 0.0),
+                "letter_score": float(letter_score),
+                "global_score": float(letter_score),
+                "sufficient": bool(structure_ok),
+                "breakdown": {
+                    "cv": {},
+                    "letter": {
+                        "relevance_score": int(letter_score),
+                        "structure_ok": bool(structure_ok),
+                        "language": language_code,
+                    },
+                },
+            }
+
+        breakdown = generation_audit.get("breakdown") if isinstance(generation_audit, dict) else {}
+        letter_block = breakdown.get("letter") if isinstance(breakdown, dict) else {}
+        cover_letter_review = (
+            dict(letter_block)
+            if isinstance(letter_block, dict)
+            else {
+                "relevance_score": int(letter_score),
+                "structure_ok": bool(structure_ok),
+                "language": language_code,
+            }
+        )
+        return generation_audit, cover_letter_review
+
+    def _build_offer_analysis_with_audit(
+        self,
+        *,
+        generation_audit: Optional[Dict[str, Any]] = None,
+        cover_letter_review: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {}
+        if isinstance(self.offer_data, dict):
+            base = self.offer_data.get("analysis")
+            if isinstance(base, dict):
+                payload = dict(base)
+
+        if isinstance(generation_audit, dict) and generation_audit:
+            payload["generation_audit"] = dict(generation_audit)
+            breakdown = generation_audit.get("breakdown")
+            if isinstance(breakdown, dict):
+                cv_block = breakdown.get("cv")
+                if isinstance(cv_block, dict):
+                    payload.setdefault("alignment_audit", dict(cv_block))
+
+        if isinstance(cover_letter_review, dict) and cover_letter_review:
+            payload["cover_letter_review"] = dict(cover_letter_review)
+
+        if isinstance(self.offer_data, dict):
+            self.offer_data["analysis"] = dict(payload)
+        return payload
+
+    def save_cover_letter(
+        self,
+        cover_letter: str,
+        *,
+        generation_audit: Optional[Dict[str, Any]] = None,
+        cover_letter_review: Optional[Dict[str, Any]] = None,
+    ) -> JobApplication:
         """Sauvegarde la lettre de motivation en base."""
+        offer_analysis_payload = self._build_offer_analysis_with_audit(
+            generation_audit=generation_audit,
+            cover_letter_review=cover_letter_review,
+        )
         if self.application_id:
             try:
                 from datetime import datetime
@@ -2823,6 +4362,15 @@ STRUCTURE:
                     existing = session.get(JobApplication, self.application_id)
                     if existing is not None:
                         existing.generated_cover_letter = cover_letter
+                        existing_analysis = (
+                            dict(existing.offer_analysis)
+                            if isinstance(existing.offer_analysis, dict)
+                            else {}
+                        )
+                        existing_analysis.update(offer_analysis_payload)
+                        existing.offer_analysis = existing_analysis
+                        if isinstance(self.offer_data, dict):
+                            self.offer_data["analysis"] = dict(existing_analysis)
                         existing.updated_at = datetime.now()
                         session.add(existing)
                         session.commit()
@@ -2836,7 +4384,7 @@ STRUCTURE:
             job_title=self.offer_data['job_title'],
             company=self.offer_data['company'],
             offer_text=self.offer_data['text'],
-            offer_analysis=self.offer_data.get('analysis', {}),
+            offer_analysis=offer_analysis_payload,
             template_used=self.template,
             model_version_used=self.profile_data.model_version,
             generated_cover_letter=cover_letter,

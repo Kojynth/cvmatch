@@ -1,5 +1,5 @@
 """
-JSON Output Repair Module (PR-09)
+JSON Output Repair Module 
 
 Centralized JSON parsing and repair utilities for LLM outputs.
 Extracted from llm_worker.py to improve maintainability.

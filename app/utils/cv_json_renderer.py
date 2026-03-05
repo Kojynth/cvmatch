@@ -2,9 +2,184 @@
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Any, Dict, List, Optional
 
 from ..controllers.export_manager import ExportManager
+
+
+def _normalize_description_line(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    text = re.sub(r"[\W_]+", " ", text, flags=re.UNICODE)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _dedupe_description_lines(lines: List[str]) -> List[str]:
+    deduped: List[str] = []
+    seen_norms: List[str] = []
+    for raw in lines or []:
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        norm = _normalize_description_line(text)
+        if not norm:
+            continue
+        duplicate = False
+        for seen in seen_norms:
+            if norm == seen:
+                duplicate = True
+                break
+            if len(norm) >= 40 and norm in seen:
+                duplicate = True
+                break
+            if len(seen) >= 40 and seen in norm:
+                duplicate = True
+                break
+        if duplicate:
+            continue
+        deduped.append(text)
+        seen_norms.append(norm)
+    return deduped
+
+
+def _normalize_language_key(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    folded = (
+        unicodedata.normalize("NFKD", text)
+        .encode("ascii", "ignore")
+        .decode("ascii")
+        .lower()
+        .strip()
+    )
+    if not folded:
+        return ""
+    folded = re.sub(r"[^a-z0-9+#]+", " ", folded).strip()
+    aliases = {
+        "en": "english",
+        "eng": "english",
+        "english": "english",
+        "anglais": "english",
+        "fr": "french",
+        "fra": "french",
+        "french": "french",
+        "francais": "french",
+        "de": "german",
+        "ger": "german",
+        "german": "german",
+        "allemand": "german",
+        "es": "spanish",
+        "spa": "spanish",
+        "spanish": "spanish",
+        "espagnol": "spanish",
+        "it": "italian",
+        "ita": "italian",
+        "italian": "italian",
+        "italien": "italian",
+        "pt": "portuguese",
+        "por": "portuguese",
+        "portuguese": "portuguese",
+        "portugais": "portuguese",
+        "ja": "japanese",
+        "jp": "japanese",
+        "jpn": "japanese",
+        "japanese": "japanese",
+        "japonais": "japanese",
+        "zh": "chinese",
+        "cn": "chinese",
+        "chinese": "chinese",
+        "chinois": "chinese",
+        "mandarin": "chinese",
+        "ru": "russian",
+        "rus": "russian",
+        "russian": "russian",
+        "russe": "russian",
+        "ar": "arabic",
+        "ara": "arabic",
+        "arabic": "arabic",
+        "arabe": "arabic",
+    }
+    if folded in aliases:
+        return aliases[folded]
+    compact = folded.replace(" ", "")
+    if compact in aliases:
+        return aliases[compact]
+    if compact.startswith("fran") and compact.endswith("ais"):
+        return "french"
+    if compact.startswith("angl"):
+        return "english"
+    if compact.startswith("japon"):
+        return "japanese"
+    if compact.startswith("allem"):
+        return "german"
+    if compact.startswith("espagn"):
+        return "spanish"
+    return folded
+
+
+def _display_language_name(value: Any, *, is_en: bool) -> str:
+    raw = str(value or "").strip()
+    key = _normalize_language_key(raw)
+    labels_en = {
+        "english": "English",
+        "french": "French",
+        "german": "German",
+        "spanish": "Spanish",
+        "italian": "Italian",
+        "portuguese": "Portuguese",
+        "japanese": "Japanese",
+        "chinese": "Chinese",
+        "russian": "Russian",
+        "arabic": "Arabic",
+    }
+    labels_fr = {
+        "english": "Anglais",
+        "french": "Francais",
+        "german": "Allemand",
+        "spanish": "Espagnol",
+        "italian": "Italien",
+        "portuguese": "Portugais",
+        "japanese": "Japonais",
+        "chinese": "Chinois",
+        "russian": "Russe",
+        "arabic": "Arabe",
+    }
+    if key in labels_en:
+        return labels_en[key] if is_en else labels_fr[key]
+    return raw
+
+
+def _display_language_level(value: Any, *, is_en: bool) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    cefr_match = re.search(r"\b([ABC][12])\b", raw.upper())
+    if not cefr_match:
+        return raw
+    level = cefr_match.group(1)
+    fr_label = {
+        "A1": "Debutant",
+        "A2": "Elementaire",
+        "B1": "Intermediaire",
+        "B2": "Intermediaire superieur",
+        "C1": "Avance",
+        "C2": "Maitrise",
+    }
+    en_label = {
+        "A1": "Beginner",
+        "A2": "Elementary",
+        "B1": "Intermediate",
+        "B2": "Upper-intermediate",
+        "C1": "Advanced",
+        "C2": "Proficient",
+    }
+    label = en_label[level] if is_en else fr_label[level]
+    return f"{level} - {label}"
 
 
 def cv_json_to_cv_data(
@@ -47,6 +222,7 @@ def cv_json_to_cv_data(
         for highlight in item.get("highlights", []) or []:
             if isinstance(highlight, str) and highlight.strip():
                 description.append(highlight.strip())
+        description = _dedupe_description_lines(description)
         experience_section.append(
             {
                 "title": item.get("title") or "",
@@ -76,10 +252,16 @@ def cv_json_to_cv_data(
     for item in cv_json.get("languages", []) or []:
         if not isinstance(item, dict):
             continue
+        language_name = _display_language_name(item.get("language") or "", is_en=is_en)
+        level_name = _display_language_level(item.get("level") or "", is_en=is_en)
+        certification = str(item.get("certification") or "").strip()
+        if certification:
+            level_name = f"{level_name} ({certification})" if level_name else certification
         languages_section.append(
             {
-                "name": item.get("language") or "",
-                "level": item.get("level") or "",
+                "name": language_name,
+                "level": level_name,
+                "certification": certification,
             }
         )
 

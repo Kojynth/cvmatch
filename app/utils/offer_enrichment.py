@@ -1,5 +1,5 @@
 """
-Offer Enrichment Module (Sprint 6)
+Offer Enrichment Module
 
 Centralized offer keyword collection, merging, and enrichment logic.
 This module extracts offer-related keyword processing from CVGenerationWorker

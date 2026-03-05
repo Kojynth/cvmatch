@@ -73,6 +73,13 @@ def extract_stage_subprocess_error(
         "cuda error:",
         "cuda out of memory",
         "out of memory",
+        "not enough free disk space",
+        "no space left on device",
+        "disk quota exceeded",
+        "file reconstruction error",
+        "internal writer error",
+        "failed to send data",
+        "receiver dropped",
         "cublas_status_execution_failed",
         "cublasgemmex",
         "cudnn",
@@ -120,6 +127,8 @@ def build_stage_subprocess_env(
     force_survival_retry: bool = False,
 ) -> Dict[str, str]:
     run_env = dict(base_env or {})
+    run_env.setdefault("PYTHONUTF8", "1")
+    run_env.setdefault("PYTHONIOENCODING", "utf-8")
     transformers_cache = run_env.get("TRANSFORMERS_CACHE")
     if transformers_cache:
         run_env.setdefault("HF_HOME", transformers_cache)
@@ -184,4 +193,3 @@ def persist_stage_subprocess_diagnostics(
         if callable(logger_debug):
             logger_debug("Unable to persist stage subprocess diagnostics: %s", exc)
         return ""
-

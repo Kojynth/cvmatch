@@ -133,6 +133,7 @@ class ExportManager:
             "interests": [],
             "labels": {},
             "language": "fr",
+            "photo_base64": "",
         }
         
         # Fusion avec les données fournies

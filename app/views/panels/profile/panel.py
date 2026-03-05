@@ -124,6 +124,8 @@ class ProfilePanel(QScrollArea):
             self.personal_section.linkedin_pdf_widget.pdf_changed.connect(
                 self._handle_linkedin_pdf_changed
             )
+        if hasattr(self.personal_section, "data_changed"):
+            self.personal_section.data_changed.connect(self.auto_save_profile)
         if hasattr(self.personal_section.linkedin_pdf_widget, "help_requested"):
             self.personal_section.linkedin_pdf_widget.help_requested.connect(
                 self._open_linkedin_pdf_help
@@ -254,6 +256,12 @@ class ProfilePanel(QScrollArea):
             learning_enabled=(
                 self.preferences_section.learning_check.isChecked()
                 if self.preferences_section.learning_check is not None
+                else None
+            ),
+            profile_photo_path=getattr(self.personal_section, "_current_photo_path", None) or None,
+            location=(
+                self.personal_section.fields["location"]["field"].text().strip() or None
+                if "location" in self.personal_section.fields
                 else None
             ),
         )

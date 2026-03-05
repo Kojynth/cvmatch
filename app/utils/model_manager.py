@@ -488,6 +488,9 @@ class ModelManager:
     
     def _get_detailed_info(self, model_id: str, model_info: Dict[str, Any]) -> str:
         """Génère une description détaillée pour l'infobulle."""
+        metadata = model_info.get("metadata") if isinstance(model_info, dict) else {}
+        if not isinstance(metadata, dict):
+            metadata = {}
         lines = [
             f"Modèle: {model_info['display_name']}",
             f"Qualité: {model_info['quality_stars']}/5 étoiles",
@@ -503,7 +506,17 @@ class ModelManager:
             lines.append("🎮 Optimisé GPU - Utilise votre carte graphique")
         elif model_info["cpu_optimized"]:
             lines.append("💻 Optimisé CPU - Fonctionne sans GPU")
-            
+
+        license_hint = str(metadata.get("license_hint") or "").strip()
+        context_hint = str(metadata.get("context_hint") or "").strip()
+        usage_hint = str(metadata.get("recommended_usage") or "").strip()
+        if license_hint:
+            lines.append(f"Licence: {license_hint}")
+        if context_hint:
+            lines.append(f"Contexte: {context_hint}")
+        if usage_hint:
+            lines.append(f"Usage conseillé: {usage_hint}")
+
         return "\n".join(lines)
     
     def validate_model_selection(self, model_id: str) -> Dict[str, Any]:
@@ -575,10 +588,12 @@ class ModelManager:
         ram_estimates = {
             "qwen2-0.5b": 1.5,    # 0.6B params (Qwen3-0.6B)
             "tinyllama": 2.5,     # 1.1B params
-            "phi-3-mini": 8.0,    # 3.8B params
             "qwen2-1.5b": 4.0,    # 1.7B params (Qwen3-1.7B)
             "qwen2-3b": 8.0,      # 4B params (Qwen3-4B)
+            "llama3.2-3b": 8.0,   # 3B params
             "mistral-7b": 16.0,   # 7B params - ATTENTION: gros modèle!
+            "ministral-8b": 18.0, # 8B params
+            "llama3.1-8b": 18.0,  # 8B params
             "qwen-7b": 16.0,      # 8B params (Qwen3-8B)
             "qwen-14b": 32.0,     # 14B params
             "qwen-32b": 64.0,     # 32B params

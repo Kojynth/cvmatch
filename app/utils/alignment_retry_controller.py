@@ -1,5 +1,5 @@
 """
-Alignment Retry Controller Module (Sprint 6)
+Alignment Retry Controller Module 
 
 Controls the alignment retry loop for CV generation. When the initial CV
 doesn't have sufficient keyword alignment with the job offer, this module

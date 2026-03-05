@@ -28,6 +28,8 @@ class ProfileFormData:
     preferred_template: Optional[str] = None
     preferred_language: Optional[str] = None
     learning_enabled: Optional[bool] = None
+    profile_photo_path: Optional[str] = None
+    location: Optional[str] = None
 
 
 SessionFactory = Callable[[], AbstractContextManager]
@@ -46,6 +48,8 @@ class ProfileStateCoordinator(SimpleCoordinator, Coordinator):
         "preferred_template",
         "preferred_language",
         "learning_enabled",
+        "profile_photo_path",
+        "location",
     )
 
     def __init__(self, session_factory: SessionFactory | None = None) -> None:
@@ -235,6 +239,7 @@ class ProfileStateCoordinator(SimpleCoordinator, Coordinator):
         _assign("email", profile.email)
         _assign("phone", profile.phone)
         _assign("linkedin_url", profile.linkedin_url)
+        _assign("location", getattr(profile, "location", None))
         profile.extracted_personal_info = personal_info
 
     def _snapshot_linkedin(self, profile: UserProfile) -> Dict[str, object]:

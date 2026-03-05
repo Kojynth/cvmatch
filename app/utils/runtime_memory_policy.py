@@ -1,5 +1,5 @@
 """
-Runtime Memory Policy Module (PR-10)
+Runtime Memory Policy Module
 
 Centralized system RAM management and memory pressure detection.
 Extracted from QwenManager in llm_worker.py.

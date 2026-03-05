@@ -1,5 +1,5 @@
 """
-Pipeline Orchestrator Module (Sprint 5)
+Pipeline Orchestrator Module
 
 Phase-based CV generation pipeline that replaces the monolithic CVGenerationWorker.run() method.
 Each phase is a discrete unit of work with clear inputs/outputs and error handling.
@@ -30,19 +30,22 @@ import copy
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Protocol, Tuple
 
 try:
-    from ..logging.safe_logger import get_safe_logger
     from ..config import DEFAULT_PII_CONFIG
+    from ..logging.safe_logger import get_safe_logger
+
     logger = get_safe_logger(__name__, cfg=DEFAULT_PII_CONFIG)
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 
 class PipelinePhaseStatus(Enum):
     """Status of a pipeline phase."""
+
     PENDING = auto()
     RUNNING = auto()
     COMPLETED = auto()
@@ -53,6 +56,7 @@ class PipelinePhaseStatus(Enum):
 @dataclass
 class PhaseResult:
     """Result of a single pipeline phase execution."""
+
     phase_name: str
     status: PipelinePhaseStatus
     duration_seconds: float = 0.0
@@ -69,6 +73,7 @@ class PipelineState:
     Each phase reads from and writes to this state object,
     ensuring all intermediate data is accessible across phases.
     """
+
     # Input data (set at initialization)
     profile_data: Any = None  # ProfileWorkerData
     offer_data: Optional[Dict[str, Any]] = None
@@ -169,6 +174,7 @@ class PipelinePhase(Protocol):
 # Phase Implementations
 # ---------------------------------------------------------------------------
 
+
 class InitializationPhase:
     """Phase 1: Load model config and determine runtime mode."""
 
@@ -195,13 +201,10 @@ class InitializationPhase:
                     state.baseline_cv_json = state.existing_snapshot.get("cv_json_final")
                 elif isinstance(state.existing_snapshot.get("cv_json_draft"), dict):
                     state.baseline_cv_json = state.existing_snapshot.get("cv_json_draft")
-                if (
-                    not state.previous_generation_audit
-                    and isinstance(state.existing_snapshot.get("generation_audit"), dict)
+                if not state.previous_generation_audit and isinstance(
+                    state.existing_snapshot.get("generation_audit"), dict
                 ):
-                    state.previous_generation_audit = dict(
-                        state.existing_snapshot.get("generation_audit") or {}
-                    )
+                    state.previous_generation_audit = dict(state.existing_snapshot.get("generation_audit") or {})
 
             logger.info(
                 "Generation start: profile_id=%s template=%s",
@@ -261,27 +264,30 @@ class InitializationPhase:
                 and state.extractor_model != state.writer_model
             ):
                 state.emit_progress(
-                    f"[MODEL] Routing actif: extractor={state.extractor_model} "
-                    f"writer={state.writer_model}"
+                    f"[MODEL] Routing actif: extractor={state.extractor_model} " f"writer={state.writer_model}"
                 )
             if state.runtime_mode == "LowRAM":
                 state.emit_progress(
-                    "[MODE] LowRAM detecte: pipeline qualite maintenue, "
-                    "execution possiblement lente."
+                    "[MODE] LowRAM detecte: pipeline qualite maintenue, " "execution possiblement lente."
                 )
             state.emit_progress(f"[MODEL] Initialisation {model_name}...")
 
             # Load model if not using subprocess
             if state.use_subprocess:
-                state.emit_progress("[MODEL] Mode VRAM: etapes isolees en sous-processus")
+                state.emit_progress("[MODEL] Mode VRAM: étapes isolées en sous-processus")
             elif qm._should_unload_between_stages():
-                state.emit_progress("[MODEL] Mode VRAM: chargement paresseux par etape")
+                state.emit_progress("[MODEL] Mode VRAM: chargement paresseux par étape")
             else:
                 try:
                     qm.set_runtime_stage("draft")
                 except Exception:
                     pass
-                qm.load_model(state.progress_callback, allow_fallback=False)
+                allow_fallback = True
+                try:
+                    allow_fallback = bool(qm._allow_model_fallback())
+                except Exception:
+                    allow_fallback = True
+                qm.load_model(state.progress_callback, allow_fallback=allow_fallback)
 
             return PhaseResult(
                 phase_name=self.name,
@@ -324,8 +330,7 @@ class ProfileBuildPhase:
                 raise RuntimeError("Profile JSON not provided - orchestrator caller must build it")
 
             logger.info(
-                "ProfileJSON build done: experiences=%s education=%s skills=%s "
-                "projects=%s languages=%s",
+                "ProfileJSON build done: experiences=%s education=%s skills=%s " "projects=%s languages=%s",
                 len(state.profile_json.get("experiences") or []),
                 len(state.profile_json.get("education") or []),
                 len(state.profile_json.get("skills") or []),
@@ -383,9 +388,7 @@ class OfferKeywordsPhase:
         return "offer_keywords"
 
     def should_run(self, state: PipelineState) -> bool:
-        offer_text = (
-            state.offer_data.get("text") if isinstance(state.offer_data, dict) else ""
-        )
+        offer_text = state.offer_data.get("text") if isinstance(state.offer_data, dict) else ""
         return bool(offer_text and len(str(offer_text).strip()) >= 50)
 
     def execute(self, state: PipelineState) -> PhaseResult:
@@ -407,8 +410,7 @@ class OfferKeywordsPhase:
                 self._merge_keywords(state.offer_keywords)
 
             logger.info(
-                "Offer keyword extraction done: keywords=%s skills=%s tools=%s "
-                "lexical=%s families=%s",
+                "Offer keyword extraction done: keywords=%s skills=%s tools=%s " "lexical=%s families=%s",
                 len((state.offer_keywords or {}).get("keywords") or []),
                 len((state.offer_keywords or {}).get("skills") or []),
                 len((state.offer_keywords or {}).get("tools") or []),
@@ -470,16 +472,12 @@ class DraftCVPhase:
             logger.info("Draft CVJSON generation start")
 
             if state.use_subprocess and self._run_subprocess:
-                state.cv_json_draft = self._run_subprocess(
-                    "draft", {"profile_json": state.profile_json}
-                )
+                state.cv_json_draft = self._run_subprocess("draft", {"profile_json": state.profile_json})
             else:
                 if self._apply_stage_override:
                     self._apply_stage_override("draft", state.progress_callback)
                 if self._generate_draft:
-                    state.cv_json_draft = self._generate_draft(
-                        state.profile_json, state.progress_callback
-                    )
+                    state.cv_json_draft = self._generate_draft(state.profile_json, state.progress_callback)
 
             # Sync draft to worker attribute (needed by _postprocess_final_candidate_wrapper)
             if self._post_draft_hook:
@@ -496,12 +494,8 @@ class DraftCVPhase:
             logger.info("Draft CVJSON generation done")
 
             # Unload model if needed
-            if (
-                not state.use_subprocess
-                and state.qwen_manager
-                and state.qwen_manager._should_unload_between_stages()
-            ):
-                state.emit_progress("[VRAM] Dechargement modele apres draft...")
+            if not state.use_subprocess and state.qwen_manager and state.qwen_manager._should_unload_between_stages():
+                state.emit_progress("[VRAM] Déchargement modèle après draft...")
                 state.qwen_manager.unload_model(reason="after draft")
 
             return PhaseResult(
@@ -553,9 +547,7 @@ class CriticPhase:
 
             draft_html = ""
             if self._render_draft_html:
-                draft_html = self._render_draft_html(
-                    state.cv_json_draft, state.template, state.language_code
-                )
+                draft_html = self._render_draft_html(state.cv_json_draft, state.template, state.language_code)
             logger.info("Draft HTML render done: html_len=%s", len(draft_html or ""))
 
             if state.skip_critic:
@@ -575,12 +567,8 @@ class CriticPhase:
             logger.info("Critic JSON generation done")
 
             # Unload model if needed
-            if (
-                not state.use_subprocess
-                and state.qwen_manager
-                and state.qwen_manager._should_unload_between_stages()
-            ):
-                state.emit_progress("[VRAM] Dechargement modele apres critic...")
+            if not state.use_subprocess and state.qwen_manager and state.qwen_manager._should_unload_between_stages():
+                state.emit_progress("[VRAM] Déchargement modèle après critic...")
                 state.qwen_manager.unload_model(reason="after critic")
 
             return PhaseResult(
@@ -654,15 +642,11 @@ class FinalCVPhase:
 
             # Post-process
             if self._postprocess_candidate:
-                state.cv_json_final = self._postprocess_candidate(
-                    state.cv_json_final, critic_json_for_final
-                )
+                state.cv_json_final = self._postprocess_candidate(state.cv_json_final, critic_json_for_final)
 
             # Score alignment
             if self._score_alignment:
-                state.alignment_audit = self._score_alignment(
-                    state.cv_json_final, critic_json_for_final
-                )
+                state.alignment_audit = self._score_alignment(state.cv_json_final, critic_json_for_final)
                 logger.info(
                     "CV alignment audit: exact=%.1f family=%.1f overall=%.1f sufficient=%s",
                     float(state.alignment_audit.get("exact_keyword_score") or 0.0),
@@ -682,9 +666,7 @@ class FinalCVPhase:
                 )
 
                 if self._augment_critic_feedback:
-                    critic_json_for_final = self._augment_critic_feedback(
-                        critic_json_for_final, state.alignment_audit
-                    )
+                    critic_json_for_final = self._augment_critic_feedback(critic_json_for_final, state.alignment_audit)
 
                 try:
                     if state.use_subprocess and self._run_subprocess:
@@ -702,20 +684,21 @@ class FinalCVPhase:
                 except Exception as exc:
                     logger.warning(
                         "Alignment retry failed at attempt %s/%s: %s",
-                        retry_count, retry_budget, exc,
+                        retry_count,
+                        retry_budget,
+                        exc,
                     )
                     break
 
                 if self._postprocess_candidate:
-                    candidate_final = self._postprocess_candidate(
-                        candidate_final, critic_json_for_final
-                    )
+                    candidate_final = self._postprocess_candidate(candidate_final, critic_json_for_final)
 
                 if self._score_alignment:
                     candidate_audit = self._score_alignment(candidate_final, critic_json_for_final)
                     logger.info(
                         "CV alignment retry %s/%s: exact=%.1f family=%.1f overall=%.1f sufficient=%s",
-                        retry_count, retry_budget,
+                        retry_count,
+                        retry_budget,
                         float(candidate_audit.get("exact_keyword_score") or 0.0),
                         float(candidate_audit.get("lexical_family_score") or 0.0),
                         float(candidate_audit.get("overall_score") or 0.0),
@@ -794,9 +777,7 @@ class RenderPhase:
                 state.cv_markdown = self._render_markdown(state.cv_json_final, state.language_code)
 
             if self._render_html:
-                state.cv_html = self._render_html(
-                    state.cv_json_final, state.template, state.language_code
-                )
+                state.cv_html = self._render_html(state.cv_json_final, state.template, state.language_code)
 
             logger.info(
                 "Final render done: markdown_len=%s html_len=%s",
@@ -923,27 +904,40 @@ class CoverLetterPhase:
         logger.info("Cover letter generation start")
 
         letter_prompt = self._build_prompt() if self._build_prompt else ""
+        used_fallback = False
+        generation_mode = "generated"
 
-        if state.use_subprocess and self._run_subprocess:
-            cover_payload = {"letter_prompt": letter_prompt}
-            cover_result = self._run_subprocess("cover_letter", cover_payload)
-            state.cover_letter = cover_result.get("cover_letter", "")
-        else:
-            if self._apply_stage_override:
-                self._apply_stage_override("cover_letter", state.progress_callback)
-            if self._generate_letter:
-                state.cover_letter = self._generate_letter(letter_prompt, state.progress_callback)
+        try:
+            if state.use_subprocess and self._run_subprocess:
+                cover_payload = {"letter_prompt": letter_prompt}
+                cover_result = self._run_subprocess("cover_letter", cover_payload)
+                state.cover_letter = cover_result.get("cover_letter", "")
+            else:
+                if self._apply_stage_override:
+                    self._apply_stage_override("cover_letter", state.progress_callback)
+                if self._generate_letter:
+                    state.cover_letter = self._generate_letter(
+                        letter_prompt, state.progress_callback
+                    )
+        except Exception as exc:
+            if not self._fallback_letter:
+                raise RuntimeError(f"Cover letter generation failed: {exc}") from exc
+            logger.warning("Cover letter generation failed, using fallback: %s", exc)
+            state.cover_letter = self._fallback_letter(state.language_code)
+            used_fallback = True
+            generation_mode = "fallback"
 
         # Post-process
         if self._ensure_language_consistency:
-            state.cover_letter = self._ensure_language_consistency(
-                state.cover_letter, state.language_code
-            )
+            state.cover_letter = self._ensure_language_consistency(state.cover_letter, state.language_code)
         if self._enforce_alignment:
             state.cover_letter = self._enforce_alignment(state.cover_letter, state.language_code)
 
         # Run critic if enabled
-        should_run_critic = self._should_run_critic() if self._should_run_critic else True
+        should_run_critic = (
+            (self._should_run_critic() if self._should_run_critic else True)
+            and not used_fallback
+        )
         if should_run_critic:
             state.emit_progress("[LETTER] Critique + correction...")
             try:
@@ -978,17 +972,23 @@ class CoverLetterPhase:
 
         # Final validation
         if self._ensure_language_consistency:
-            state.cover_letter = self._ensure_language_consistency(
-                state.cover_letter, state.language_code
-            )
+            state.cover_letter = self._ensure_language_consistency(state.cover_letter, state.language_code)
         if self._enforce_alignment:
             state.cover_letter = self._enforce_alignment(state.cover_letter, state.language_code)
 
-        if self._is_structure_coherent:
-            if not self._is_structure_coherent(state.cover_letter, state.language_code):
-                raise RuntimeError(
-                    "Cover letter structure not coherent after generation/review."
+        if self._is_structure_coherent and not used_fallback:
+            try:
+                structure_ok = bool(
+                    self._is_structure_coherent(state.cover_letter, state.language_code)
                 )
+            except TypeError:
+                # Backward-compatible call path for legacy callbacks expecting only (letter).
+                logger.warning(
+                    "Cover letter structure callback arity mismatch; retrying with legacy signature."
+                )
+                structure_ok = bool(self._is_structure_coherent(state.cover_letter))
+            if not structure_ok:
+                raise RuntimeError("Cover letter structure not coherent after generation/review.")
 
         if not isinstance(state.cover_letter_review, dict) or not state.cover_letter_review:
             state.cover_letter_review = {
@@ -1003,7 +1003,7 @@ class CoverLetterPhase:
             phase_name=self.name,
             status=PipelinePhaseStatus.COMPLETED,
             duration_seconds=time.time() - start,
-            metadata={"mode": "generated", "length": len(state.cover_letter or "")},
+            metadata={"mode": generation_mode, "length": len(state.cover_letter or "")},
         )
 
 
@@ -1040,9 +1040,7 @@ class AuditAndSavePhase:
         try:
             # Build generation audit
             if self._build_audit:
-                state.generation_audit = self._build_audit(
-                    state.alignment_audit, state.cover_letter_review
-                )
+                state.generation_audit = self._build_audit(state.alignment_audit, state.cover_letter_review)
 
             # Handle CV-only regen score comparison
             if (
@@ -1053,30 +1051,22 @@ class AuditAndSavePhase:
                 and self._is_audit_better
                 and not self._is_audit_better(state.generation_audit, state.previous_generation_audit)
             ):
-                logger.info(
-                    "CV-only regeneration score did not improve; keeping previous CV version."
-                )
+                logger.info("CV-only regeneration score did not improve; keeping previous CV version.")
                 previous_cv_json = state.existing_snapshot.get("cv_json_final")
                 if isinstance(previous_cv_json, dict):
                     state.cv_json_final = copy.deepcopy(previous_cv_json)
                     if self._score_alignment:
-                        state.alignment_audit = self._score_alignment(
-                            state.cv_json_final, state.critic_json
-                        )
+                        state.alignment_audit = self._score_alignment(state.cv_json_final, state.critic_json)
                     previous_markdown = str(state.existing_snapshot.get("cv_markdown") or "").strip()
                     previous_html = str(state.existing_snapshot.get("cv_html") or "").strip()
                     if previous_markdown:
                         state.cv_markdown = previous_markdown
                     elif self._render_markdown:
-                        state.cv_markdown = self._render_markdown(
-                            state.cv_json_final, state.language_code
-                        )
+                        state.cv_markdown = self._render_markdown(state.cv_json_final, state.language_code)
                     if previous_html:
                         state.cv_html = previous_html
                     elif self._render_html:
-                        state.cv_html = self._render_html(
-                            state.cv_json_final, state.template, state.language_code
-                        )
+                        state.cv_html = self._render_html(state.cv_json_final, state.template, state.language_code)
                 state.generation_audit = dict(state.previous_generation_audit)
 
             # Save application
@@ -1093,6 +1083,9 @@ class AuditAndSavePhase:
                     cv_json_draft=state.cv_json_draft,
                     cv_json_final=state.cv_json_final,
                     cv_html=state.cv_html,
+                    generation_audit=state.generation_audit,
+                    alignment_audit=state.alignment_audit,
+                    cover_letter_review=state.cover_letter_review,
                     application_id=state.application_id,
                     preserve_cover_letter=bool(state.cv_only_regen),
                 )
@@ -1166,6 +1159,7 @@ class CleanupPhase:
 # Orchestrator
 # ---------------------------------------------------------------------------
 
+
 class PipelineOrchestrator:
     """
     Orchestrates CV generation pipeline phases.
@@ -1197,10 +1191,12 @@ class PipelineOrchestrator:
 
         for phase in self._phases:
             if not phase.should_run(state):
-                results.append(PhaseResult(
-                    phase_name=phase.name,
-                    status=PipelinePhaseStatus.SKIPPED,
-                ))
+                results.append(
+                    PhaseResult(
+                        phase_name=phase.name,
+                        status=PipelinePhaseStatus.SKIPPED,
+                    )
+                )
                 continue
 
             result = phase.execute(state)
@@ -1277,7 +1273,7 @@ def build_default_pipeline(
             ensure_language_consistency=lambda cv, stage: worker._ensure_cv_json_language_consistency(cv, stage=stage),
             apply_contact_fallback=worker._apply_contact_fallback,
             apply_target_fallback=worker._apply_target_fallback,
-            post_draft_hook=lambda draft: setattr(worker, '_pipeline_cv_json_draft', draft),
+            post_draft_hook=lambda draft: setattr(worker, "_pipeline_cv_json_draft", draft),
         ),
         CriticPhase(
             run_subprocess=worker._run_stage_subprocess,
@@ -1311,13 +1307,14 @@ def build_default_pipeline(
             critique_and_rewrite=lambda letter, lang, cb: worker.critique_and_rewrite_cover_letter(
                 cover_letter=letter, language_code=lang, progress_callback=cb
             ),
-            fallback_letter=worker._fallback_cover_letter,
+            fallback_letter=lambda lang: worker._fallback_cover_letter(
+                worker.offer_data if isinstance(worker.offer_data, dict) else {},
+                lang,
+            ),
             should_run_critic=worker._should_run_cover_letter_critic_stage,
         ),
         AuditAndSavePhase(
-            build_audit=lambda aa, clr: build_generation_audit_payload(
-                alignment_audit=aa, cover_letter_review=clr
-            ),
+            build_audit=lambda aa, clr: build_generation_audit_payload(alignment_audit=aa, cover_letter_review=clr),
             is_audit_better=lambda c, b: is_generation_audit_better_payload(candidate=c, baseline=b),
             save_application=worker.save_application,
             render_markdown=lambda cv, lang: cv_json_to_markdown(cv, language=lang),

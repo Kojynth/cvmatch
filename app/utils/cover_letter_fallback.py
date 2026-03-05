@@ -1,5 +1,5 @@
 """
-Cover Letter Fallback Generator Module (Sprint 3)
+Cover Letter Fallback Generator Module 
 
 Deterministic cover letter generator used when LLM fails or produces invalid output.
 Extracted and unified from CVGenerationWorker and CoverLetterGenerationWorker.

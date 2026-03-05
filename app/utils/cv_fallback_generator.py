@@ -1,5 +1,5 @@
 """
-CV Fallback Generator Module (Sprint 3)
+CV Fallback Generator Module 
 
 Deterministic CV JSON generator used when LLM fails or produces invalid output.
 Extracted from CVGenerationWorker._fallback_cv_json() in llm_worker.py.
@@ -66,6 +66,121 @@ def _coerce_list(value: Any) -> List[Any]:
     if isinstance(value, list):
         return value
     return [value]
+
+
+_CORPORATE_DESCRIPTION_HINTS = (
+    " est ",
+    " is ",
+    "offre",
+    "offres",
+    "services",
+    "service",
+    "plateforme",
+    "platform",
+    "propose",
+    "provides",
+    "permet",
+    "allows",
+    "mission",
+    "strategie",
+    "strategy",
+    "groupe",
+    "group",
+    "entreprise",
+    "company",
+    "filiale",
+    "subsidiary",
+    "leader",
+)
+
+_ACTION_EXPERIENCE_HINTS = (
+    "managed",
+    "developed",
+    "implemented",
+    "built",
+    "designed",
+    "led",
+    "supported",
+    "collaborated",
+    "tested",
+    "coordinated",
+    "created",
+    "analyzed",
+    "improved",
+    "delivered",
+    "gere",
+    "developpe",
+    "realise",
+    "mis en oeuvre",
+    "contribue",
+    "pilote",
+    "assure",
+    "coordonne",
+    "analyse",
+    "ameliore",
+)
+
+
+def _looks_like_company_description(text: str, company: str = "") -> bool:
+    normalized = normalize_keyword_for_match(text)
+    if not normalized or len(normalized) < 50:
+        return False
+
+    company_norm = normalize_keyword_for_match(company)
+    corporate_hits = sum(
+        1 for marker in _CORPORATE_DESCRIPTION_HINTS if marker in normalized
+    )
+    action_hits = sum(
+        1 for marker in _ACTION_EXPERIENCE_HINTS if marker in normalized
+    )
+
+    company_as_subject = False
+    if company_norm:
+        if normalized.startswith(f"{company_norm} "):
+            company_as_subject = True
+        if company_norm in normalized and (
+            " est " in normalized
+            or " is " in normalized
+            or " propose " in normalized
+            or " provides " in normalized
+            or " permet " in normalized
+        ):
+            company_as_subject = True
+
+    if action_hits >= 2 and corporate_hits <= 1:
+        return False
+    if company_as_subject and corporate_hits >= 1:
+        return True
+    if corporate_hits >= 3 and action_hits == 0:
+        return True
+    return False
+
+
+def _build_action_summary(
+    *,
+    title: str,
+    company: str,
+    description: str,
+    highlights: List[str],
+    is_en: bool,
+) -> str:
+    for item in highlights:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        if _looks_like_company_description(text, company):
+            continue
+        return _trim_text(text, 280)
+
+    if description and not _looks_like_company_description(description, company):
+        return _trim_text(description, 280)
+
+    title_text = str(title or "").strip()
+    if not title_text:
+        return ""
+    if is_en:
+        return _trim_text(f"Delivered key contributions as {title_text}.", 140)
+    return _trim_text(f"Contributions principales realisees en tant que {title_text}.", 160)
 
 
 def collect_candidate_keywords(
@@ -186,7 +301,7 @@ def rank_experiences_by_offer_relevance(
     return [payload[2] for payload in ranked]
 
 
-def extract_experience_highlights(description: str) -> List[str]:
+def extract_experience_highlights(description: str, company: str = "") -> List[str]:
     """Extract bullet-point highlights from experience description.
 
     Args:
@@ -200,8 +315,15 @@ def extract_experience_highlights(description: str) -> List[str]:
 
     highlights: List[str] = []
     for part in re.split(r"[\r\n]+", description):
-        cleaned = part.strip(" -*\t")
-        if cleaned:
+        raw = part.strip(" -*\t")
+        if not raw:
+            continue
+        for sentence in re.split(r"(?<=[.!?])\s+", raw):
+            cleaned = sentence.strip(" -*\t")
+            if not cleaned:
+                continue
+            if _looks_like_company_description(cleaned, company):
+                continue
             highlights.append(cleaned)
 
     return _dedup_preserve(highlights)[:3]
@@ -344,11 +466,18 @@ def generate_fallback_cv_json(
         if not isinstance(item, dict):
             continue
         desc = str(item.get("description") or "").strip()
-        highlights = extract_experience_highlights(desc)
-        summary_text = desc[:280] if desc else ""
+        company_name = str(item.get("company") or "").strip()
+        highlights = extract_experience_highlights(desc, company=company_name)
+        summary_text = _build_action_summary(
+            title=str(item.get("title") or ""),
+            company=company_name,
+            description=desc,
+            highlights=highlights,
+            is_en=is_en,
+        )
         mapped = {
             "title": str(item.get("title") or ""),
-            "company": str(item.get("company") or ""),
+            "company": company_name,
             "start_date": str(item.get("start_date") or ""),
             "end_date": str(item.get("end_date") or ""),
             "location": str(item.get("location") or ""),
@@ -408,8 +537,21 @@ def generate_fallback_cv_json(
             continue
         lang = str(item.get("language") or "").strip()
         level = str(item.get("level") or item.get("proficiency") or "").strip()
+        certification = str(
+            item.get("certification")
+            or item.get("certificate")
+            or item.get("organization")
+            or item.get("issuer")
+            or ""
+        ).strip()
         if lang:
-            language_items.append({"language": lang, "level": level})
+            language_items.append(
+                {
+                    "language": lang,
+                    "level": level,
+                    "certification": certification,
+                }
+            )
     language_items = language_items[:4]
 
     # Build projects section

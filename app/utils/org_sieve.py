@@ -216,6 +216,38 @@ class SchoolLexicon:
                         f"indicators={matched_indicators}")
                         
         return is_school, matched_indicators
+
+    def should_reject_as_organization(self, text: str) -> Tuple[bool, str]:
+        """
+        Determine if text should be rejected as an organization name.
+
+        Rejects garbage strings that look like postal codes, month names, or
+        other non-org tokens that may end up in the 'company' field.
+
+        Args:
+            text: Candidate organization string
+
+        Returns:
+            (should_reject, reason) — (True, reason) to discard, (False, "") to keep.
+        """
+        if not text or len(text.strip()) < 2:
+            return True, "too_short"
+
+        text_stripped = text.strip()
+
+        # Postal codes: 5 digits optionally followed by a city name
+        if re.match(r"^\d{5}(?:\s+\w[\w\s]*)?$", text_stripped):
+            return True, "postal_code"
+
+        # French month names (accent-normalized)
+        _FRENCH_MONTHS = {
+            "janvier", "fevrier", "mars", "avril", "mai", "juin",
+            "juillet", "aout", "septembre", "octobre", "novembre", "decembre",
+        }
+        if normalize_text_for_matching(text_stripped) in _FRENCH_MONTHS:
+            return True, "month_name"
+
+        return False, ""
         
     def get_school_confidence(self, org_name: str) -> float:
         """Get confidence score that organization is a school (0-1)."""
