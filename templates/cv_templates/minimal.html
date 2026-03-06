@@ -4,10 +4,25 @@
   <meta charset="utf-8">
   <title>{{ name }} - CV</title>
   <link rel="stylesheet" href="css/minimal.css">
+  <style>
+    .profile-photo {
+      width: 90px; height: 90px;
+      border-radius: 50%;
+      object-fit: cover;
+      float: right;
+      margin-left: 20px;
+      border: 2px solid #dee2e6;
+    }
+    .cv-header::after { content: ""; display: table; clear: both; }
+  </style>
 </head>
 <body>
   <div class="cv-container">
     <header class="cv-header">
+      {% if photo_base64 %}
+      <img src="data:image/jpeg;base64,{{ photo_base64 }}"
+           alt="Photo de profil" class="profile-photo" />
+      {% endif %}
       <div class="header-content">
         <h1 class="name">{{ name }}</h1>
         {% if job_title %}<p class="title">{{ job_title }}</p>{% endif %}

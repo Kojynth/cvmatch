@@ -308,7 +308,7 @@ class EducationParser(ParserMetricsMixin):
         
         # Specialization indicators
         specialization_patterns = [
-            r'\b(?:spÃ©cialisation|specialization|major|minor)\b',
+            r'\b(?:spécialisation|specialization|major|minor)\b',
             r'\b(?:option|parcours|track|concentration)\b'
         ]
         
@@ -335,9 +335,9 @@ class EducationParser(ParserMetricsMixin):
         """Extract institution name from line."""
         # Look for institution patterns
         institution_patterns = [
-            r'(?:Ã |at|universitÃ©|university|Ã©cole|school)\s+([^,\n]{5,50})',
-            r'([A-Z][a-zA-ZÃ Ã¢Ã¤Ã§Ã©Ã¨ÃªÃ«Ã¯Ã®Ã´Ã¹Ã»Ã¼Ã¿\s]{5,50})(?:\s*[-,])',
-            r'(?:^|\s)([A-Z][a-zA-ZÃ Ã¢Ã¤Ã§Ã©Ã¨ÃªÃ«Ã¯Ã®Ã´Ã¹Ã»Ã¼Ã¿\s]{10,50})(?:\s*$)'
+            r'(?:à|at|université|university|école|school)\s+([^,\n]{5,50})',
+            r'([A-Z][a-zA-Zàâäçéèêëïîôùûüÿ\s]{5,50})(?:\s*[-,])',
+            r'(?:^|\s)([A-Z][a-zA-Zàâäçéèêëïîôùûüÿ\s]{10,50})(?:\s*$)'
         ]
         
         for pattern in institution_patterns:
@@ -589,7 +589,7 @@ class EducationParser(ParserMetricsMixin):
         
         achievement_patterns = [
             r'\b(?:mention|grade|distinction|honors)\b[^\n]{0,50}',
-            r'\b(?:trÃ¨s\s+bien|bien|assez\s+bien|cum\s+laude)\b[^\n]{0,30}',
+            r'\b(?:très\s+bien|bien|assez\s+bien|cum\s+laude)\b[^\n]{0,30}',
             r'\b\d+[.,]\d+/20\b',
             r'\b(?:first\s+class|second\s+class|distinction)\b'
         ]

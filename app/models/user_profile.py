@@ -30,6 +30,7 @@ class UserProfile(SQLModel, table=True):
     email: str = Field(max_length=255)
     phone: Optional[str] = Field(default=None, max_length=20)
     linkedin_url: Optional[str] = Field(default=None, max_length=500)
+    location: Optional[str] = Field(default=None, max_length=512)
     linkedin_pdf_path: Optional[str] = Field(
         default=None, max_length=1024,
         description="Chemin sécurisé vers le PDF export LinkedIn"
@@ -41,6 +42,10 @@ class UserProfile(SQLModel, table=True):
     linkedin_pdf_uploaded_at: Optional[datetime] = Field(
         default=None,
         description="Horodatage de l'upload du PDF LinkedIn"
+    )
+    profile_photo_path: Optional[str] = Field(
+        default=None, max_length=1024,
+        description="Chemin vers la photo de profil utilisée dans le CV"
     )
 
     # Documents de référence

@@ -17,10 +17,10 @@ from PySide6.QtWidgets import (
     QWidget, QScrollArea, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QLabel, QLineEdit, QTextEdit, QPushButton, QComboBox, QDateEdit, QSpinBox,
     QGroupBox, QFrame, QMessageBox, QDialog, QCheckBox, QSplitter,
-    QApplication, QButtonGroup, QRadioButton
+    QApplication, QButtonGroup, QRadioButton, QFileDialog
 )
 from PySide6.QtCore import Qt, Signal, QDate
-from PySide6.QtGui import QFont, QIcon, QPalette
+from PySide6.QtGui import QFont, QIcon, QPalette, QPixmap, QPainter, QPainterPath, QBrush, QColor
 from loguru import logger
 
 from ..models.user_profile import UserProfile
@@ -156,11 +156,99 @@ class PersonalInfoSection(QGroupBox):
         sanitize_widget_tree(self)
         self.setTitle(f"{get_display_text('👤')} Informations personnelles")
 
+    def _render_avatar_pixmap(self, path: str, size: int = 80) -> QPixmap:
+        """Charge et clippe la photo en cercle, ou dessine un avatar par défaut."""
+        pix = QPixmap(size, size)
+        pix.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pix)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if path and Path(path).is_file():
+            source = QPixmap(path).scaled(
+                size, size,
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            clip = QPainterPath()
+            clip.addEllipse(0, 0, size, size)
+            painter.setClipPath(clip)
+            x = (size - source.width()) // 2
+            y = (size - source.height()) // 2
+            painter.drawPixmap(x, y, source)
+        else:
+            painter.setBrush(QBrush(QColor("#555555")))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(0, 0, size, size)
+            painter.setPen(QColor("#aaaaaa"))
+            font = painter.font()
+            font.setPointSize(size // 3)
+            painter.setFont(font)
+            painter.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, "👤")
+        painter.end()
+        return pix
+
+    def _on_photo_selected_dialog(self):
+        """Ouvre le sélecteur de fichier pour choisir une photo."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Sélectionner une photo de profil", "",
+            "Images (*.jpg *.jpeg *.png *.webp)"
+        )
+        if not path:
+            return
+        try:
+            profile_id = getattr(self.profile, "id", None) or "default"
+            photos_dir = Path("user_data") / "photos"
+            photos_dir.mkdir(parents=True, exist_ok=True)
+            dest = photos_dir / f"profile_{profile_id}.jpg"
+            try:
+                from PIL import Image
+                img = Image.open(path).convert("RGB")
+                img.thumbnail((800, 800))
+                img.save(str(dest), "JPEG", quality=85)
+            except ImportError:
+                import shutil
+                shutil.copy2(path, str(dest))
+            dest_str = str(dest)
+            self.profile.profile_photo_path = dest_str
+            self._current_photo_path = dest_str
+            self._avatar_label.setPixmap(self._render_avatar_pixmap(dest_str, 80))
+            self.data_changed.emit()
+        except Exception as exc:
+            logger.warning(f"Photo import failed: {exc}")
+
     def setup_ui(self):
         """Set up the personal information section UI."""
+        outer_layout = QVBoxLayout()
+        outer_layout.setContentsMargins(12, 12, 12, 12)
+        outer_layout.setSpacing(10)
+
+        # Avatar block
+        avatar_row = QHBoxLayout()
+        self._current_photo_path = getattr(self.profile, "profile_photo_path", None) or ""
+        self._avatar_label = QLabel()
+        self._avatar_label.setFixedSize(80, 80)
+        self._avatar_label.setPixmap(self._render_avatar_pixmap(self._current_photo_path, 80))
+        self._avatar_label.setToolTip("Photo de profil CV")
+        avatar_row.addWidget(self._avatar_label)
+        avatar_row.addStretch()
+        change_photo_btn = QPushButton("📷 Changer la photo")
+        change_photo_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3a3a3a;
+                color: #cccccc;
+                border: 1px solid #555555;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 12px;
+            }
+            QPushButton:hover { background-color: #4a4a4a; border-color: #4db8ff; }
+        """)
+        change_photo_btn.clicked.connect(self._on_photo_selected_dialog)
+        avatar_row.addWidget(change_photo_btn)
+        outer_layout.addLayout(avatar_row)
+
         layout = QFormLayout()
         layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
-        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setHorizontalSpacing(12)
         layout.setVerticalSpacing(8)
 
@@ -210,7 +298,8 @@ class PersonalInfoSection(QGroupBox):
         self.create_field_with_source(layout, "Localisation:", "location",
                                       cv_location, linkedin_location, manual_location)
 
-        self.setLayout(layout)
+        outer_layout.addLayout(layout)
+        self.setLayout(outer_layout)
 
     def create_field_with_source(self, layout: QFormLayout, label: str, field_name: str,
                                 cv_value: str, linkedin_value: str, manual_value: str):
@@ -1085,6 +1174,13 @@ class LanguageItem(QFrame):
         layout.addWidget(QLabel("Niveau:"))
         layout.addWidget(self.fields['proficiency'], 1)
 
+        self.fields['certification'] = QLineEdit(self.language_data.get('certification', ''))
+        self.fields['certification'].setPlaceholderText("TOEIC, TOEFL, Cambridge…")
+        self.fields['certification'].setMaximumWidth(160)
+        self.fields['certification'].textChanged.connect(lambda: self.data_changed.emit())
+        layout.addWidget(QLabel("Certif.:"))
+        layout.addWidget(self.fields['certification'], 2)
+
         remove_btn = QPushButton("🗑️")
         remove_btn.setMaximumWidth(30)
         remove_btn.setStyleSheet("""
@@ -1108,7 +1204,8 @@ class LanguageItem(QFrame):
         """Retourne les données de la langue."""
         return {
             'language': self.fields['language'].text(),
-            'proficiency': self.fields['proficiency'].currentText()
+            'proficiency': self.fields['proficiency'].currentText(),
+            'certification': self.fields['certification'].text().strip(),
         }
     
     def has_changes(self) -> bool:

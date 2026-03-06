@@ -206,6 +206,7 @@ class HistoryCoordinator(SimpleCoordinator, Coordinator):
             final_cv_html=application.final_cv_html,
             final_cover_letter=application.final_cover_letter,
             cv_json_final=application.cv_json_final,
+            offer_analysis=application.offer_analysis,
             offer_text=application.offer_text,
             notes=application.notes,
             match_score=application.get_match_score() if hasattr(application, "get_match_score") else None,

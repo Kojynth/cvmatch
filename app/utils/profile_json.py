@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import unicodedata
 from datetime import datetime
@@ -19,6 +20,7 @@ logger = get_safe_logger(__name__, cfg=DEFAULT_PII_CONFIG)
 MODEL_PATH = Path.cwd() / "schemas" / "profile_details_model.json"
 SCHEMA_VERSION = "profile.v1"
 PROFILE_CACHE_DIR = Path.cwd() / "logs" / "profile_json"
+PROFILE_CACHE_VERSION = 2
 
 SECTION_FIELDS: Dict[str, List[str]] = {
     "personal_info": ["full_name", "email", "phone", "linkedin_url", "location"],
@@ -42,7 +44,7 @@ SECTION_FIELDS: Dict[str, List[str]] = {
     ],
     "skills": ["name", "level"],
     "soft_skills": ["name", "level"],
-    "languages": ["language", "proficiency"],
+    "languages": ["language", "proficiency", "certification"],
     "projects": ["name", "url", "technologies", "description"],
     "certifications": ["name", "organization", "date", "url"],
     "publications": ["title", "authors", "journal", "date", "url"],
@@ -404,15 +406,68 @@ def get_profile_json_cache_path(profile_id: int) -> Path:
     return PROFILE_CACHE_DIR / f"profile_json_profile_{safe_id}.json"
 
 
-def save_profile_json_cache(profile_id: int, data: Dict[str, Any]) -> str:
+def compute_profile_json_fingerprint(data: Dict[str, Any]) -> str:
+    normalized = normalize_profile_json(data if isinstance(data, dict) else {})
+    stable_json = json.dumps(
+        normalized,
+        sort_keys=True,
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(stable_json.encode("utf-8")).hexdigest()
+
+
+def _extract_cached_profile_json(payload: Any) -> Tuple[Dict[str, Any], str]:
+    # Backward compatible: legacy cache files store raw ProfileJSON without metadata.
+    if isinstance(payload, dict) and isinstance(payload.get("profile_json"), dict):
+        normalized = normalize_profile_json(payload.get("profile_json") or {})
+        meta = payload.get("_meta") if isinstance(payload.get("_meta"), dict) else {}
+        cached_fingerprint = str(meta.get("fingerprint") or "").strip().lower()
+        if not cached_fingerprint:
+            cached_fingerprint = compute_profile_json_fingerprint(normalized)
+        return normalized, cached_fingerprint
+
+    normalized = normalize_profile_json(payload if isinstance(payload, dict) else {})
+    return normalized, compute_profile_json_fingerprint(normalized)
+
+
+def save_profile_json_cache(
+    profile_id: int,
+    data: Dict[str, Any],
+    *,
+    fingerprint: str | None = None,
+) -> str:
     path = get_profile_json_cache_path(profile_id)
+    normalized = normalize_profile_json(data)
+    cache_fingerprint = (
+        str(fingerprint).strip().lower()
+        if fingerprint
+        else compute_profile_json_fingerprint(normalized)
+    )
+    payload = {
+        "_meta": {
+            "schema_version": SCHEMA_VERSION,
+            "cache_version": PROFILE_CACHE_VERSION,
+            "fingerprint": cache_fingerprint,
+            "saved_at": datetime.now().isoformat(timespec="seconds"),
+        },
+        "profile_json": normalized,
+    }
     with path.open("w", encoding="utf-8") as handle:
-        json.dump(data, handle, indent=2, ensure_ascii=True)
-    logger.info("Profile JSON cache saved: %s", path)
+        json.dump(payload, handle, indent=2, ensure_ascii=False)
+    logger.info(
+        "Profile JSON cache saved: %s (fingerprint=%s)",
+        path,
+        cache_fingerprint[:12],
+    )
     return str(path)
 
 
-def load_profile_json_cache(profile_id: int) -> Dict[str, Any] | None:
+def load_profile_json_cache(
+    profile_id: int,
+    *,
+    expected_fingerprint: str | None = None,
+) -> Dict[str, Any] | None:
     path = get_profile_json_cache_path(profile_id)
     if not path.exists():
         return None
@@ -421,8 +476,18 @@ def load_profile_json_cache(profile_id: int) -> Dict[str, Any] | None:
     except Exception as exc:
         logger.warning("Unable to read profile JSON cache: %s", exc)
         return None
-    normalized = normalize_profile_json(payload)
+
+    normalized, cached_fingerprint = _extract_cached_profile_json(payload)
     if has_profile_json_content(normalized):
+        expected = str(expected_fingerprint or "").strip().lower()
+        if expected and cached_fingerprint and expected != cached_fingerprint:
+            logger.info(
+                "Profile JSON cache stale: profile_id=%s cached=%s expected=%s",
+                profile_id,
+                cached_fingerprint[:12],
+                expected[:12],
+            )
+            return None
         return normalized
     return None
 
@@ -811,12 +876,23 @@ def _map_languages(raw_languages: Any) -> List[Dict[str, str]]:
         if isinstance(entry, dict):
             language = _pick_first(entry, ["language", "name"])
             proficiency = _pick_first(entry, ["proficiency", "level"])
+            certification = _pick_first(
+                entry,
+                ["certification", "certificate", "organization", "issuer"],
+            )
         else:
             language, proficiency = _parse_language_string(_clean_text(entry))
+            certification = ""
 
         if not language:
             continue
-        items.append({"language": language, "proficiency": proficiency})
+        items.append(
+            {
+                "language": language,
+                "proficiency": proficiency,
+                "certification": certification,
+            }
+        )
 
     return _dedup_items(items, key="language")
 
@@ -1246,7 +1322,7 @@ def _extract_profile_json_with_llm_single(
         logger.warning(
             "Strict ProfileJSON extraction failed, retrying non-strict: %s", exc
         )
-        raw = qwen.generate_structured_json(system_prompt, user_prompt)
+        raw = qwen.generate_structured_json(system_prompt, user_prompt, role="extractor")
         payload = _parse_json_response(raw)
         if not payload:
             return {}
@@ -1281,7 +1357,7 @@ def _payload_to_text(payload: Dict[str, Any] | None, max_chars: int) -> str:
     if not payload:
         return ""
     try:
-        text = json.dumps(payload, indent=2, ensure_ascii=True)
+        text = json.dumps(payload, indent=2, ensure_ascii=False)
     except Exception:
         text = str(payload)
     return text[:max_chars]
@@ -1290,7 +1366,7 @@ def _payload_to_text(payload: Dict[str, Any] | None, max_chars: int) -> str:
 def _build_llm_prompts(source_text: str, source: str) -> Tuple[str, str]:
     source_label = (source or "source").lower()
     model = load_profile_json_model()
-    model_text = json.dumps(model, indent=2, ensure_ascii=True)
+    model_text = json.dumps(model, indent=2, ensure_ascii=False)
 
     system_prompt = (
         "You are a data extraction engine. Return JSON only. "

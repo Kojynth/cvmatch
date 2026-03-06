@@ -1,10 +1,8 @@
-"""
+﻿"""
 Universal GPU Adapter
 =====================
 
-Système adaptatif universel qui optimise automatiquement selon le GPU disponible.
-De la GTX 1080 à la RTX 5070, avec garantie de génération sous 10 minutes.
-"""
+Système adaptatif universel qui optimise automatiquement selon le GPU disponible."""
 
 import re
 import psutil
@@ -115,7 +113,7 @@ class UniversalGPUAdapter:
                     "generation": gpu_data["gen"]
                 })
                 
-                logger.info(f"🎮 GPU détecté: {gpu_name} ({vram_gb:.1f}GB) - Score: {gpu_data['score']}/100")
+                logger.info(f"GPU détecté: {gpu_name} ({vram_gb:.1f}GB) - Score: {gpu_data['score']}/100")
                 
             except Exception as e:
                 logger.error(f"Erreur détection GPU PyTorch: {e}")
@@ -172,7 +170,7 @@ class UniversalGPUAdapter:
                                     "generation": gpu_data["gen"]
                                 })
                                 
-                                logger.info(f"🎮 GPU détecté (nvidia-smi): {gpu_name} ({vram_gb:.1f}GB)")
+                                logger.info(f" GPU détecté (nvidia-smi): {gpu_name} ({vram_gb:.1f}GB)")
                                 return gpu_info
                                 
                 except (subprocess.SubprocessError, FileNotFoundError, ValueError):
@@ -181,7 +179,7 @@ class UniversalGPUAdapter:
         except Exception as e:
             logger.warning(f"Erreur détection système: {e}")
         
-        logger.info("💻 Aucun GPU détecté - Mode CPU activé")
+        logger.info("❌ Aucun GPU détecté - Mode CPU activé")
         return gpu_info
     
     def _match_gpu_in_database(self, gpu_name: str) -> Dict[str, Any]:
@@ -247,10 +245,10 @@ class UniversalGPUAdapter:
                 "estimated_time_minutes": 2 if is_windows else 1,
                 "max_time_limit_minutes": 7 if is_windows else 5
             }
-        elif gpu_score >= 60:  # RTX 4050+, RTX 3070+
+        elif gpu_score >= 70:  # RTX 4070+, RTX 3080+, RTX 5070+
             profile = {
                 "tier": "high_performance", 
-                "model_size": "7B",  # Changé de 32B à 7B pour RTX 4050
+                "model_size": "7B",
                 "quantization": "gptq" if is_windows else ("awq" if vram_gb >= 6 else "gptq"),
                 "max_tokens": 3072,
                 "batch_size": 2,
@@ -259,7 +257,7 @@ class UniversalGPUAdapter:
                 "estimated_time_minutes": 4 if is_windows else 2,
                 "max_time_limit_minutes": 8 if is_windows else 7
             }
-        elif gpu_score >= 40:  # GTX 1080, RTX 2060+
+        elif gpu_score >= 50:  # RTX 4050/4060, RTX 2060/2070, GTX 1080+
             profile = {
                 "tier": "medium_performance",
                 "model_size": "7B" if is_windows else ("13B" if vram_gb < 8 else "32B"),
@@ -357,11 +355,11 @@ class UniversalGPUAdapter:
         elif vram_gb >= 12:
             return 0.85  # GPU milieu de gamme
         elif vram_gb >= 8:
-            return 0.80  # GPU entrée de gamme
+            return 0.75  # GPU entrée de gamme
         elif vram_gb >= 6:
-            return 0.75  # GPU budget
+            return 0.60  # GPU budget / low VRAM
         else:
-            return 0.70  # GPU très limités
+            return 0.55  # GPU très limités
     
     def get_performance_recommendations(self) -> Dict[str, Any]:
         """Génère des recommandations de performance."""
@@ -385,17 +383,17 @@ class UniversalGPUAdapter:
         if gpu_score < 40:
             recommendations["upgrade_suggestions"].append("🔄 GPU trop ancien - Considérer RTX 4060+ pour de meilleures performances")
         if self.gpu_info["vram_gb"] < 8:
-            recommendations["upgrade_suggestions"].append("💾 VRAM limitée - 8GB+ recommandé pour modèles 32B")
+            recommendations["upgrade_suggestions"].append("💾VRAM limitée - 8GB+ recommandé pour modèles 32B")
         if self.system_info["ram_available_gb"] < 16:
             recommendations["upgrade_suggestions"].append("🧠 RAM insuffisante - 16GB+ recommandé")
         
         # Tips d'optimisation
         recommendations["optimization_tips"] = [
-            f"🎯 Utiliser le modèle {self.performance_profile['model_size']} pour votre configuration",
-            f"⚡ Quantification {self.performance_profile['quantization']} optimale",
-            f"🕐 Temps de génération attendu: ~{self.performance_profile['estimated_time_minutes']} minutes",
-            "🧹 Fermer les autres applications gourmandes",
-            "🔥 Surveiller la température GPU durant la génération"
+            f"🔍 Utiliser le modèle {self.performance_profile['model_size']} pour votre configuration",
+            f"🔍 Quantification {self.performance_profile['quantization']} optimale",
+            f"🕒 Temps de génération attendu: ~{self.performance_profile['estimated_time_minutes']} minutes",
+            "ðŸ§¹ Fermer les autres applications gourmandes",
+            "🔍 Surveiller la température GPU durant la génération"
         ]
         
         return recommendations
@@ -448,9 +446,9 @@ class UniversalGPUAdapter:
         
         if not result["guarantee_met"]:
             result["recommendations"] = [
-                "⚠️ Configuration ne respecte pas la limite 10min",
-                f"🔧 Réduire à modèle {self._get_faster_model_size()}",
-                "💾 Augmenter la quantification",
+                "⚠️Configuration ne respecte pas la limite 10min",
+                f"🔧 Réduire au modèle plus petit: {self._get_faster_model_size()}",
+                "💾Augmenter la quantification",
                 "🚀 Activer vLLM si possible"
             ]
         
@@ -490,11 +488,11 @@ class UniversalGPUAdapter:
         elif vram_gb >= 12:
             return 0.85  # GPU milieu de gamme
         elif vram_gb >= 8:
-            return 0.80  # GPU entrée de gamme
+            return 0.75  # GPU entrée de gamme
         elif vram_gb >= 6:
-            return 0.75  # GPU budget (RTX 4050)
+            return 0.60  # GPU budget / low VRAM
         else:
-            return 0.70  # GPU très limités
+            return 0.55  # GPU très limités
 
 
 # Instance globale

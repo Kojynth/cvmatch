@@ -2,9 +2,8 @@
 LLM Worker
 ==========
 
-Worker pour la génération de CV avec le modèle Qwen2.5-32B-Instruct.
+Worker pour la génération de CV.
 """
-
 import json
 import re
 import time
@@ -13,7 +12,6 @@ import sys
 import tempfile
 import subprocess
 import unicodedata
-import inspect
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Iterable, Union, Tuple
@@ -26,39 +24,17 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 
-try:
-    import torch
-    from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
-    from transformers.utils import logging as transformers_logging
-    import os
-    
-    # Réduire les warnings/logs
-    transformers_logging.set_verbosity_error()
-    os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-    os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"  # Désactiver symlinks (Windows compat)
-    os.environ["TRANSFORMERS_VERBOSITY"] = "error"
-    
-    TRANSFORMERS_AVAILABLE = True
-    TORCH_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"Dépendances IA non disponibles ({e}) - Mode simulation activé")
-    TRANSFORMERS_AVAILABLE = False
-    TORCH_AVAILABLE = False
-    # Mock objects pour éviter les erreurs
-    class MockTorch:
-        device = lambda x: None
-        cuda = type('cuda', (), {'is_available': lambda: False, 'empty_cache': lambda: None})()
-        no_grad = lambda: type('context', (), {'__enter__': lambda self: None, '__exit__': lambda self, *args: None})()
-        float16 = 'float16'
-        float32 = 'float32'
-    torch = MockTorch()
+# Suppress HuggingFace warnings on Windows
+import os
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 
 from ..models.user_profile import UserProfile
 from ..models.job_application import JobApplication, ApplicationStatus
 from ..models.database import get_session
 from .worker_data import ProfileWorkerData
 from typing import Union
-from ..utils.model_registry import model_registry
 try:
     from ..utils.gpu_utils import gpu_manager
 except ImportError:
@@ -80,6 +56,27 @@ except ImportError:
             if progress_callback: progress_callback("📥 Téléchargement standard...")
             return model_name
     model_optimizer = MockModelOptimizer()
+
+from ..utils.llm_worker_fallbacks import (
+    build_cv_json_fallback,
+    build_offer_keywords_fallback,
+)
+from ..utils.offer_keywords_quality import (
+    extract_offer_text_from_offer_data,
+    stabilize_offer_keywords_payload,
+)
+from ..utils.offer_keywords_llm_retry import run_offer_keywords_second_pass
+from ..utils.model_quality_routing import resolve_writer_quality_override
+from ..utils.stage_attempts_config import (
+    resolve_stage_attempts,
+    resolve_stage_timeout_seconds,
+)
+from ..utils.stage_subprocess_utils import (
+    build_stage_subprocess_env,
+    extract_stage_subprocess_error,
+    is_transient_stage_memory_error,
+    persist_stage_subprocess_diagnostics,
+)
 
 
 def _normalize_template_name(template: Optional[str]) -> str:
@@ -632,7 +629,17 @@ def _format_profile_detailed_data(profile: Union[UserProfile, ProfileWorkerData]
                 if isinstance(entry, dict):
                     name = entry.get("language") or entry.get("name") or ""
                     level = entry.get("level") or entry.get("proficiency") or ""
-                    rendered.append(_join_nonempty([str(name), str(level)], sep=": "))
+                    certification = (
+                        entry.get("certification")
+                        or entry.get("certificate")
+                        or entry.get("organization")
+                        or entry.get("issuer")
+                        or ""
+                    )
+                    descriptor = str(level)
+                    if certification:
+                        descriptor = f"{descriptor} ({certification})" if descriptor else str(certification)
+                    rendered.append(_join_nonempty([str(name), descriptor], sep=": "))
                 elif isinstance(entry, str) and entry.strip():
                     rendered.append(entry.strip())
             rendered = [item for item in rendered if item]
@@ -802,2969 +809,13 @@ def _markdown_skeleton_for_template(template: Optional[str], language: Optional[
     )
 
 
-class QwenManager:
-    """Gestionnaire pour les modèles IA avec support multi-modèles."""
-    
-    _instance = None
-    _model = None
-    _tokenizer = None
-    _device = None
-    _current_model_path = None
-    DEFAULT_ROLE_PARAMS = {
-        "extractor": {
-            "temperature": 0.0,
-            "top_p": 0.9,
-            "top_k": 50,
-            "max_input_tokens": 3000,
-            "max_new_tokens": 700,
-            "max_total_tokens": 3700,
-        },
-        "critic": {
-            "temperature": 0.2,
-            "top_p": 0.9,
-            "top_k": 50,
-            "max_input_tokens": 2800,
-            "max_new_tokens": 900,
-            "max_total_tokens": 3700,
-        },
-        "offer_critic": {
-            "temperature": 0.1,
-            "top_p": 0.9,
-            "top_k": 50,
-            "max_input_tokens": 2200,
-            "max_new_tokens": 600,
-            "max_total_tokens": 2800,
-        },
-        "generator": {
-            "temperature": 0.3,
-            "top_p": 0.9,
-            "top_k": 50,
-            "max_input_tokens": 2400,
-            "max_new_tokens": 2200,
-            "max_total_tokens": 5200,
-        },
-    }
-    
-    def __new__(cls, model_version: str = "base"):
-        """Singleton pour éviter de recharger le modèle."""
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-    
-    def __init__(self, model_version: str = "base"):
-        if hasattr(self, '_initialized'):
-            return
-        
-        self.model_version = model_version
-        self.model_loaded = False
-        self.model_name = "Qwen/Qwen2.5-7B-Instruct"  # Par défaut
-        self.current_loader = "transformers"
-        self.custom_parameters: Dict[str, Any] = {}
-        self.role_params: Dict[str, Any] = {}
-        self._llama_cpp_server = None
-        self._optimization_config = None
-        self._current_model_path = None
-        self._last_max_memory_map_details: Dict[str, Any] = {}
-        self.last_model_resolution_note: Optional[str] = None
-        self._initialized = True
-        
-        # Charger la configuration du modèle sélectionné
-        self._load_selected_model_config()
-    
-    def _load_selected_model_config(self):
-        """Charge la configuration du modèle sélectionné par l'utilisateur."""
-        try:
-            from ..utils.model_config_manager import model_config_manager
-            from ..utils.model_manager import model_manager
-            
-            self.last_model_resolution_note = None
-
-            # Récupérer le modèle sélectionné
-            config = model_config_manager.get_current_config()
-            self.custom_parameters = getattr(config, "custom_parameters", None) or {}
-
-            # Toujours tenter le modele choisi par l'utilisateur, meme si incompatible
-            if config.model_id not in getattr(model_manager, 'available_models', []):
-                self.last_model_resolution_note = (
-                    f"Warning: modele '{config.model_id}' incompatible selon le garde-fou. "
-                    "Tentative de chargement quand meme."
-                )
-                logger.warning(self.last_model_resolution_note)
-
-            model_info = model_manager.get_model_info(config.model_id)
-             
-            if model_info:
-                self.model_name = model_info.model_path
-                self.current_model_id = config.model_id
-                self.current_loader = getattr(model_info, "loader", "transformers") or "transformers"
-                self.role_params = (getattr(model_info, "metadata", None) or {}).get(
-                    "role_params", {}
-                )
-                if getattr(model_info, "quantization", "") == "nf4":
-                    self.custom_parameters.setdefault("force_4bit_nf4", True)
-                logger.info(f"Configuration modèle: {config.model_id} -> {self.model_name}")
-            else:
-                logger.warning(f"Modele {config.model_id} non trouve, utilisation du registre dynamique")
-                fallback = model_registry.select_profile({
-                    "available": model_manager.gpu_info.get("available", False),
-                    "vram_gb": model_manager.gpu_info.get("vram_gb", 0),
-                    "ram_gb": getattr(model_manager, 'system_ram_gb', 0),
-                })
-                if fallback:
-                    self.model_name = fallback.model_id
-                    self.current_model_id = fallback.key
-                    self.current_loader = getattr(fallback, "loader", None) or "transformers"
-                    self.role_params = (getattr(fallback, "extra", None) or {}).get(
-                        "role_params", {}
-                    )
-                    if getattr(fallback, "quantization", "") == "nf4":
-                        self.custom_parameters.setdefault("force_4bit_nf4", True)
-                    logger.info(f"Fallback registre -> {fallback.key} ({self.model_name})")
-                else:
-                    logger.warning("Aucun profil registre disponible, conservation du modèle par défaut")
-                
-        except ImportError:
-            logger.warning("Configuration centralisée non disponible, modèle par défaut")
-        except Exception as e:
-            logger.error(f"Erreur chargement config modèle: {e}")
-    
-    def _resolve_role_params(
-        self, role: str, overrides: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        defaults = dict(self.DEFAULT_ROLE_PARAMS.get(role, {}))
-        model_overrides = self.role_params.get(role, {}) if self.role_params else {}
-        merged = {**defaults, **model_overrides}
-        if overrides:
-            merged.update(overrides)
-        return merged
-
-    def _should_unload_between_stages(self) -> bool:
-        env_flag = os.getenv("CVMATCH_UNLOAD_BETWEEN_STAGES")
-        if env_flag is not None:
-            return env_flag.strip().lower() in ("1", "true", "yes", "y")
-        custom = self.custom_parameters or {}
-        return bool(custom.get("unload_between_stages"))
-
-    def _should_unload_after_generation(self) -> bool:
-        env_flag = os.getenv("CVMATCH_UNLOAD_AFTER_RUN")
-        if env_flag is not None:
-            return env_flag.strip().lower() in ("1", "true", "yes", "y")
-
-        custom = self.custom_parameters or {}
-        if "unload_after_run" in custom:
-            return bool(custom.get("unload_after_run"))
-
-        # Auto mode: si la marge VRAM est faible en fin de run, on libère le modèle.
-        if not TORCH_AVAILABLE or not torch.cuda.is_available():
-            return False
-        free_vram = self._get_free_vram_gb()
-        if free_vram <= 0:
-            return False
-        headroom = self._get_vram_headroom_gb(free_vram_gb=free_vram)
-        return free_vram < max(1.0, headroom)
-
-    def generate_structured_json_lmfe(
-        self,
-        *,
-        system_prompt: str,
-        user_prompt: str,
-        schema: Dict[str, Any],
-        role: str,
-        progress_callback=None,
-        role_params: Optional[Dict[str, Any]] = None,
-    ) -> str:
-        from ..utils.json_strict import build_lmfe_generation_kwargs, JsonStrictError
-
-        if getattr(self, "current_loader", "transformers") != "transformers":
-            raise JsonStrictError("Strict JSON requires transformers (in-process) loader.")
-
-        if not self.model_loaded:
-            self.load_model(progress_callback, allow_fallback=False)
-
-        if not TRANSFORMERS_AVAILABLE or self._model is None or self._tokenizer is None:
-            raise JsonStrictError("Transformers model not available for strict JSON.")
-
-        params = self._resolve_role_params(role, role_params)
-        max_input_tokens = int(params.get("max_input_tokens") or 2048)
-        max_new_tokens = int(params.get("max_new_tokens") or 512)
-        max_total_tokens = int(params.get("max_total_tokens") or 0) or None
-        temperature = float(params.get("temperature") or 0.2)
-        top_p = float(params.get("top_p") or 0.9)
-        top_k = int(params.get("top_k") or 50)
-
-        formatted_prompt = self._build_generic_prompt(system_prompt, user_prompt)
-
-        inputs = self._tokenizer(
-            formatted_prompt,
-            return_tensors="pt",
-            truncation=True,
-            max_length=max_input_tokens,
-        ).to(self._device)
-
-        input_len = int(inputs.input_ids.shape[1])
-        if max_total_tokens:
-            max_new_tokens = max(1, min(max_new_tokens, max_total_tokens - input_len))
-
-        slow_device = False
-        try:
-            if getattr(self._device, "type", None) == "cpu":
-                slow_device = True
-        except Exception:
-            pass
-        try:
-            device_map = getattr(self._model, "hf_device_map", None)
-            if isinstance(device_map, dict) and device_map:
-                for value in device_map.values():
-                    resolved = self._normalize_device_target(value)
-                    if resolved is None:
-                        continue
-                    if resolved.type != "cuda":
-                        slow_device = True
-                        break
-        except Exception:
-            pass
-
-        max_time_s = 120.0
-        if slow_device:
-            max_time_s = 240.0
-            max_new_tokens = min(max_new_tokens, 800)
-            logger.info(
-                "Strict JSON slow mode: cap max_new_tokens=%s max_time=%.0fs",
-                max_new_tokens,
-                max_time_s,
-            )
-
-        lmfe_kwargs = build_lmfe_generation_kwargs(self._tokenizer, schema)
-
-        use_cache = True
-        try:
-            if getattr(self._device, "type", None) == "cuda" and self._should_disable_kv_cache():
-                free_vram = self._get_free_vram_gb()
-                use_cache = False
-                note = f"[WARN] VRAM faible ({free_vram:.1f}GB) : KV cache désactivé."
-                logger.warning(note)
-                if progress_callback:
-                    progress_callback(note)
-        except Exception:
-            pass
-
-        with torch.no_grad():
-            generate_kwargs = {
-                "max_new_tokens": max_new_tokens,
-                "temperature": max(temperature, 0.0),
-                "top_p": top_p,
-                "top_k": top_k,
-                "do_sample": temperature > 0.0,
-                "repetition_penalty": 1.05,
-                "pad_token_id": self._tokenizer.eos_token_id,
-                "eos_token_id": self._tokenizer.eos_token_id,
-                "max_time": max_time_s,
-                "use_cache": use_cache,
-                **lmfe_kwargs,
-            }
-            outputs = self._model.generate(**inputs, **generate_kwargs)
-
-        generated_text = self._tokenizer.decode(
-            outputs[0][inputs.input_ids.shape[1] :],
-            skip_special_tokens=True,
-        )
-
-        return self._extract_structured_content(generated_text)
-
-    def _check_first_download(self, progress_callback=None):
-        """Vérifie si c'est le premier téléchargement du modèle."""
-        try:
-            from transformers import AutoTokenizer
-            from pathlib import Path
-            import os
-            
-            # Chemins de cache possibles
-            cache_paths = [
-                Path.home() / ".cache" / "huggingface" / "transformers",
-                Path.home() / ".cache" / "huggingface" / "hub"
-            ]
-            
-            model_cached = False
-            for cache_path in cache_paths:
-                if cache_path.exists():
-                    # Chercher des traces du modèle dans le cache
-                    for item in cache_path.iterdir():
-                        if self.model_name.split('/')[-1].lower() in item.name.lower():
-                            model_cached = True
-                            break
-                if model_cached:
-                    break
-            
-            if not model_cached and progress_callback:
-                model_display_name = getattr(self, 'current_model_id', self.model_name.split('/')[-1])
-                progress_callback(f"⏳ Premier téléchargement de {model_display_name}")
-                progress_callback("📥 Le téléchargement peut prendre plusieurs minutes selon votre connexion...")
-                progress_callback("💾 Le modèle sera mis en cache pour les prochaines utilisations")
-                
-        except Exception as e:
-            logger.warning(f"Impossible de vérifier le cache: {e}")
-
-    def _estimate_required_ram_gb(
-        self,
-        *,
-        model_name: Optional[str] = None,
-        model_id: Optional[str] = None,
-        optimization: Optional[Dict[str, Any]] = None,
-    ) -> float:
-        """Heuristique: estime la RAM (GB) requise pour charger le modèle."""
-        opt = optimization or (self._optimization_config or {})
-        dtype = opt.get("dtype")
-        params_b = _estimate_model_size_gb(
-            model_name or self.model_name,
-            model_id or getattr(self, "current_model_id", None),
-        )
-
-        if opt.get("load_in_4bit"):
-            gb_per_b = 0.5
-        elif opt.get("load_in_8bit"):
-            gb_per_b = 1.0
-        else:
-            dtype_str = str(dtype).lower() if dtype is not None else ""
-            is_fp16_family = dtype in (
-                getattr(torch, "float16", None),
-                getattr(torch, "bfloat16", None),
-            )
-            if is_fp16_family or "float16" in dtype_str or "bfloat16" in dtype_str:
-                gb_per_b = 2.0
-            else:
-                gb_per_b = 4.0
-
-        overhead_factor = 1.10
-        overhead_constant = 0.8
-        return max(1.5, params_b * gb_per_b * overhead_factor + overhead_constant)
-
-    def _pick_fallback_model_for_memory(
-        self,
-        available_ram_gb: float,
-        available_vram_gb: float = 0.0,
-    ) -> Optional[Dict[str, str]]:
-        """Choisit un modèle de fallback adapté à la RAM et, si dispo, à la VRAM."""
-        try:
-            from ..utils.model_manager import model_manager
-        except Exception:
-            return None
-
-        current_id = getattr(self, "current_model_id", None)
-        candidates = [
-            mid
-            for mid in getattr(model_manager, "available_models", [])
-            if mid and mid != current_id
-        ]
-        if not candidates:
-            return None
-
-        fitting: List[tuple] = []
-        all_candidates: List[tuple] = []
-        for model_id in candidates:
-            info = model_manager.get_model_info(model_id)
-            if not info:
-                continue
-            required_ram = self._estimate_required_ram_gb(
-                model_name=info.model_path, model_id=model_id
-            )
-            required_vram = float(getattr(info, "vram_required", 0) or 0)
-            all_candidates.append((required_vram, required_ram, model_id, info.model_path))
-
-            ram_fits = available_ram_gb <= 0 or required_ram <= available_ram_gb * 0.92
-            vram_fits = True
-            if available_vram_gb > 0 and required_vram > 0:
-                # Petite tolérance pour laisser l'offload CPU/disk aider.
-                vram_fits = required_vram <= available_vram_gb + 0.5
-
-            if ram_fits and vram_fits:
-                fitting.append(
-                    (
-                        -info.quality_stars,
-                        -info.speed_rating,
-                        required_vram,
-                        required_ram,
-                        model_id,
-                        info.model_path,
-                    )
-                )
-
-        if fitting:
-            fitting.sort()
-            _, _, _, _, model_id, model_path = fitting[0]
-            return {"model_id": model_id, "model_path": model_path}
-
-        if not all_candidates:
-            return None
-
-        all_candidates.sort(key=lambda item: (item[0], item[1]))
-        _, _, model_id, model_path = all_candidates[0]
-        return {"model_id": model_id, "model_path": model_path}
-
-    def _check_memory_before_load(self) -> tuple:
-        """Vérifie si assez de mémoire est disponible avant chargement.
-
-        Returns:
-            tuple: (can_proceed: bool, error_message: str or None)
-        """
-        try:
-            import psutil
-            mem = psutil.virtual_memory()
-            # Utiliser la RAM "available" (inclut le cache libérable) pour éviter de lancer
-            # un chargement qui va swapper/crasher.
-            available_ram = mem.available / (1024**3)
-            total_ram = mem.total / (1024**3)
-
-            device = (self._optimization_config or {}).get("device") or "cpu"
-            swap_total_gb = 0.0
-            try:
-                swap_total_gb = psutil.swap_memory().total / (1024**3)
-            except Exception:
-                swap_total_gb = 0.0
-            if device != "cpu" and swap_total_gb < 8.0:
-                logger.warning(
-                    "Swap size is low for large-model loading: swap_total=%.1fGB (recommended >= 16GB).",
-                    swap_total_gb,
-                )
-
-            # Pour GPU, la contrainte principale est la VRAM (déjà gérée par gpu_manager).
-            # On garde ici une vérification minimale de RAM pour éviter les crashs au chargement.
-            if device != "cpu":
-                free_vram = self._get_free_vram_gb()
-                try:
-                    total_vram = float(
-                        getattr(gpu_manager, "gpu_info", {}).get("total_memory_gb", 0)
-                        or 0
-                    )
-                except Exception:
-                    total_vram = 0.0
-                if free_vram > 0:
-                    headroom = self._get_vram_headroom_gb(
-                        free_vram_gb=free_vram,
-                        total_vram_gb=total_vram,
-                    )
-                    if free_vram < 0.75:
-                        error_msg = (
-                            f"VRAM insuffisante pour charger {self.model_name}: "
-                            f"{free_vram:.2f}GB libres (total {total_vram:.2f}GB). "
-                            "Fermez les applis GPU (Discord/Zoom/Steam/navigateur) puis réessayez."
-                        )
-                        return False, error_msg
-                    if free_vram < max(1.0, headroom):
-                        logger.warning(
-                            "VRAM before load is tight: free=%.2fGB headroom_target=%.2fGB total=%.2fGB",
-                            free_vram,
-                            headroom,
-                            total_vram,
-                        )
-                if available_ram < 2.0:
-                    error_msg = (
-                        f"Mémoire système insuffisante pour charger {self.model_name}: "
-                        f"{available_ram:.1f}GB disponibles (sur {total_ram:.1f}GB). "
-                        "Fermez des applications puis réessayez."
-                    )
-                    return False, error_msg
-                return True, None
-
-            required = float(self._estimate_required_ram_gb())
-
-            # Vérification avec marge de sécurité de 20%
-            if available_ram < required * 0.8:
-                error_msg = (
-                    f"Mémoire insuffisante pour charger {self.model_name}: "
-                    f"{available_ram:.1f}GB disponibles (sur {total_ram:.1f}GB), ~{required:.1f}GB requis. "
-                    "Fermez des applications ou choisissez un modèle plus petit (Qwen2.5-0.5B, TinyLlama)."
-                )
-                return False, error_msg
-
-            # Avertissement si mémoire serrée
-            if available_ram < required * 1.2:
-                logger.warning(
-                    f"Mémoire disponible limitée ({available_ram:.1f}GB) pour {self.model_name} "
-                    f"(recommandé: {required:.1f}GB). Le chargement pourrait être lent."
-                )
-
-            return True, None
-
-        except ImportError:
-            logger.warning("psutil non disponible - vérification mémoire ignorée")
-            return True, None
-        except Exception as e:
-            logger.warning(f"Erreur vérification mémoire: {e}")
-            return True, None
-
-    def _get_free_vram_gb(self) -> float:
-        if not TORCH_AVAILABLE or not torch.cuda.is_available():
-            return 0.0
-        try:
-            if hasattr(torch.cuda, "mem_get_info"):
-                free_bytes, _ = torch.cuda.mem_get_info()
-                return free_bytes / (1024**3)
-        except Exception:
-            pass
-        try:
-            if hasattr(gpu_manager, "get_available_vram"):
-                return float(gpu_manager.get_available_vram())
-        except Exception:
-            pass
-        return 0.0
-
-    def _get_vram_headroom_gb(
-        self,
-        free_vram_gb: Optional[float] = None,
-        total_vram_gb: Optional[float] = None,
-    ) -> float:
-        custom = self.custom_parameters or {}
-        try:
-            override = float(custom.get("vram_headroom_gb", 0) or 0)
-            if override > 0:
-                return override
-        except Exception:
-            pass
-        env_override = os.getenv("CVMATCH_VRAM_HEADROOM_GB")
-        if env_override:
-            try:
-                parsed = float(env_override)
-                if parsed > 0:
-                    return parsed
-            except Exception:
-                pass
-
-        free_vram = float(free_vram_gb or 0.0)
-        if free_vram <= 0:
-            free_vram = self._get_free_vram_gb()
-
-        total_vram = float(total_vram_gb or 0.0)
-        if total_vram <= 0:
-            try:
-                total_vram = float(
-                    getattr(gpu_manager, "gpu_info", {}).get("total_memory_gb", 0) or 0
-                )
-            except Exception:
-                total_vram = 0.0
-
-        try:
-            factor = float(custom.get("vram_headroom_factor", 0.15) or 0.15)
-        except Exception:
-            factor = 0.15
-        env_factor = os.getenv("CVMATCH_VRAM_HEADROOM_FACTOR")
-        if env_factor:
-            try:
-                factor = float(env_factor)
-            except Exception:
-                pass
-        if factor <= 0:
-            factor = 0.15
-
-        default_min = 0.5
-        default_max = 1.5 if (total_vram > 0 and total_vram <= 12.0) else 2.5
-        try:
-            min_headroom = float(custom.get("vram_headroom_min_gb", default_min) or default_min)
-        except Exception:
-            min_headroom = default_min
-        env_min = os.getenv("CVMATCH_VRAM_HEADROOM_MIN_GB")
-        if env_min:
-            try:
-                min_headroom = float(env_min)
-            except Exception:
-                pass
-        try:
-            max_headroom = float(custom.get("vram_headroom_max_gb", default_max) or default_max)
-        except Exception:
-            max_headroom = default_max
-        env_max = os.getenv("CVMATCH_VRAM_HEADROOM_MAX_GB")
-        if env_max:
-            try:
-                max_headroom = float(env_max)
-            except Exception:
-                pass
-
-        if min_headroom <= 0:
-            min_headroom = default_min
-        if max_headroom < min_headroom:
-            max_headroom = min_headroom
-
-        if free_vram > 0:
-            dynamic = free_vram * factor
-            return max(min_headroom, min(max_headroom, dynamic))
-
-        if total_vram > 0:
-            return max(min_headroom, min(max_headroom, total_vram * 0.12))
-        return 1.0
-
-    def _should_disable_kv_cache(self) -> bool:
-        if not TORCH_AVAILABLE or not torch.cuda.is_available():
-            return False
-        custom = self.custom_parameters or {}
-        try:
-            threshold = float(custom.get("disable_kv_cache_below_gb", 0) or 0)
-        except Exception:
-            threshold = 0.0
-        if threshold <= 0:
-            try:
-                total_vram = float(getattr(gpu_manager, "gpu_info", {}).get("total_memory_gb", 0) or 0)
-            except Exception:
-                total_vram = 0.0
-            if total_vram > 0:
-                threshold = max(1.0, min(2.5, total_vram * 0.12))
-            else:
-                threshold = 1.5
-        free_vram = self._get_free_vram_gb()
-        return free_vram > 0 and free_vram < threshold
-
-    def _build_max_memory_map(self) -> Optional[Dict[Union[int, str], str]]:
-        """Build a max_memory map for auto device placement."""
-        self._last_max_memory_map_details = {}
-        if not TORCH_AVAILABLE or not torch.cuda.is_available():
-            self._last_max_memory_map_details = {
-                "enabled": False,
-                "reason": "torch_or_cuda_unavailable",
-            }
-            return None
-
-        def _get_percent(key: str, default_value: int) -> int:
-            raw = (self.custom_parameters or {}).get(key)
-            try:
-                value = int(raw)
-            except Exception:
-                return default_value
-            if value < 10 or value > 99:
-                return default_value
-            return value
-
-        def _get_gb_from_custom_or_env(
-            custom_key: str,
-            env_key: str,
-        ) -> Optional[float]:
-            value: Optional[float] = None
-            try:
-                raw_custom = (self.custom_parameters or {}).get(custom_key)
-                if raw_custom is not None:
-                    parsed = float(raw_custom)
-                    if parsed > 0:
-                        value = parsed
-            except Exception:
-                value = None
-            raw_env = os.getenv(env_key)
-            if raw_env:
-                try:
-                    parsed_env = float(raw_env)
-                    if parsed_env > 0:
-                        value = parsed_env
-                except Exception:
-                    pass
-            return value
-
-        free_vram_gb = 0.0
-        free_vram_source = "unknown"
-        try:
-            if hasattr(torch.cuda, "mem_get_info"):
-                free_bytes, _ = torch.cuda.mem_get_info()
-                free_vram_gb = free_bytes / (1024**3)
-                free_vram_source = "mem_get_info"
-        except Exception:
-            free_vram_gb = 0.0
-            free_vram_source = "mem_get_info_error"
-
-        try:
-            total_vram = float(gpu_manager.gpu_info.get("total_memory_gb", 0) or 0)
-        except Exception:
-            total_vram = 0.0
-
-        if not free_vram_gb:
-            free_vram_gb = total_vram
-            free_vram_source = "total_vram_fallback"
-
-        if free_vram_gb <= 0:
-            self._last_max_memory_map_details = {
-                "enabled": False,
-                "reason": "free_vram_unknown",
-                "total_vram_gb": round(total_vram, 3),
-            }
-            logger.warning(
-                "Max memory map disabled: unable to determine free VRAM (total_vram_gb=%.3f).",
-                total_vram,
-            )
-            return None
-
-        default_gpu_percent = 80 if total_vram and total_vram <= 12 else 90
-        gpu_percent = _get_percent("max_memory_gpu_percent", default_gpu_percent)
-        headroom_gb = self._get_vram_headroom_gb(
-            free_vram_gb=free_vram_gb,
-            total_vram_gb=total_vram,
-        )
-        requested_gpu_gb = _get_gb_from_custom_or_env(
-            "max_memory_gpu_gb", "CVMATCH_MAX_MEMORY_GPU_GB"
-        )
-
-        gpu_mode = "percent_total" if total_vram > 0 else "percent_free"
-        if requested_gpu_gb is not None:
-            gpu_mode = "absolute_gb"
-            requested_vram_budget_gb = float(requested_gpu_gb)
-        else:
-            requested_base = total_vram if total_vram > 0 else free_vram_gb
-            requested_vram_budget_gb = requested_base * (gpu_percent / 100.0)
-
-        available_vram_gb = max(0.0, free_vram_gb - headroom_gb)
-        clamp_reason = ""
-        if available_vram_gb <= 0:
-            fallback_available = max(0.25, free_vram_gb * 0.7)
-            available_vram_gb = fallback_available
-            clamp_reason = "free_minus_headroom_non_positive"
-
-        vram_budget_gb = min(requested_vram_budget_gb, available_vram_gb, free_vram_gb)
-        if vram_budget_gb < requested_vram_budget_gb and not clamp_reason:
-            clamp_reason = "capped_by_free_minus_headroom"
-
-        if vram_budget_gb <= 0:
-            self._last_max_memory_map_details = {
-                "enabled": False,
-                "reason": "gpu_budget_non_positive",
-                "free_vram_gb": round(free_vram_gb, 3),
-                "headroom_gb": round(headroom_gb, 3),
-                "requested_vram_budget_gb": round(requested_vram_budget_gb, 3),
-            }
-            logger.warning(
-                "Max memory map disabled: computed GPU budget is non-positive (free=%.3fGB headroom=%.3fGB requested=%.3fGB).",
-                free_vram_gb,
-                headroom_gb,
-                requested_vram_budget_gb,
-            )
-            return None
-
-        vram_budget_mib = max(256, int(vram_budget_gb * 1024))
-        memory_map: Dict[Union[int, str], str] = {0: f"{vram_budget_mib}MiB"}
-
-        cpu_percent_value = _get_percent("max_memory_cpu_percent", 80)
-        cpu_available_ram_gb = 0.0
-        cpu_headroom_gb = 2.0
-        cpu_mode = "percent_available"
-        cpu_requested_gb: Optional[float] = None
-        cpu_applied_gb = 0.0
-        cpu_clamp_reason = ""
-        try:
-            import psutil
-
-            cpu_available_ram_gb = psutil.virtual_memory().available / (1024**3)
-            cpu_requested_gb = _get_gb_from_custom_or_env(
-                "max_memory_cpu_gb", "CVMATCH_MAX_MEMORY_CPU_GB"
-            )
-            try:
-                custom_headroom = (self.custom_parameters or {}).get("cpu_headroom_gb")
-                if custom_headroom is not None:
-                    cpu_headroom_gb = max(0.5, float(custom_headroom))
-                env_headroom = os.getenv("CVMATCH_CPU_HEADROOM_GB")
-                if env_headroom:
-                    cpu_headroom_gb = max(0.5, float(env_headroom))
-            except Exception:
-                cpu_headroom_gb = 2.0
-
-            available_cpu_for_model_gb = max(0.0, cpu_available_ram_gb - cpu_headroom_gb)
-            if cpu_requested_gb is not None:
-                cpu_mode = "absolute_gb"
-                requested_cpu_budget_gb = float(cpu_requested_gb)
-            else:
-                requested_cpu_budget_gb = cpu_available_ram_gb * (cpu_percent_value / 100.0)
-
-            if available_cpu_for_model_gb <= 0:
-                cpu_applied_gb = max(0.0, min(requested_cpu_budget_gb, cpu_available_ram_gb))
-                cpu_clamp_reason = "available_ram_below_headroom"
-            else:
-                cpu_applied_gb = min(requested_cpu_budget_gb, available_cpu_for_model_gb)
-                if cpu_applied_gb < requested_cpu_budget_gb:
-                    cpu_clamp_reason = "capped_by_available_ram_minus_headroom"
-
-            if cpu_applied_gb >= 1.0:
-                ram_budget_mib = max(1024, int(cpu_applied_gb * 1024))
-                memory_map["cpu"] = f"{ram_budget_mib}MiB"
-        except Exception:
-            pass
-
-        details = {
-            "enabled": True,
-            "free_vram_source": free_vram_source,
-            "total_vram_gb": round(total_vram, 3),
-            "free_vram_gb": round(free_vram_gb, 3),
-            "headroom_gb": round(headroom_gb, 3),
-            "available_vram_gb": round(available_vram_gb, 3),
-            "gpu_mode": gpu_mode,
-            "gpu_percent": gpu_percent,
-            "gpu_budget_requested_gb": round(requested_vram_budget_gb, 3),
-            "gpu_budget_final_gb": round(vram_budget_gb, 3),
-            "gpu_budget_final_mib": vram_budget_mib,
-            "gpu_clamp_reason": clamp_reason,
-            "cpu_percent": cpu_percent_value,
-            "cpu_mode": cpu_mode,
-            "cpu_available_ram_gb": round(cpu_available_ram_gb, 3),
-            "cpu_headroom_gb": round(cpu_headroom_gb, 3),
-            "cpu_budget_requested_gb": (
-                round(float(cpu_requested_gb), 3)
-                if cpu_requested_gb is not None
-                else (
-                    round(cpu_available_ram_gb * (cpu_percent_value / 100.0), 3)
-                    if cpu_available_ram_gb > 0
-                    else 0.0
-                )
-            ),
-            "cpu_budget_final_gb": round(cpu_applied_gb, 3),
-            "cpu_clamp_reason": cpu_clamp_reason,
-            "memory_map": dict(memory_map),
-        }
-        self._last_max_memory_map_details = details
-        logger.info("Max memory map computed: %s", details)
-
-        return memory_map
-
-    def _patch_bitsandbytes_params4bit(self) -> None:
-        try:
-            import bitsandbytes as bnb
-        except Exception:
-            return
-
-        params_cls = getattr(getattr(bnb, "nn", None), "Params4bit", None)
-        if params_cls is None:
-            return
-
-        if getattr(params_cls, "_cvmatch_patched", False):
-            return
-
-        has_arg = False
-        try:
-            sig = inspect.signature(params_cls.__new__)
-            has_arg = "_is_hf_initialized" in sig.parameters
-        except Exception:
-            code = getattr(params_cls.__new__, "__code__", None)
-            if code and "_is_hf_initialized" in code.co_varnames:
-                has_arg = True
-
-        if has_arg:
-            return
-
-        original_new = params_cls.__new__
-
-        def _patched_new(cls, *args, **kwargs):
-            kwargs.pop("_is_hf_initialized", None)
-            return original_new(cls, *args, **kwargs)
-
-        params_cls.__new__ = staticmethod(_patched_new)
-        params_cls._cvmatch_patched = True
-        logger.warning("Patched bitsandbytes Params4bit for _is_hf_initialized compat.")
-
-    def _normalize_device_target(self, target: Any) -> Optional["torch.device"]:
-        if not TORCH_AVAILABLE:
-            return None
-        if isinstance(target, torch.device):
-            return target
-        if isinstance(target, int):
-            return torch.device(f"cuda:{target}")
-        if isinstance(target, str):
-            if target in ("cpu", "mps", "meta"):
-                return torch.device("cpu")
-            if target.startswith("cuda"):
-                return torch.device(target)
-            if target == "disk":
-                return torch.device("cpu")
-        return None
-
-    def _log_cuda_mem(self, label: str) -> None:
-        if os.getenv("CVMATCH_VRAM_DEBUG", "").strip() != "1":
-            return
-        if not TORCH_AVAILABLE or not torch.cuda.is_available():
-            return
-
-        def _fmt_bytes(value: Optional[int]) -> str:
-            if value is None:
-                return "n/a"
-            return f"{value / (1024 ** 3):.2f}GB"
-
-        free_bytes = total_bytes = None
-        allocated = reserved = None
-        max_allocated = max_reserved = None
-        try:
-            free_bytes, total_bytes = torch.cuda.mem_get_info()
-        except Exception:
-            pass
-        try:
-            allocated = torch.cuda.memory_allocated()
-        except Exception:
-            pass
-        try:
-            reserved = torch.cuda.memory_reserved()
-        except Exception:
-            pass
-        try:
-            max_allocated = torch.cuda.max_memory_allocated()
-        except Exception:
-            pass
-        try:
-            max_reserved = torch.cuda.max_memory_reserved()
-        except Exception:
-            pass
-
-        logger.info(
-            "VRAM[%s]: free=%s total=%s alloc=%s reserved=%s max_alloc=%s max_reserved=%s",
-            label,
-            _fmt_bytes(free_bytes),
-            _fmt_bytes(total_bytes),
-            _fmt_bytes(allocated),
-            _fmt_bytes(reserved),
-            _fmt_bytes(max_allocated),
-            _fmt_bytes(max_reserved),
-        )
-        if allocated is not None and reserved is not None and reserved >= allocated:
-            cached = reserved - allocated
-            logger.info(
-                "VRAM[%s] cache=%s (PyTorch allocator cache, expected while process stays alive)",
-                label,
-                _fmt_bytes(cached),
-            )
-
-    def _resolve_input_device(self) -> Optional["torch.device"]:
-        """Pick the input device matching the model's device map."""
-        if not TORCH_AVAILABLE or self._model is None:
-            return None
-
-        try:
-            embeddings = self._model.get_input_embeddings()
-            if embeddings is not None and hasattr(embeddings, "weight"):
-                weight = embeddings.weight
-                if weight is not None and hasattr(weight, "device"):
-                    device = weight.device
-                    if hasattr(device, "type") and device.type != "meta":
-                        return device
-        except Exception:
-            pass
-
-        device_map = getattr(self._model, "hf_device_map", None)
-        if isinstance(device_map, dict) and device_map:
-            preferred_keys = (
-                "model.embed_tokens",
-                "model.decoder.embed_tokens",
-                "transformer.wte",
-                "model.wte",
-                "gpt_neox.embed_in",
-                "embed_tokens",
-                "wte",
-            )
-            target = None
-            for key in preferred_keys:
-                if key in device_map:
-                    target = device_map[key]
-                    break
-            if target is None:
-                for key, value in device_map.items():
-                    if "embed" in key.lower():
-                        target = value
-                        break
-            if target is None:
-                for value in device_map.values():
-                    if value not in ("disk", "meta"):
-                        target = value
-                        break
-            resolved = self._normalize_device_target(target)
-            if resolved is not None:
-                return resolved
-
-        try:
-            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        except Exception:
-            return None
-
-    def _summarize_device_map(self) -> Dict[str, int]:
-        """Return a compact device map summary for logging."""
-        summary: Dict[str, int] = {}
-        device_map = getattr(self._model, "hf_device_map", None)
-        if not isinstance(device_map, dict) or not device_map:
-            return summary
-        for value in device_map.values():
-            resolved = self._normalize_device_target(value)
-            if resolved is None:
-                key = str(value)
-            else:
-                key = str(resolved) if resolved.type == "cuda" else resolved.type
-            summary[key] = summary.get(key, 0) + 1
-        return summary
-
-    def _load_llama_cpp_model(self, progress_callback=None) -> None:
-        """Démarre (si besoin) un serveur llama.cpp local pour un modèle GGUF."""
-        try:
-            from ..utils.llama_cpp_server import LlamaCppServer, LlamaCppServerConfig
-            import os
-        except Exception as exc:
-            raise RuntimeError(
-                "Support llama.cpp indisponible (dépendances manquantes)."
-            ) from exc
-
-        model_path_value = (
-            (self.custom_parameters or {}).get("llama_cpp_model_path")
-            or os.getenv("CVMATCH_LLAMA_CPP_MODEL_PATH")
-            or self.model_name
-        )
-        model_path = Path(str(model_path_value)).expanduser()
-        if not model_path.is_absolute():
-            repo_root = Path(__file__).resolve().parents[2]
-            model_path = repo_root / model_path
-
-        binary_override = (
-            (self.custom_parameters or {}).get("llama_cpp_binary_path")
-            or (self.custom_parameters or {}).get("llama_cpp_binary")
-            or os.getenv("CVMATCH_LLAMA_CPP_BINARY")
-            or os.getenv("CVMATCH_LLAMA_CPP_BIN")
-        )
-        binary_path = Path(str(binary_override)).expanduser() if binary_override else None
-
-        try:
-            port = int((self.custom_parameters or {}).get("llama_cpp_port") or os.getenv("CVMATCH_LLAMA_CPP_PORT") or 8080)
-        except Exception:
-            port = 8080
-        try:
-            ctx_size = int((self.custom_parameters or {}).get("llama_cpp_ctx_size") or os.getenv("CVMATCH_LLAMA_CPP_CTX") or 4096)
-        except Exception:
-            ctx_size = 4096
-        try:
-            threads = int((self.custom_parameters or {}).get("llama_cpp_threads") or os.getenv("CVMATCH_LLAMA_CPP_THREADS") or (os.cpu_count() or 4))
-        except Exception:
-            threads = os.cpu_count() or 4
-
-        cfg = LlamaCppServerConfig(
-            model_path=model_path,
-            port=port,
-            ctx_size=ctx_size,
-            threads=threads,
-            binary_path=binary_path,
-        )
-
-        existing = getattr(self, "_llama_cpp_server", None)
-        if existing and getattr(existing, "config", None) == cfg and (
-            existing.is_alive() or existing.is_ready()
-        ):
-            self.model_loaded = True
-            self._current_model_path = self.model_name
-            return
-
-        if existing:
-            try:
-                existing.stop()
-            except Exception:
-                pass
-
-        server = LlamaCppServer(cfg)
-        if progress_callback:
-            progress_callback("🦙 Démarrage du serveur llama.cpp...")
-        server.start(timeout_s=45.0)
-        self._llama_cpp_server = server
-
-        self.model_loaded = True
-        self._current_model_path = self.model_name
-        self._model = None
-        self._tokenizer = None
-        try:
-            self._device = torch.device("cpu") if TORCH_AVAILABLE else None
-        except Exception:
-            self._device = None
-
-        if progress_callback:
-            progress_callback("✅ llama.cpp prêt !")
-
-    def _llama_cpp_chat(
-        self,
-        *,
-        system_prompt: str,
-        user_prompt: str,
-        max_tokens: int,
-        temperature: float = 0.7,
-        top_p: float = 0.9,
-    ) -> str:
-        server = getattr(self, "_llama_cpp_server", None)
-        if server is None:
-            raise RuntimeError("llama.cpp server non initialisé")
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-        return server.chat(
-            messages=messages,
-            max_tokens=int(max_tokens),
-            temperature=float(temperature),
-            top_p=float(top_p),
-        )
-
-    def load_model(self, progress_callback=None, allow_fallback: bool = True):
-        """Charge le modèle sélectionné avec optimisations automatiques."""
-        # Backend llama.cpp (GGUF): ne dépend pas de Transformers et gère son propre chargement.
-        if getattr(self, "current_loader", "transformers") == "llama_cpp":
-            self._load_llama_cpp_model(progress_callback)
-            return
-
-        # Vérifier si le modèle actuel est différent de celui demandé
-        if self.model_loaded and self._model is not None and self._current_model_path == self.model_name:
-            logger.info(f"Modèle {self.model_name} déjà chargé en mémoire")
-            return
-        
-        # Si on change de modèle, nettoyer l'ancien
-        if self.model_loaded and self._current_model_path != self.model_name:
-            logger.info(f"Changement de modèle: {self._current_model_path} -> {self.model_name}")
-            # Relâcher d'abord les références Python puis vider les caches CUDA.
-            self.model_loaded = False
-            self._model = None
-            self._tokenizer = None
-            self._device = None
-            self._current_model_path = None
-            self.cleanup_memory()
-        
-        if not TRANSFORMERS_AVAILABLE:
-            logger.warning("Transformers non disponible - Mode simulation")
-            time.sleep(2)
-            self.model_loaded = True
-            self._current_model_path = self.model_name
-            return
-        
-        try:
-            # Vérifier si c'est le premier téléchargement
-            self._check_first_download(progress_callback)
-            
-            if progress_callback:
-                progress_callback("🔍 Détection du matériel disponible...")
-            
-            # Vérifier les optimisations hf_xet
-            xet_status = model_optimizer.check_hf_xet_status()
-            if xet_status["optimizations_active"]:
-                logger.info("✅ Optimisations hf_xet actives pour téléchargements rapides")
-            
-            # Optimisation matérielle automatique
-            model_size_gb = _estimate_model_size_gb(
-                getattr(self, "model_name", None),
-                getattr(self, "current_model_id", None),
-            )
-            try:
-                self._optimization_config = gpu_manager.recommend_quantization(model_size_gb=model_size_gb)
-            except TypeError:
-                # Compat/mode mock
-                self._optimization_config = gpu_manager.recommend_quantization()
-            gpu_manager.optimize_for_inference()
-            if TORCH_AVAILABLE and torch.cuda.is_available():
-                try:
-                    free_bytes, total_bytes = torch.cuda.mem_get_info()
-                    logger.info(
-                        "GPU memory before load: free=%.2fGB total=%.2fGB",
-                        free_bytes / (1024**3),
-                        total_bytes / (1024**3),
-                    )
-                except Exception:
-                    pass
-            self._log_cuda_mem("before_load")
-            if self.custom_parameters.get("force_4bit_nf4"):
-                self._optimization_config["load_in_4bit"] = True
-                self._optimization_config["load_in_8bit"] = False
-                self._optimization_config["dtype"] = torch.float16
-                self._optimization_config["quantization"] = "nf4"
-                self._optimization_config["reason"] = "Forced 4-bit NF4"
-
-            logger.info(f"Configuration optimale: {self._optimization_config['reason']}")
-
-            # Vérification mémoire avant chargement (évite les crashs Access Violation)
-            can_proceed, memory_error = self._check_memory_before_load()
-            if not can_proceed:
-                logger.error(memory_error)
-                if progress_callback:
-                    progress_callback(f"❌ {memory_error}")
-
-                if allow_fallback:
-                    try:
-                        import psutil  # type: ignore
-
-                        mem = psutil.virtual_memory()
-                        available_ram_gb = mem.available / (1024**3)
-                    except Exception:
-                        available_ram_gb = 0.0
-                    try:
-                        available_vram_gb = self._get_free_vram_gb()
-                    except Exception:
-                        available_vram_gb = 0.0
-
-                    fallback = self._pick_fallback_model_for_memory(
-                        available_ram_gb,
-                        available_vram_gb,
-                    )
-                    if fallback and fallback.get("model_id") and fallback.get("model_path"):
-                        previous_id = getattr(self, "current_model_id", None)
-                        previous_model = self.model_name
-                        self.model_name = fallback["model_path"]
-                        self.current_model_id = fallback["model_id"]
-                        self.model_loaded = False
-                        self._model = None
-                        self._tokenizer = None
-                        self._device = None
-                        self._current_model_path = None
-                        self._optimization_config = None
-                        note = (
-                            f"[WARN] Mémoire insuffisante (RAM/VRAM) pour '{previous_id or previous_model}'. "
-                            f"Fallback vers '{self.current_model_id}' "
-                            f"(ram_dispo={available_ram_gb:.1f}GB, vram_dispo={available_vram_gb:.1f}GB)."
-                        )
-                        self.last_model_resolution_note = note
-                        logger.warning(note)
-                        if progress_callback:
-                            progress_callback(note)
-                        try:
-                            self.cleanup_memory()
-                        except Exception:
-                            pass
-                        return self.load_model(progress_callback, allow_fallback=False)
-
-                raise MemoryError(memory_error)
-
-            # Telechargement optimise du modele si necessaire
-            model_display_name = getattr(
-                self, "current_model_id", self.model_name.split("/")[-1]
-            )
-            model_path = self.model_name
-            if progress_callback:
-                progress_callback(
-                    f"[DL] Verification/telechargement du modele {model_display_name}..."
-                )
-
-            try:
-                model_path = model_optimizer.optimize_model_download(
-                    self.model_name,
-                    progress_callback=progress_callback,
-                )
-            except Exception as e:
-                logger.warning(f"Telechargement optimise echoue, fallback standard: {e}")
-                model_path = self.model_name
-
-            if progress_callback:
-                progress_callback(f"[TOK] Chargement du tokenizer {model_display_name}...")
-
-            # Chargement du tokenizer
-            # Prefer the resolved snapshot path to avoid partial-cache mismatches.
-            model_ref = model_path or self.model_name
-            try:
-                self._tokenizer = AutoTokenizer.from_pretrained(
-                    model_ref,
-                    trust_remote_code=True,
-                    use_fast=True,
-                )
-            except ImportError as e:
-                # Certains tokenizers (ex: SentencePiece -> conversion fast) requierent protobuf.
-                msg = str(e).lower()
-                if "protobuf" in msg or "protob" in msg:
-                    if progress_callback:
-                        progress_callback(
-                            "[WARN] Dependances manquantes (protobuf). Fallback: tokenizer lent (use_fast=False)..."
-                        )
-                    try:
-                        self._tokenizer = AutoTokenizer.from_pretrained(
-                            model_ref,
-                            trust_remote_code=True,
-                            use_fast=False,
-                        )
-                    except ImportError as e2:
-                        msg2 = str(e2).lower()
-                        if "sentencepiece" in msg2:
-                            raise RuntimeError(
-                                "Le tokenizer necessite 'sentencepiece'. Installez: pip install sentencepiece protobuf"
-                            ) from e2
-                        raise
-                elif "sentencepiece" in msg:
-                    raise RuntimeError(
-                        "Le tokenizer necessite 'sentencepiece'. Installez: pip install sentencepiece"
-                    ) from e
-                else:
-                    raise
-            except Exception as e:
-                msg = str(e).lower()
-                if any(token in msg for token in ("vocabulary", "sentencepiece", "tokenizer")):
-                    logger.warning(
-                        "Tokenizer load failed, retrying with use_fast=False: %s", e
-                    )
-                    try:
-                        self._tokenizer = AutoTokenizer.from_pretrained(
-                            model_ref,
-                            trust_remote_code=True,
-                            use_fast=False,
-                        )
-                    except Exception as e2:
-                        forced_path = None
-                        try:
-                            forced_path = model_optimizer.optimize_model_download(
-                                self.model_name,
-                                progress_callback=progress_callback,
-                                force_download=True,
-                            )
-                        except Exception as force_exc:
-                            logger.warning(
-                                "Force download failed after tokenizer error: %s",
-                                force_exc,
-                            )
-                        if forced_path:
-                            model_ref = forced_path
-                            self._tokenizer = AutoTokenizer.from_pretrained(
-                                model_ref,
-                                trust_remote_code=True,
-                                use_fast=False,
-                            )
-                        else:
-                            raise e2
-                else:
-                    raise
-
-            if progress_callback:
-                progress_callback(
-                    f"[MODEL] Chargement du modele {model_display_name} ({self._optimization_config['reason']})..."
-                )
-
-            # Configuration de quantisation
-            model_kwargs = {
-                "trust_remote_code": True,
-                "torch_dtype": self._optimization_config["dtype"],
-            }
-            force_gpu = False
-            auto_kwargs: Optional[Dict[str, Any]] = None
-            last_load_kwargs: Dict[str, Any] = {}
-            offload_folder_resolved: Optional[str] = None
-
-            def _resolve_bool_setting(custom_value: Any, env_value: Optional[str], default: bool) -> bool:
-                if env_value is not None:
-                    return str(env_value).strip().lower() in ("1", "true", "yes", "y", "on")
-                if custom_value is None:
-                    return default
-                if isinstance(custom_value, bool):
-                    return custom_value
-                return str(custom_value).strip().lower() in ("1", "true", "yes", "y", "on")
-            if self._optimization_config["device"] == "cuda":
-                model_kwargs["device_map"] = "auto"
-                max_memory = self._build_max_memory_map()
-                if max_memory:
-                    model_kwargs["max_memory"] = max_memory
-                    model_kwargs["low_cpu_mem_usage"] = True
-                    details = getattr(self, "_last_max_memory_map_details", None)
-                    if details:
-                        logger.info(
-                            "Max memory map active: %s (details=%s)",
-                            max_memory,
-                            details,
-                        )
-                    else:
-                        logger.info("Max memory map active: %s", max_memory)
-                else:
-                    logger.warning(
-                        "Max memory map not set (device_map=auto). Offload disabled."
-                    )
-
-                disk_offload_enabled = _resolve_bool_setting(
-                    (self.custom_parameters or {}).get("disk_offload"),
-                    os.getenv("CVMATCH_DISK_OFFLOAD"),
-                    True,
-                )
-                if disk_offload_enabled:
-                    custom_offload_folder = (self.custom_parameters or {}).get("offload_folder")
-                    env_offload_folder = os.getenv("CVMATCH_OFFLOAD_FOLDER")
-                    raw_offload_folder = env_offload_folder or custom_offload_folder
-                    if raw_offload_folder:
-                        offload_dir = Path(str(raw_offload_folder))
-                    else:
-                        offload_dir = Path.cwd() / "logs" / "hf_offload"
-                    try:
-                        offload_dir.mkdir(parents=True, exist_ok=True)
-                        offload_folder_resolved = str(offload_dir)
-                        offload_state_dict = _resolve_bool_setting(
-                            (self.custom_parameters or {}).get("offload_state_dict"),
-                            os.getenv("CVMATCH_OFFLOAD_STATE_DICT"),
-                            True,
-                        )
-                        model_kwargs["offload_folder"] = offload_folder_resolved
-                        model_kwargs["offload_state_dict"] = offload_state_dict
-                        logger.info(
-                            "Disk offload enabled: folder=%s offload_state_dict=%s",
-                            offload_folder_resolved,
-                            offload_state_dict,
-                        )
-                    except Exception as offload_exc:
-                        logger.warning(
-                            "Disk offload setup failed, continuing without it: %s",
-                            offload_exc,
-                        )
-                else:
-                    logger.info("Disk offload disabled by config.")
-
-                force_gpu_env = os.getenv("CVMATCH_FORCE_GPU")
-                if force_gpu_env is not None:
-                    force_gpu = force_gpu_env.strip() == "1"
-                else:
-                    force_gpu = bool(self.custom_parameters.get("force_cuda"))
-            else:
-                model_kwargs["device_map"] = None
-
-            # Ajout de la quantisation si necessaire
-            if self._optimization_config.get("load_in_8bit") or self._optimization_config.get("load_in_4bit"):
-                try:
-                    import bitsandbytes  # noqa: F401
-                    self._patch_bitsandbytes_params4bit()
-                except Exception as e:
-                    raise RuntimeError(
-                        "Quantisation 4-bit/8-bit demandee mais 'bitsandbytes' n'est pas utilisable sur cette machine. "
-                        "Installez une version compatible (CUDA) ou choisissez un modele/quantification plus leger."
-                    ) from e
-
-            if self._optimization_config.get("load_in_8bit"):
-                model_kwargs["load_in_8bit"] = True
-            elif self._optimization_config.get("load_in_4bit"):
-                quantization_config = BitsAndBytesConfig(
-                    load_in_4bit=True,
-                    bnb_4bit_compute_dtype=torch.float16,
-                    bnb_4bit_use_double_quant=True,
-                    bnb_4bit_quant_type="nf4",
-                    llm_int8_enable_fp32_cpu_offload=True,
-                )
-                model_kwargs["quantization_config"] = quantization_config
-
-            if force_gpu and model_kwargs.get("device_map") == "auto":
-                auto_kwargs = dict(model_kwargs)
-                removed_map = model_kwargs.get("max_memory")
-                removed_offload_folder = model_kwargs.get("offload_folder")
-                removed_offload_state = model_kwargs.get("offload_state_dict")
-                model_kwargs["device_map"] = {"": 0}
-                model_kwargs.pop("max_memory", None)
-                model_kwargs.pop("low_cpu_mem_usage", None)
-                model_kwargs.pop("offload_folder", None)
-                model_kwargs.pop("offload_state_dict", None)
-                logger.info(
-                    "Force GPU strict: device_map=cuda:0 (set CVMATCH_FORCE_GPU=0 to allow CPU offload)."
-                )
-                if removed_map:
-                    logger.info(
-                        "Force GPU strict disabled max_memory offload map: %s",
-                        removed_map,
-                    )
-                if removed_offload_folder or removed_offload_state is not None:
-                    logger.info(
-                        "Force GPU strict disabled disk offload: folder=%s offload_state_dict=%s",
-                        removed_offload_folder,
-                        removed_offload_state,
-                    )
-            elif model_kwargs.get("device_map") == "auto" and model_kwargs.get("max_memory"):
-                logger.info("Hybrid load: device_map=auto with CPU offload enabled.")
-            elif model_kwargs.get("device_map") == "auto":
-                logger.info("device_map=auto without max_memory (no offload).")
-
-            conversion_retry = False
-
-            def _load_with_kwargs(kwargs: Dict[str, Any]):
-                nonlocal model_ref, conversion_retry, last_load_kwargs
-                try:
-                    last_load_kwargs = dict(kwargs)
-                    return AutoModelForCausalLM.from_pretrained(model_ref, **kwargs)
-                except Exception as exc:
-                    msg = str(exc)
-                    lowered_msg = msg.lower()
-                    if (
-                        "unexpected keyword argument" in lowered_msg
-                        and ("offload_state_dict" in lowered_msg or "offload_folder" in lowered_msg)
-                    ):
-                        logger.warning(
-                            "Transformers version does not support disk offload kwargs; retrying without them."
-                        )
-                        alt_kwargs = dict(kwargs)
-                        alt_kwargs.pop("offload_state_dict", None)
-                        alt_kwargs.pop("offload_folder", None)
-                        last_load_kwargs = dict(alt_kwargs)
-                        return AutoModelForCausalLM.from_pretrained(model_ref, **alt_kwargs)
-                    if (
-                        not conversion_retry
-                        and ("automatic conversion of the weights" in lowered_msg or "conversion" in lowered_msg)
-                    ):
-                        conversion_retry = True
-                        logger.warning(
-                            "Weight conversion failed; forcing re-download and retrying: %s",
-                            msg,
-                        )
-                        try:
-                            forced_path = model_optimizer.optimize_model_download(
-                                self.model_name,
-                                progress_callback=progress_callback,
-                                force_download=True,
-                            )
-                            if forced_path:
-                                model_ref = forced_path
-                        except Exception as force_exc:
-                            logger.warning("Force download failed: %s", force_exc)
-
-                        alt_kwargs = dict(kwargs)
-                        alt_kwargs.pop("low_cpu_mem_usage", None)
-                        alt_kwargs.setdefault("use_safetensors", False)
-                        try:
-                            last_load_kwargs = dict(alt_kwargs)
-                            return AutoModelForCausalLM.from_pretrained(
-                                model_ref,
-                                **alt_kwargs,
-                            )
-                        except Exception:
-                            alt_kwargs.pop("use_safetensors", None)
-                            last_load_kwargs = dict(alt_kwargs)
-                            return AutoModelForCausalLM.from_pretrained(
-                                model_ref,
-                                **alt_kwargs,
-                            )
-                    if "Device cuda:0 is not recognized" in msg or "Device 0 is not recognized" in msg:
-                        logger.warning(
-                            "Retry model load with alternate max_memory keys: %s",
-                            msg,
-                        )
-                        alt_kwargs = dict(kwargs)
-                        max_memory = alt_kwargs.get("max_memory")
-                        if max_memory:
-                            alt_memory: Dict[Union[int, str], str] = {}
-                            for key, value in max_memory.items():
-                                if isinstance(key, int):
-                                    alt_memory[f"cuda:{key}"] = value
-                                elif isinstance(key, str) and key.startswith("cuda:"):
-                                    suffix = key.split(":", 1)[1]
-                                    try:
-                                        alt_memory[int(suffix)] = value
-                                    except Exception:
-                                        alt_memory[key] = value
-                                else:
-                                    alt_memory[key] = value
-                            alt_kwargs["max_memory"] = alt_memory
-                            logger.info(
-                                "Retrying model load with normalized max_memory keys: %s",
-                                alt_memory,
-                            )
-                            try:
-                                last_load_kwargs = dict(alt_kwargs)
-                                return AutoModelForCausalLM.from_pretrained(
-                                    model_ref,
-                                    **alt_kwargs
-                                )
-                            except Exception:
-                                logger.warning(
-                                    "Normalized max_memory keys still failed; retrying without max_memory."
-                                )
-                                alt_kwargs.pop("max_memory", None)
-                                alt_kwargs.pop("low_cpu_mem_usage", None)
-                                last_load_kwargs = dict(alt_kwargs)
-                                return AutoModelForCausalLM.from_pretrained(
-                                    model_ref,
-                                    **alt_kwargs
-                                )
-                        raise
-                    if "meta tensors" in msg:
-                        removed_map = kwargs.get("max_memory")
-                        logger.warning(
-                            "Retry model load without max_memory after meta tensor error: %s (removed_map=%s)",
-                            msg,
-                            removed_map,
-                        )
-                        alt_kwargs = dict(kwargs)
-                        alt_kwargs.pop("max_memory", None)
-                        alt_kwargs.pop("low_cpu_mem_usage", None)
-                        try:
-                            last_load_kwargs = dict(alt_kwargs)
-                            return AutoModelForCausalLM.from_pretrained(
-                                model_ref,
-                                **alt_kwargs
-                            )
-                        except Exception:
-                            if self._optimization_config["device"] == "cuda":
-                                alt_kwargs["device_map"] = {"": 0}
-                            last_load_kwargs = dict(alt_kwargs)
-                            return AutoModelForCausalLM.from_pretrained(
-                                model_ref,
-                                **alt_kwargs
-                            )
-                    raise
-
-            # Chargement du modele
-            try:
-                self._model = _load_with_kwargs(model_kwargs)
-            except Exception as exc:
-                lowered = str(exc).lower()
-                if auto_kwargs and ("cuda out of memory" in lowered or "out of memory" in lowered):
-                    logger.warning(
-                        "Forced GPU load failed (OOM). Retrying with device_map=auto and max_memory=%s.",
-                        auto_kwargs.get("max_memory"),
-                    )
-                    try:
-                        self.cleanup_memory()
-                    except Exception:
-                        pass
-                    self._model = _load_with_kwargs(auto_kwargs)
-                else:
-                    raise
-            if self._optimization_config["device"] == "cuda":
-                logger.info(
-                    "Model load kwargs applied: device_map=%s max_memory=%s low_cpu_mem_usage=%s offload_folder=%s offload_state_dict=%s",
-                    last_load_kwargs.get("device_map"),
-                    last_load_kwargs.get("max_memory"),
-                    bool(last_load_kwargs.get("low_cpu_mem_usage")),
-                    last_load_kwargs.get("offload_folder"),
-                    last_load_kwargs.get("offload_state_dict"),
-                )
-            # Configuration pour CPU si nécessaire
-            if self._optimization_config["device"] == "cpu":
-                self._model = self._model.to("cpu")
-                self._device = torch.device("cpu")
-            else:
-                resolved_device = self._resolve_input_device()
-                self._device = resolved_device or torch.device("cuda")
-                logger.info("Device map resolved input device: %s", self._device)
-
-            device_summary = self._summarize_device_map()
-            if device_summary:
-                logger.info("Device map summary: %s", device_summary)
-                if self._optimization_config["device"] == "cuda":
-                    has_cuda = any(str(key).startswith("cuda") for key in device_summary.keys())
-                    if not has_cuda:
-                        free_vram = 0.0
-                        try:
-                            free_vram = float(gpu_manager.get_available_vram())
-                        except Exception:
-                            free_vram = 0.0
-                        logger.warning(
-                            "GPU available but model loaded on CPU (free VRAM %.2fGB).",
-                            free_vram,
-                        )
-                        if progress_callback:
-                            progress_callback(
-                                "[WARN] GPU VRAM low; model loaded on CPU."
-                            )
-            
-            # Mode évaluation pour l'inférence
-            self._model.eval()
-            
-            # Optimisations post-chargement
-            disable_compile = False
-            if os.getenv("CVMATCH_DISABLE_TORCH_COMPILE", "").strip() in ("1", "true", "yes", "y"):
-                disable_compile = True
-            if (self.custom_parameters or {}).get("disable_torch_compile"):
-                disable_compile = True
-
-            if disable_compile:
-                logger.info("Skip torch.compile: disabled by config.")
-            elif hasattr(torch, 'compile') and self._device.type == "cuda":
-                should_compile = True
-                device_map = getattr(self._model, "hf_device_map", None)
-                if isinstance(device_map, dict) and device_map:
-                    for value in device_map.values():
-                        resolved = self._normalize_device_target(value)
-                        if resolved is None:
-                            continue
-                        if resolved.type != "cuda":
-                            should_compile = False
-                            break
-                if not should_compile:
-                    logger.info("Skip torch.compile: device_map includes CPU/disk.")
-                else:
-                    try:
-                        self._model = torch.compile(self._model, mode="reduce-overhead")
-                        logger.info("Modèle compilé avec torch.compile")
-                    except Exception as e:
-                        logger.warning(f"Compilation échouée: {e}")
-            
-            self.model_loaded = True
-            self._current_model_path = self.model_name
-            self._log_cuda_mem("after_load")
-            
-            # Stats mémoire finales
-            memory_stats = gpu_manager.get_memory_stats()
-            logger.info(f"Modèle {model_display_name} chargé - Mémoire utilisée: {memory_stats}")
-            
-            if progress_callback:
-                progress_callback(f"✅ Modèle {model_display_name} chargé avec succès !")
-            
-        except Exception as e:
-            error_msg = str(e)
-            error_code = getattr(e, 'winerror', None) or ""
-            lowered = error_msg.lower()
-
-            # Si le chargement a échoué en OOM, tenter un fallback automatique (une seule fois).
-            if allow_fallback and (
-                isinstance(e, MemoryError)
-                or "out of memory" in lowered
-                or "cuda out of memory" in lowered
-            ):
-                try:
-                    import psutil  # type: ignore
-
-                    mem = psutil.virtual_memory()
-                    available_ram_gb = mem.available / (1024**3)
-                except Exception:
-                    available_ram_gb = 0.0
-                try:
-                    available_vram_gb = self._get_free_vram_gb()
-                except Exception:
-                    available_vram_gb = 0.0
-
-                fallback = self._pick_fallback_model_for_memory(
-                    available_ram_gb,
-                    available_vram_gb,
-                )
-                if fallback and fallback.get("model_id") and fallback.get("model_path"):
-                    previous_id = getattr(self, "current_model_id", None)
-                    previous_model = self.model_name
-                    self.model_name = fallback["model_path"]
-                    self.current_model_id = fallback["model_id"]
-                    self.model_loaded = False
-                    self._model = None
-                    self._tokenizer = None
-                    self._device = None
-                    self._current_model_path = None
-                    self._optimization_config = None
-                    note = (
-                        f"[WARN] OOM lors du chargement de '{previous_id or previous_model}'. "
-                        f"Fallback vers '{self.current_model_id}' "
-                        f"(ram_dispo={available_ram_gb:.1f}GB, vram_dispo={available_vram_gb:.1f}GB)."
-                    )
-                    self.last_model_resolution_note = note
-                    logger.warning(note)
-                    if progress_callback:
-                        progress_callback(note)
-                    try:
-                        self.cleanup_memory()
-                    except Exception:
-                        pass
-                    return self.load_model(progress_callback, allow_fallback=False)
-
-            if (
-                isinstance(e, MemoryError)
-                or "out of memory" in lowered
-                or "cuda out of memory" in lowered
-            ):
-                # Évite de conserver des références partielles après un échec OOM.
-                self.model_loaded = False
-                self._model = None
-                self._tokenizer = None
-                self._device = None
-                self._current_model_path = None
-                try:
-                    self.cleanup_memory()
-                except Exception:
-                    pass
-
-            # Détecter ACCESS_VIOLATION ou cache corrompu (Windows)
-            is_access_violation = (
-                "-1073741819" in error_msg or
-                "0xC0000005" in error_msg or
-                "Access" in error_msg and "Violation" in error_msg or
-                error_code == 1314  # WinError 1314 - symlink permission
-            )
-
-            if is_access_violation:
-                logger.error(
-                    "Cache modèle probablement corrompu (ACCESS_VIOLATION). "
-                    "Exécutez: python scripts/fix_model_cache.py"
-                )
-                if progress_callback:
-                    progress_callback("❌ Cache modèle corrompu détecté")
-                    progress_callback("💡 Exécutez: python scripts/fix_model_cache.py")
-
-            diagnostic_lines: List[str] = []
-            diagnostic_lines.append(f"- model_id: {getattr(self, 'current_model_id', None)}")
-            diagnostic_lines.append(f"- model_name: {getattr(self, 'model_name', None)}")
-            try:
-                opt = dict(self._optimization_config or {})
-                dtype = opt.get("dtype")
-                if dtype is not None:
-                    opt["dtype"] = str(dtype)
-                diagnostic_lines.append(f"- optimization: {opt}")
-            except Exception:
-                pass
-
-            try:
-                import psutil  # type: ignore
-
-                mem = psutil.virtual_memory()
-                diagnostic_lines.append(f"- ram_total_gb: {mem.total / (1024**3):.1f}")
-                diagnostic_lines.append(f"- ram_available_gb: {mem.available / (1024**3):.1f}")
-            except Exception:
-                pass
-
-            try:
-                diagnostic_lines.append(f"- torch_available: {TORCH_AVAILABLE}")
-                if TORCH_AVAILABLE:
-                    diagnostic_lines.append(f"- torch_cuda_available: {torch.cuda.is_available()}")
-            except Exception:
-                pass
-
-            try:
-                diagnostic_lines.append(f"- gpu_info: {getattr(gpu_manager, 'gpu_info', None)}")
-                if hasattr(gpu_manager, "get_available_vram"):
-                    diagnostic_lines.append(
-                        f"- vram_available_gb: {gpu_manager.get_available_vram():.1f}"
-                    )
-            except Exception:
-                pass
-
-            hint = ""
-            lowered = error_msg.lower()
-            if "cuda out of memory" in lowered or "out of memory" in lowered:
-                hint = (
-                    "Piste: mémoire GPU/RAM insuffisante. Fermez les applis qui utilisent le GPU, "
-                    "ou choisissez un modèle plus léger / une quantisation 4-bit."
-                )
-            elif "protobuf" in lowered or "protob" in lowered:
-                hint = (
-                    "Piste: dépendance manquante 'protobuf'. Installez: pip install protobuf "
-                    "(et souvent aussi: pip install sentencepiece), puis redémarrez l'application."
-                )
-            elif "sentencepiece" in lowered:
-                hint = (
-                    "Piste: dépendance manquante 'sentencepiece'. Installez: pip install sentencepiece "
-                    "(et parfois aussi: pip install protobuf), puis redémarrez l'application."
-                )
-            elif "_is_hf_initialized" in lowered or "params4bit" in lowered:
-                hint = (
-                    "Piste: bitsandbytes trop ancien/incompatible pour la quantisation 4-bit. "
-                    "Mettez a jour bitsandbytes (CUDA) ou changez de quantification."
-                )
-            elif "bitsandbytes" in lowered:
-                hint = (
-                    "Piste: 'bitsandbytes' manquant/incompatible. Réinstallez bitsandbytes (CUDA) "
-                    "ou choisissez un modèle CPU plus petit."
-                )
-            elif "automatic conversion of the weights" in lowered or ("conversion" in lowered and "weights" in lowered):
-                hint = (
-                    "Piste: conversion des poids echouee (cache potentiellement corrompu). "
-                    "Supprimez le snapshot du modele dans le cache HF puis relancez, "
-                    "ou forcez un telechargement complet."
-                )
-
-            logger.error(f"Erreur chargement modèle: {e}")
-            if progress_callback:
-                progress_callback("❌ Erreur chargement modèle (voir diagnostic)")
-                if hint:
-                    progress_callback(f"💡 {hint}")
-            diagnostic_text = "\n".join(diagnostic_lines) if diagnostic_lines else "N/A"
-            raise RuntimeError(
-                f"Erreur chargement modèle: {e}\n\nDiagnostic:\n{diagnostic_text}"
-                + (f"\n\n{hint}" if hint else "")
-            ) from e
-    
-    def generate_cv(self, prompt: str, progress_callback=None, allow_fallback: bool = True) -> str:
-        """Génère un CV basé sur le prompt avec Qwen2.5-32B."""
-        if not self.model_loaded:
-            self.load_model(progress_callback, allow_fallback=allow_fallback)
-
-        if (
-            getattr(self, "current_loader", "transformers") != "llama_cpp"
-            and self._should_use_chunked_generation(prompt)
-        ):
-            return self._generate_cv_chunked(prompt, progress_callback)
-
-        if getattr(self, "current_loader", "transformers") == "llama_cpp":
-            try:
-                if progress_callback:
-                    progress_callback("🦙 Génération du CV via llama.cpp...")
-
-                system_prompt = self._cv_system_prompt()
-                user_prompt = self._cv_user_prompt(prompt)
-
-                model_hint = str(self.model_name or "").lower()
-                max_tokens = 1024
-                if any(x in model_hint for x in ["0.6", "0.5", "tiny", "1.1b"]):
-                    max_tokens = 512
-                elif any(x in model_hint for x in ["1.7", "1.5"]):
-                    max_tokens = 768
-
-                try:
-                    ctx_size = int(getattr(getattr(self._llama_cpp_server, "config", None), "ctx_size", 4096))
-                except Exception:
-                    ctx_size = 4096
-                max_tokens = min(int(max_tokens), max(256, int(ctx_size // 2)))
-
-                generated_text = self._llama_cpp_chat(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    max_tokens=max_tokens,
-                    temperature=0.7,
-                    top_p=0.9,
-                )
-                cv_content = self._extract_cv_content(generated_text)
-                if progress_callback:
-                    progress_callback("✨ CV généré !")
-                return cv_content
-            except Exception as e:
-                logger.error(f"Erreur generation CV (llama.cpp): {e}")
-                if allow_fallback:
-                    if progress_callback:
-                        progress_callback("Warning: llama.cpp error - fallback enabled")
-                    return self._generate_fallback_cv()
-                return ""
-
-        if not TRANSFORMERS_AVAILABLE or self._model is None:
-            # Mode simulation si modèle indisponible
-            return self._generate_fallback_cv() if allow_fallback else ""
-        
-        try:
-            if progress_callback:
-                progress_callback("📝 Préparation du prompt optimisé...")
-            
-            # Template de prompt optimisé pour Qwen2.5
-            formatted_prompt = self._build_cv_prompt(prompt)
-            
-            # ═══════════════════════════════════════════════════════════════════
-            # Configuration max_new_tokens par modèle et device
-            # ═══════════════════════════════════════════════════════════════════
-            # Règle : Les petits modèles CPU génèrent moins de tokens pour éviter
-            # les blocages mémoire et accélérer la génération.
-            #
-            # MODÈLE                    | CPU tokens | GPU tokens | RAM requise
-            # ─────────────────────────────────────────────────────────────────
-            # Qwen2.5-0.5B / TinyLlama  |    512     |   1024     |   1.5 GB
-            # Qwen3-1.7B                |    768     |   1536     |   4.0 GB
-            # Phi-3-Mini (3.8B)         |    768     |   1536     |   8.0 GB
-            # Qwen3-4B                  |   1024     |   2048     |   8.0 GB
-            # Mistral-7B / Qwen3-8B     |   1024     |   2048     |  16.0 GB
-            # Qwen3-14B                 |   1536     |   2048     |  32.0 GB
-            # Qwen3-32B                 |   2048     |   2048     |  64.0 GB
-            # ═══════════════════════════════════════════════════════════════════
-
-            model_name_lower = self.model_name.lower()
-            is_cpu = self._optimization_config.get("device") == "cpu"
-
-            # Déterminer max_tokens selon le modèle
-            if any(x in model_name_lower for x in ["0.6", "0.5", "tiny", "1.1b"]):
-                # Qwen3-0.6B, Qwen2.5-0.5B, TinyLlama (1.1B)
-                max_tokens = 512 if is_cpu else 1024
-            elif any(x in model_name_lower for x in ["1.7", "1.5"]):
-                # Qwen3-1.7B, Qwen2.5-1.5B
-                max_tokens = 768 if is_cpu else 1536
-            elif any(x in model_name_lower for x in ["phi-3", "phi3", "mini"]):
-                # Phi-3-Mini (3.8B)
-                max_tokens = 768 if is_cpu else 1536
-            elif any(x in model_name_lower for x in ["3b", "4b"]):
-                # Qwen3-4B, Qwen2.5-3B
-                max_tokens = 1024 if is_cpu else 2048
-            elif any(x in model_name_lower for x in ["7b", "8b", "mistral"]):
-                # Mistral-7B, Qwen3-8B
-                max_tokens = 1024 if is_cpu else 2048
-            elif "14b" in model_name_lower:
-                # Qwen3-14B
-                max_tokens = 1536 if is_cpu else 2048
-            elif "32b" in model_name_lower:
-                # Qwen3-32B
-                max_tokens = 2048  # Même en CPU (machine puissante requise)
-            else:
-                # Modèle inconnu - valeurs par défaut sécurisées
-                max_tokens = 1024 if is_cpu else 2048
-
-            # Budget tokens: adapter le prompt et la génération selon la limite réelle du modèle.
-            # Récupérer max_position_embeddings depuis la config du modèle chargé.
-            model_max_positions = 4096  # Valeur par défaut sécurisée
-            try:
-                if hasattr(self._model, "config") and hasattr(self._model.config, "max_position_embeddings"):
-                    model_max_positions = int(self._model.config.max_position_embeddings)
-                    logger.debug(f"Capacité modèle détectée: max_position_embeddings={model_max_positions}")
-            except Exception as cfg_err:
-                logger.warning(f"Impossible de lire max_position_embeddings: {cfg_err}")
-
-            try:
-                opt_max_len = int((self._optimization_config or {}).get("max_model_len") or 0)
-            except Exception:
-                opt_max_len = 0
-
-            # Utiliser le minimum entre la config utilisateur et les capacités réelles du modèle
-            max_total_len = min(opt_max_len or model_max_positions, model_max_positions)
-            max_new_tokens_cap = min(max_tokens, max_total_len // 2)
-            prompt_max_len = max(256, max_total_len - max_new_tokens_cap - 64)
-
-            inputs = self._tokenizer(
-                formatted_prompt,
-                return_tensors="pt",
-                truncation=True,
-                max_length=prompt_max_len,
-            ).to(self._device)
-
-            input_len = int(inputs.input_ids.shape[1])
-            allowed_new_tokens = max_total_len - input_len - 32
-            if allowed_new_tokens > 0:
-                max_tokens = min(max_tokens, max_new_tokens_cap, allowed_new_tokens)
-            else:
-                max_tokens = min(max_tokens, max_new_tokens_cap)
-
-            device_label = "CPU" if is_cpu else "GPU"
-            logger.info(f"Mode {device_label}: génération avec max_tokens={max_tokens} pour {self.model_name}")
-
-            if progress_callback:
-                progress_callback(f"🤖 Génération du CV (~{max_tokens} tokens max)...")
-
-            use_cache = True
-            if not is_cpu and self._should_disable_kv_cache():
-                free_vram = self._get_free_vram_gb()
-                use_cache = False
-                note = f"[WARN] VRAM faible ({free_vram:.1f}GB) : KV cache désactivé."
-                logger.warning(note)
-                if progress_callback:
-                    progress_callback(note)
-            if TORCH_AVAILABLE and torch.cuda.is_available():
-                try:
-                    torch.cuda.empty_cache()
-                except Exception:
-                    pass
-
-            if TORCH_AVAILABLE and torch.cuda.is_available():
-                if os.getenv("CVMATCH_VRAM_DEBUG", "").strip() == "1":
-                    try:
-                        torch.cuda.reset_peak_memory_stats()
-                    except Exception:
-                        pass
-            self._log_cuda_mem("pre_generate")
-            # Génération avec paramètres optimisés
-            with torch.no_grad():
-                outputs = self._model.generate(
-                    **inputs,
-                    max_new_tokens=max_tokens,
-                    temperature=0.7,
-                    top_p=0.9,
-                    top_k=50,
-                    do_sample=True,
-                    repetition_penalty=1.1,
-                    pad_token_id=self._tokenizer.eos_token_id,
-                    eos_token_id=self._tokenizer.eos_token_id,
-                    use_cache=use_cache
-                )
-            
-            # Décodage de la réponse avec protection contre les débordements
-            output_len = outputs[0].shape[0]
-            input_slice_end = min(inputs.input_ids.shape[1], output_len)
-
-            if output_len <= input_slice_end:
-                # Aucun nouveau token généré - fallback
-                logger.warning(f"Aucun nouveau token généré (output_len={output_len}, input_len={input_slice_end})")
-                generated_text = ""
-            else:
-                generated_text = self._tokenizer.decode(
-                    outputs[0][input_slice_end:],
-                    skip_special_tokens=True
-                )
-            
-            self._log_cuda_mem("post_generate")
-            # Nettoyage et extraction du CV
-            cv_content = self._extract_cv_content(generated_text)
-            
-            if progress_callback:
-                progress_callback("✨ CV généré avec succès !")
-            
-            logger.info(f"CV généré - Longueur: {len(cv_content)} caractères")
-            return cv_content
-            
-        except Exception as e:
-            logger.error(f"Erreur generation CV: {e}")
-            if allow_fallback:
-                if progress_callback:
-                    progress_callback("Warning: generation error - fallback enabled")
-                return self._generate_fallback_cv()
-            return ""
-    
-    def generate_structured_json(self, system_prompt: str, user_prompt: str, progress_callback=None) -> str:
-        """Generate a structured JSON payload using the active LLM."""
-        if not self.model_loaded:
-            self.load_model(progress_callback)
-
-        if getattr(self, "current_loader", "transformers") == "llama_cpp":
-            try:
-                if progress_callback:
-                    progress_callback("[LLM] Structured JSON via llama.cpp...")
-
-                try:
-                    ctx_size = int(getattr(getattr(self._llama_cpp_server, "config", None), "ctx_size", 4096))
-                except Exception:
-                    ctx_size = 4096
-                max_tokens = max(256, int(min(768, ctx_size // 2)))
-
-                generated_text = self._llama_cpp_chat(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    max_tokens=max_tokens,
-                    temperature=0.2,
-                    top_p=0.9,
-                )
-                return self._extract_structured_content(generated_text)
-            except Exception as e:
-                logger.error(f"Erreur gÇ¸nÇ¸ration JSON (llama.cpp): {e}")
-                return ""
-
-        if not TRANSFORMERS_AVAILABLE or self._model is None:
-            return ""
-
-        try:
-            if progress_callback:
-                progress_callback("[LLM] Generating structured JSON...")
-
-            formatted_prompt = self._build_generic_prompt(system_prompt, user_prompt)
-
-            desired_new_tokens = 768
-            try:
-                opt_max_len = int((self._optimization_config or {}).get("max_model_len") or 0)
-            except Exception:
-                opt_max_len = 0
-            max_total_len = min(opt_max_len or 4096, 4096)
-            max_new_tokens_cap = min(desired_new_tokens, max_total_len // 2)
-            prompt_max_len = max(256, max_total_len - max_new_tokens_cap - 64)
-            prompt_max_len = min(prompt_max_len, 3072)
-
-            inputs = self._tokenizer(
-                formatted_prompt,
-                return_tensors="pt",
-                truncation=True,
-                max_length=prompt_max_len,
-            ).to(self._device)
-
-            input_len = int(inputs.input_ids.shape[1])
-            allowed_new_tokens = max_total_len - input_len - 32
-            if allowed_new_tokens > 0:
-                max_new_tokens = min(desired_new_tokens, max_new_tokens_cap, allowed_new_tokens)
-            else:
-                max_new_tokens = max_new_tokens_cap
-
-            slow_device = False
-            try:
-                if getattr(self._device, "type", None) == "cpu":
-                    slow_device = True
-            except Exception:
-                pass
-            try:
-                device_map = getattr(self._model, "hf_device_map", None)
-                if isinstance(device_map, dict) and device_map:
-                    for value in device_map.values():
-                        resolved = self._normalize_device_target(value)
-                        if resolved is None:
-                            continue
-                        if resolved.type != "cuda":
-                            slow_device = True
-                            break
-            except Exception:
-                pass
-
-            max_time_s = 120.0
-            if slow_device:
-                max_time_s = 240.0
-                max_new_tokens = min(max_new_tokens, 600)
-                logger.info(
-                    "Structured JSON slow mode: cap max_new_tokens=%s max_time=%.0fs",
-                    max_new_tokens,
-                    max_time_s,
-                )
-
-            use_cache = True
-            try:
-                if getattr(self._device, "type", None) == "cuda" and self._should_disable_kv_cache():
-                    free_vram = self._get_free_vram_gb()
-                    use_cache = False
-                    note = f"[WARN] VRAM faible ({free_vram:.1f}GB) : KV cache désactivé."
-                    logger.warning(note)
-                    if progress_callback:
-                        progress_callback(note)
-            except Exception:
-                pass
-            if TORCH_AVAILABLE and torch.cuda.is_available():
-                try:
-                    torch.cuda.empty_cache()
-                except Exception:
-                    pass
-
-            with torch.no_grad():
-                outputs = self._model.generate(
-                    **inputs,
-                    max_new_tokens=max_new_tokens,
-                    temperature=0.2,
-                    top_p=0.9,
-                    do_sample=False,
-                    repetition_penalty=1.05,
-                    pad_token_id=self._tokenizer.eos_token_id,
-                    eos_token_id=self._tokenizer.eos_token_id,
-                    max_time=max_time_s,
-                    use_cache=use_cache,
-                )
-
-            generated_text = self._tokenizer.decode(
-                outputs[0][inputs.input_ids.shape[1]:],
-                skip_special_tokens=True,
-            )
-
-            return self._extract_structured_content(generated_text)
-        except Exception as e:
-            logger.error(f"Erreur gÇ¸nÇ¸ration JSON: {e}")
-            return ""
-
-    def _cv_system_prompt(self) -> str:
-        return """Tu es un recruteur senior (HR) et expert ATS + redaction de CV.
-Ta mission: produire un CV pre-rempli, parfaitement adapte a l'offre cible, que le candidat pourra relire et corriger.
-
-Contraintes absolues:
-- N'invente jamais de faits (dates, entreprises, diplomes, competences, outils, certifications, niveaux, liens).
-- Utilise uniquement les informations presentes dans les DONNEES CANDIDAT fournies.
-- Si une information manque, laisse le champ vide (pas de placeholder, pas d'hypothese).
-- Pour l'identite et les contacts, utilise les donnees du candidat quand disponibles, sinon laisse vide.
-- Adapte le contenu a l'offre (mots-cles, priorisation) sans inventer: tu peux reformuler et utiliser des synonymes si le sens reste vrai et verifiable.
-- N'ajoute pas de competences non presentes dans les donnees (tu peux changer la formulation, pas le fond).
-- L'offre cible est prioritaire pour la structure et les mots-cles (si valides).
-- Format de sortie: uniquement du Markdown, sans explications, en respectant strictement la structure demandee.
-- Style: concis, orienté impact, resultats mesurables quand disponibles."""
-
-    def _cv_user_prompt(self, base_prompt: str) -> str:
-        return f"""{base_prompt}
-
-Genere le CV final en Markdown uniquement, conforme a la structure imposee."""
-
-    def _build_cv_prompt(self, base_prompt: str) -> str:
-        """Construit un prompt optimisé selon le type de modèle.
-
-        Les modèles Qwen/Mistral/Phi supportent les tags <|im_start|>/<|im_end|>
-        tandis que TinyLlama et autres modèles simples utilisent un format basique.
-        """
-        system_prompt = self._cv_system_prompt()
-        user_prompt = self._cv_user_prompt(base_prompt)
-
-        # Détecter le type de modèle pour adapter le format du prompt
-        model_lower = self.model_name.lower() if hasattr(self, 'model_name') else ""
-
-        # Modèles supportant les tags ChatML (<|im_start|>/<|im_end|>)
-        supports_chatml = any(x in model_lower for x in ["qwen", "mistral", "phi"])
-
-        if supports_chatml:
-            # Format ChatML pour Qwen/Mistral/Phi
-            formatted_prompt = f"<|im_start|>system\n{system_prompt}<|im_end|>\n<|im_start|>user\n{user_prompt}<|im_end|>\n<|im_start|>assistant\n"
-        else:
-            # Format simple pour TinyLlama et autres modèles basiques
-            # Ces modèles ne comprennent pas les tags ChatML
-            formatted_prompt = f"""Instructions: {system_prompt}
-
-{user_prompt}
-
-CV en Markdown:
-"""
-
-        return formatted_prompt
-
-    def _cv_section_system_prompt(self, language_code: str) -> str:
-        if language_code == "en":
-            return (
-                "You are a senior recruiter and ATS expert. "
-                "Use ONLY the candidate data provided. Do not invent facts. "
-                "Output ONLY the requested section in Markdown."
-            )
-        return (
-            "Tu es un recruteur senior et expert ATS. "
-            "Utilise UNIQUEMENT les données candidat fournies. "
-            "N'invente aucun fait. "
-            "Retourne UNIQUEMENT la section demandée en Markdown."
-        )
-
-    def _extract_prompt_block(self, text: str, start_marker: str, end_marker: str) -> str:
-        if not text:
-            return ""
-        start = text.find(start_marker)
-        if start == -1:
-            return ""
-        end = text.find(end_marker, start + len(start_marker))
-        if end == -1:
-            end = len(text)
-        return text[start:end].strip()
-
-    def _extract_autocheck_feedback(self, base_prompt: str) -> str:
-        feedback = self._extract_prompt_block(
-            base_prompt,
-            "AUTO-CHECK FEEDBACK",
-            "CURRENT CV",
-        )
-        if feedback:
-            return feedback
-        return self._extract_prompt_block(
-            base_prompt,
-            "AUTO-CHECK FEEDBACK",
-            "Regenerate the full CV",
-        )
-
-    def _extract_current_cv_block(self, base_prompt: str) -> str:
-        block = self._extract_prompt_block(
-            base_prompt,
-            "CURRENT CV (markdown):",
-            "Regenerate the full CV",
-        )
-        return block
-
-    def _normalize_heading(self, text: str) -> str:
-        if not text:
-            return ""
-        normalized = unicodedata.normalize("NFKD", text)
-        normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
-        normalized = re.sub(r"\s+", " ", normalized.lower()).strip()
-        return normalized
-
-    def _parse_markdown_sections(self, cv_markdown: str) -> Dict[str, str]:
-        sections: Dict[str, str] = {}
-        current_title = ""
-        buffer: List[str] = []
-        for raw_line in (cv_markdown or "").splitlines():
-            line = raw_line.strip()
-            if line.startswith("## "):
-                if current_title:
-                    sections[current_title] = "\n".join(buffer).strip()
-                current_title = line[3:].strip()
-                buffer = []
-                continue
-            if current_title:
-                buffer.append(raw_line)
-        if current_title:
-            sections[current_title] = "\n".join(buffer).strip()
-        return sections
-
-    def _find_section_text(self, sections: Dict[str, str], keywords: List[str]) -> str:
-        if not sections:
-            return ""
-        normalized_keywords = [self._normalize_heading(k) for k in keywords if k]
-        for title, body in sections.items():
-            title_norm = self._normalize_heading(title)
-            for keyword in normalized_keywords:
-                if keyword and keyword in title_norm:
-                    return body or ""
-        return ""
-
-    def _parse_candidate_sections(self, candidate_block: str) -> Dict[str, Dict[str, str]]:
-        header_map = {
-            "CONTACT (profil):": "contact",
-            "INFOS COMPLEMENTAIRES (profil detaille):": "extra",
-            "RESUME (profil detaille):": "summary",
-            "LIENS (profil detaille):": "links",
-            "EXPERIENCES (profil detaille):": "experience",
-            "FORMATION (profil detaille):": "education",
-            "COMPETENCES (profil detaille):": "skills",
-            "SOFT SKILLS (profil detaille):": "soft_skills",
-            "PROJETS (profil detaille):": "projects",
-            "CERTIFICATIONS (profil detaille):": "certifications",
-            "VOLONTARIAT (profil detaille):": "volunteering",
-            "LANGUES (profil detaille):": "languages",
-            "CENTRES D'INTERET (profil detaille):": "interests",
-            "LETTRE DE MOTIVATION TYPE (profil):": "cover_letter",
-            "CV DE REFERENCE (texte brut, pour details):": "master_cv",
-        }
-
-        sections: Dict[str, Dict[str, str]] = {}
-        current_key: Optional[str] = None
-        for raw_line in (candidate_block or "").splitlines():
-            line = raw_line.strip()
-            if not line:
-                continue
-            if line in header_map:
-                current_key = header_map[line]
-                sections[current_key] = {"header": line, "text": ""}
-                continue
-            if current_key:
-                existing = sections[current_key].get("text", "")
-                sections[current_key]["text"] = (existing + "\n" + raw_line).strip()
-        return sections
-
-    def _build_section_context(
-        self,
-        sections: Dict[str, Dict[str, str]],
-        keys: List[str],
-        max_chars: int = 1800,
-    ) -> str:
-        parts: List[str] = []
-        for key in keys:
-            data = sections.get(key)
-            if not data:
-                continue
-            header = data.get("header") or ""
-            text = data.get("text") or ""
-            if not text.strip():
-                continue
-            parts.append(f"{header}\n{text}".strip())
-        combined = "\n\n".join(parts).strip()
-        if max_chars > 0:
-            combined = _trim_text(combined, max_chars)
-        return combined
-
-    def _normalize_section_output(self, text: str, title: str, placeholder: str) -> str:
-        content = (text or "").strip()
-        if "<|im_end|>" in content:
-            content = content.split("<|im_end|>")[0].strip()
-        if not content:
-            return f"## {title}\n{placeholder}"
-        lines = [line.rstrip() for line in content.splitlines() if line.strip()]
-        if lines and lines[0].lstrip().startswith("#"):
-            lines.pop(0)
-        body = "\n".join(lines).strip()
-        if not body:
-            body = placeholder
-        return f"## {title}\n{body}".strip()
-
-    def _should_use_chunked_generation(self, base_prompt: str) -> bool:
-        env_flag = os.getenv("CVMATCH_CHUNKED_CV")
-        if env_flag is not None:
-            return env_flag.strip().lower() in ("1", "true", "yes", "y")
-
-        custom = self.custom_parameters or {}
-        if "chunked_generation" in custom:
-            return bool(custom.get("chunked_generation"))
-
-        try:
-            total_vram = float(getattr(gpu_manager, "gpu_info", {}).get("total_memory_gb", 0) or 0)
-        except Exception:
-            total_vram = 0.0
-
-        model_hint = str(self.model_name or "").lower()
-        if total_vram and total_vram <= 12 and ("7b" in model_hint or "8b" in model_hint):
-            return True
-
-        free_vram = self._get_free_vram_gb()
-        if free_vram > 0 and free_vram < max(
-            2.0, self._get_vram_headroom_gb(free_vram_gb=free_vram)
-        ):
-            return True
-        return False
-
-    def _generate_text_with_prompt(
-        self,
-        formatted_prompt: str,
-        max_tokens: int,
-        temperature: float,
-        top_p: float,
-        do_sample: bool,
-        progress_callback=None,
-    ) -> str:
-        if not TRANSFORMERS_AVAILABLE or self._model is None or self._tokenizer is None:
-            return ""
-
-        model_max_positions = 4096
-        try:
-            if hasattr(self._model, "config") and hasattr(self._model.config, "max_position_embeddings"):
-                model_max_positions = int(self._model.config.max_position_embeddings)
-        except Exception:
-            pass
-
-        try:
-            opt_max_len = int((self._optimization_config or {}).get("max_model_len") or 0)
-        except Exception:
-            opt_max_len = 0
-        max_total_len = min(opt_max_len or model_max_positions, model_max_positions)
-        max_new_tokens_cap = min(max_tokens, max_total_len // 2)
-        prompt_max_len = max(256, max_total_len - max_new_tokens_cap - 64)
-
-        inputs = self._tokenizer(
-            formatted_prompt,
-            return_tensors="pt",
-            truncation=True,
-            max_length=prompt_max_len,
-        ).to(self._device)
-
-        input_len = int(inputs.input_ids.shape[1])
-        allowed_new_tokens = max_total_len - input_len - 32
-        if allowed_new_tokens > 0:
-            max_tokens = min(max_tokens, max_new_tokens_cap, allowed_new_tokens)
-        else:
-            max_tokens = min(max_tokens, max_new_tokens_cap)
-
-        use_cache = True
-        if getattr(self._device, "type", None) == "cuda" and self._should_disable_kv_cache():
-            free_vram = self._get_free_vram_gb()
-            use_cache = False
-            note = f"[WARN] VRAM faible ({free_vram:.1f}GB) : KV cache désactivé."
-            logger.warning(note)
-            if progress_callback:
-                progress_callback(note)
-
-        if TORCH_AVAILABLE and torch.cuda.is_available():
-            try:
-                torch.cuda.empty_cache()
-            except Exception:
-                pass
-        if TORCH_AVAILABLE and torch.cuda.is_available():
-            if os.getenv("CVMATCH_VRAM_DEBUG", "").strip() == "1":
-                try:
-                    torch.cuda.reset_peak_memory_stats()
-                except Exception:
-                    pass
-        self._log_cuda_mem("pre_generate")
-
-        with torch.no_grad():
-            outputs = self._model.generate(
-                **inputs,
-                max_new_tokens=max_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                top_k=50,
-                do_sample=do_sample,
-                repetition_penalty=1.05,
-                pad_token_id=self._tokenizer.eos_token_id,
-                eos_token_id=self._tokenizer.eos_token_id,
-                use_cache=use_cache,
-            )
-
-        self._log_cuda_mem("post_generate")
-        return self._tokenizer.decode(
-            outputs[0][inputs.input_ids.shape[1]:],
-            skip_special_tokens=True,
-        )
-
-    def _generate_cv_chunked(self, base_prompt: str, progress_callback=None) -> str:
-        lang_match = re.search(r"LANGUE:\s*([a-zA-Z-]+)", base_prompt or "")
-        language_code = _normalize_language(lang_match.group(1)) if lang_match else "fr"
-        placeholder = "[TO COMPLETE]" if language_code == "en" else "[A COMPLETER]"
-
-        if progress_callback:
-            progress_callback("[LOW VRAM] Generation en sections (mode fragmenté)...")
-
-        offer_block = self._extract_prompt_block(base_prompt, "OFFRE CIBLE:", "IDENTITE CANDIDAT")
-        if offer_block:
-            offer_block = _trim_text(offer_block, 1400)
-
-        identity_block = self._extract_prompt_block(base_prompt, "IDENTITE CANDIDAT", "DONNEES CANDIDAT")
-        candidate_block = self._extract_prompt_block(base_prompt, "DONNEES CANDIDAT", "SORTIE OBLIGATOIRE")
-        if candidate_block:
-            lines = candidate_block.splitlines()
-            candidate_block = "\n".join(lines[1:]).strip() if len(lines) > 1 else ""
-
-        candidate_sections = self._parse_candidate_sections(candidate_block)
-        feedback_block = self._extract_autocheck_feedback(base_prompt)
-        if feedback_block:
-            feedback_block = _trim_text(feedback_block, 900)
-        current_cv_block = self._extract_current_cv_block(base_prompt)
-        current_cv_sections = self._parse_markdown_sections(current_cv_block) if current_cv_block else {}
-
-        if language_code == "en":
-            header = "# [Your First Name] [Your Last Name]\n## <Target role>\n"
-            contact_title = "Contact"
-            contact_block = (
-                f"## {contact_title}\n"
-                "- Email: [Your Email]\n"
-                "- Phone: [Your Phone]\n"
-                "- LinkedIn: [Your LinkedIn]\n"
-                "- Location: [Your City, Country]\n"
-            )
-        else:
-            header = "# [Votre Prenom] [Votre Nom]\n## <Titre du poste cible>\n"
-            contact_title = "Informations de contact"
-            contact_block = (
-                f"## {contact_title}\n"
-                "- Email: [Votre Email]\n"
-                "- Telephone: [Votre Telephone]\n"
-                "- LinkedIn: [Votre LinkedIn]\n"
-                "- Localisation: [Votre Ville, Pays]\n"
-            )
-
-        section_plan = [
-            {
-                "key": "summary",
-                "title": "Professional Summary" if language_code == "en" else "Profil professionnel",
-                "data_keys": ["summary", "experience", "skills"],
-                "max_tokens": 192,
-                "include_offer": True,
-                "include_identity": False,
-                "guidance": "3-4 lines, concise, aligned to the target role."
-                if language_code == "en"
-                else "3-4 lignes, concises, alignees au poste cible.",
-            },
-            {
-                "key": "experience",
-                "title": "Work Experience" if language_code == "en" else "Experience professionnelle",
-                "data_keys": ["experience", "volunteering"],
-                "max_tokens": 700,
-                "include_offer": True,
-                "include_identity": False,
-                "guidance": "For each role: 3-5 impact bullets. No invented facts."
-                if language_code == "en"
-                else "Pour chaque poste: 3-5 puces orientées impact. N'invente rien.",
-            },
-            {
-                "key": "projects",
-                "title": "Projects" if language_code == "en" else "Projets",
-                "data_keys": ["projects"],
-                "max_tokens": 360,
-                "include_offer": True,
-                "include_identity": False,
-                "guidance": "1-2 sentences per project, focus on outcomes."
-                if language_code == "en"
-                else "1-2 phrases par projet, focus sur les résultats.",
-            },
-            {
-                "key": "education",
-                "title": "Education" if language_code == "en" else "Formation",
-                "data_keys": ["education"],
-                "max_tokens": 260,
-                "include_offer": False,
-                "include_identity": False,
-                "guidance": "Degree | School | Year, add details if relevant."
-                if language_code == "en"
-                else "Diplome | Etablissement | Annee, details si pertinent.",
-            },
-            {
-                "key": "skills",
-                "title": "Skills" if language_code == "en" else "Competences",
-                "data_keys": ["skills", "soft_skills"],
-                "max_tokens": 260,
-                "include_offer": True,
-                "include_identity": False,
-                "guidance": "Bullet list, prioritize offer keywords."
-                if language_code == "en"
-                else "Liste en puces, priorise les mots-cles de l'offre.",
-            },
-            {
-                "key": "languages",
-                "title": "Languages" if language_code == "en" else "Langues",
-                "data_keys": ["languages"],
-                "max_tokens": 140,
-                "include_offer": False,
-                "include_identity": False,
-                "guidance": "- Language: Level"
-                if language_code == "en"
-                else "- Langue: Niveau",
-            },
-            {
-                "key": "certifications",
-                "title": "Certifications (optional)" if language_code == "en" else "Certifications (optionnel)",
-                "data_keys": ["certifications"],
-                "max_tokens": 140,
-                "include_offer": False,
-                "include_identity": False,
-                "guidance": "List only confirmed certifications."
-                if language_code == "en"
-                else "Liste uniquement les certifications confirmées.",
-            },
-            {
-                "key": "interests",
-                "title": "Interests (optional)" if language_code == "en" else "Centres d'interet (optionnel)",
-                "data_keys": ["interests"],
-                "max_tokens": 120,
-                "include_offer": False,
-                "include_identity": False,
-                "guidance": "Short bullet list."
-                if language_code == "en"
-                else "Liste courte en puces.",
-            },
-        ]
-
-        output_parts: List[str] = [header.strip(), contact_block.strip()]
-        system_prompt = self._cv_section_system_prompt(language_code)
-
-        for section in section_plan:
-            context = self._build_section_context(
-                candidate_sections,
-                section["data_keys"],
-                max_chars=1200,
-            )
-            if not context:
-                output_parts.append(f"## {section['title']}\n{placeholder}")
-                continue
-
-            prompt_parts = []
-            if section.get("include_offer") and offer_block:
-                prompt_parts.append(offer_block)
-            if section.get("include_identity") and identity_block:
-                prompt_parts.append(identity_block)
-            if feedback_block:
-                prompt_parts.append("AUTO-CHECK FEEDBACK (apply if relevant):")
-                prompt_parts.append(feedback_block)
-            if current_cv_sections:
-                current_section = self._find_section_text(
-                    current_cv_sections,
-                    [section["title"], section["key"]],
-                )
-                if current_section:
-                    prompt_parts.append("SECTION COURANTE (brouillon):")
-                    prompt_parts.append(_trim_text(current_section, 900))
-            prompt_parts.append("DONNEES CANDIDAT (section cible):")
-            prompt_parts.append(context)
-            prompt_parts.append(
-                f"SECTION A GENERER: {section['title']}\n"
-                f"CONSIGNES: {section['guidance']}\n"
-                f"Sortie: uniquement cette section en Markdown, commence par '## {section['title']}'."
-            )
-            user_prompt = "\n\n".join(part for part in prompt_parts if part).strip()
-
-            formatted_prompt = self._build_generic_prompt(system_prompt, user_prompt)
-            raw = self._generate_text_with_prompt(
-                formatted_prompt,
-                max_tokens=section["max_tokens"],
-                temperature=0.6,
-                top_p=0.9,
-                do_sample=True,
-                progress_callback=progress_callback,
-            )
-            output_parts.append(
-                self._normalize_section_output(raw, section["title"], placeholder)
-            )
-
-        return "\n\n".join(part for part in output_parts if part).strip()
-
-    def _build_generic_prompt(self, system_prompt: str, user_prompt: str) -> str:
-        """Build a generic prompt with ChatML when supported."""
-        model_lower = self.model_name.lower() if hasattr(self, "model_name") else ""
-        supports_chatml = any(x in model_lower for x in ["qwen", "mistral", "phi"])
-
-        if supports_chatml:
-            return (
-                f"<|im_start|>system\n{system_prompt}<|im_end|>\n"
-                f"<|im_start|>user\n{user_prompt}<|im_end|>\n"
-                f"<|im_start|>assistant\n"
-            )
-
-        return f"Instructions: {system_prompt}\n\n{user_prompt}\n\nAnswer:\n"
-
-    def _extract_cv_content(self, generated_text: str) -> str:
-        """Extrait et nettoie le contenu du CV généré."""
-        # Nettoyage basique
-        content = generated_text.strip()
-        
-        # Supprimer les balises de fin si présentes
-        if "<|im_end|>" in content:
-            content = content.split("<|im_end|>")[0]
-        
-        # S'assurer que le contenu commence par un titre
-        if not content.startswith("#"):
-            lines = content.split("\n")
-            for i, line in enumerate(lines):
-                if line.strip().startswith("#"):
-                    content = "\n".join(lines[i:])
-                    break
-        
-        return content.strip()
-    
-    def _generate_fallback_cv(self) -> str:
-        """Génère un CV de fallback si le modèle principal échoue."""
-        logger.info("Génération CV fallback...")
-        time.sleep(2)  # Simulation
-        
-        return """# {name}
-
-## Informations de contact
-- Email: {email}
-- Téléphone: {phone}
-- LinkedIn: {linkedin}
-
-## Profil professionnel
-Professionnel expérimenté avec une solide expertise dans le domaine. Passionné par l'innovation et l'excellence, je recherche activement de nouveaux défis pour mettre à profit mes compétences et contribuer au succès de votre organisation.
-
-## Expérience professionnelle
-
-### Poste récent
-**Entreprise** | Période
-- Responsabilité principale adaptée au poste visé
-- Accomplissement significatif avec résultats mesurables
-- Collaboration inter-équipes et gestion de projets
-
-### Expérience antérieure
-**Entreprise précédente** | Période
-- Mission clé en lien avec les exigences du poste
-- Innovation ou amélioration apportée
-- Formation et encadrement d'équipe
-
-## Compétences techniques
-- Compétence 1 en rapport avec l'offre
-- Compétence 2 demandée dans l'annonce
-- Compétence 3 différenciante
-- Outils et technologies maîtrisés
-
-## Formation
-**Diplôme principal** | Institution | Année
-**Formation complémentaire** | Organisme | Année
-
-## Langues
-- Français: Natif
-- Anglais: Professionnel
-- Autre langue selon le contexte
-
-## Centres d'intérêt
-Activités en lien avec le poste ou démontrant des soft skills pertinentes.
-"""
-    
-    def generate_cover_letter(self, prompt: str, progress_callback=None) -> str:
-        """Génère une lettre de motivation avec Qwen2.5-32B."""
-        if not self.model_loaded:
-            self.load_model(progress_callback)
-
-        if getattr(self, "current_loader", "transformers") == "llama_cpp":
-            try:
-                if progress_callback:
-                    progress_callback("🦙 Génération de la lettre via llama.cpp...")
-
-                system_prompt = self._letter_system_prompt()
-                user_prompt = self._letter_user_prompt(prompt)
-
-                try:
-                    ctx_size = int(getattr(getattr(self._llama_cpp_server, "config", None), "ctx_size", 4096))
-                except Exception:
-                    ctx_size = 4096
-                max_tokens = max(256, int(min(768, ctx_size // 2)))
-
-                generated_text = self._llama_cpp_chat(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    max_tokens=max_tokens,
-                    temperature=0.8,
-                    top_p=0.9,
-                )
-                letter_content = self._extract_letter_content(generated_text)
-                if progress_callback:
-                    progress_callback("✨ Lettre de motivation générée !")
-                return letter_content
-            except Exception as e:
-                logger.error(f"Erreur génération lettre (llama.cpp): {e}")
-                return self._generate_fallback_letter()
-        
-        if not TRANSFORMERS_AVAILABLE or self._model is None:
-            return self._generate_fallback_letter()
-        
-        try:
-            if progress_callback:
-                progress_callback("💌 Génération de la lettre de motivation...")
-            
-            # Prompt spécifique pour la lettre
-            letter_prompt = self._build_letter_prompt(prompt)
-
-            # Budget tokens: adapter le prompt et la génération selon la limite recommandée.
-            desired_new_tokens = 1024
-            try:
-                opt_max_len = int((self._optimization_config or {}).get("max_model_len") or 0)
-            except Exception:
-                opt_max_len = 0
-            max_total_len = min(opt_max_len or 4096, 4096)
-            max_new_tokens_cap = min(desired_new_tokens, max_total_len // 2)
-            prompt_max_len = max(256, max_total_len - max_new_tokens_cap - 64)
-            prompt_max_len = min(prompt_max_len, 3072)
-             
-            inputs = self._tokenizer(
-                letter_prompt,
-                return_tensors="pt",
-                truncation=True,
-                max_length=prompt_max_len
-            ).to(self._device)
-
-            input_len = int(inputs.input_ids.shape[1])
-            allowed_new_tokens = max_total_len - input_len - 32
-            if allowed_new_tokens > 0:
-                max_new_tokens = min(desired_new_tokens, max_new_tokens_cap, allowed_new_tokens)
-            else:
-                max_new_tokens = max_new_tokens_cap
-             
-            with torch.no_grad():
-                outputs = self._model.generate(
-                    **inputs,
-                    max_new_tokens=max_new_tokens,
-                    temperature=0.8,
-                    top_p=0.9,
-                    do_sample=True,
-                    repetition_penalty=1.1,
-                    pad_token_id=self._tokenizer.eos_token_id,
-                    eos_token_id=self._tokenizer.eos_token_id
-                )
-            
-            generated_text = self._tokenizer.decode(
-                outputs[0][inputs.input_ids.shape[1]:],
-                skip_special_tokens=True
-            )
-            
-            letter_content = self._extract_letter_content(generated_text)
-            
-            if progress_callback:
-                progress_callback("✨ Lettre de motivation générée !")
-            
-            return letter_content
-            
-        except Exception as e:
-            logger.error(f"Erreur génération lettre: {e}")
-            return self._generate_fallback_letter()
-    
-    def _letter_system_prompt(self) -> str:
-        return """Tu es un recruteur senior (HR) et expert en redaction de lettres de motivation.
-Ta mission: produire une lettre 100% personnalisee pour l'offre cible, que le candidat pourra relire et corriger.
-
-Contraintes absolues:
-- N'invente jamais de faits (experiences, dates, entreprises, diplomes, competences, projets, chiffres, contacts).
-- Utilise uniquement les informations presentes dans les DONNEES CANDIDAT fournies.
-- Si une information necessaire manque, laisse le champ vide (pas de placeholder, pas d'hypothese).
-- Tu peux reformuler et utiliser des synonymes/termes equivalents pour coller a l'offre, tant que le fond reste vrai et verifiable.
-- Structure obligatoire: Objet, formule d'appel, 2-3 paragraphes, conclusion + formule de politesse.
-- Longueur: maximum 1 page (court, dense, sans blabla).
-- Style: professionnel, specifique a l'offre (mots-cles) sans phrases generiques.
-- Sortie: texte uniquement (pas de Markdown, pas d'explications)."""
-
-    def _letter_user_prompt(self, base_prompt: str) -> str:
-        return f"""{base_prompt}
-
-Genere la lettre finale (texte uniquement), en respectant la structure demandee."""
-
-    def _build_letter_prompt(self, base_prompt: str) -> str:
-        """Construit un prompt pour lettre de motivation."""
-        system_prompt = self._letter_system_prompt()
-        user_prompt = self._letter_user_prompt(base_prompt)
-        return f"<|im_start|>system\n{system_prompt}<|im_end|>\n<|im_start|>user\n{user_prompt}<|im_end|>\n<|im_start|>assistant\n"
-    
-    def _extract_letter_content(self, generated_text: str) -> str:
-        """Extrait le contenu de la lettre générée."""
-        content = generated_text.strip()
-        if "<|im_end|>" in content:
-            content = content.split("<|im_end|>")[0]
-        return content.strip()
-    
-    def _extract_structured_content(self, generated_text: str) -> str:
-        content = generated_text.strip()
-        if "<|im_end|>" in content:
-            content = content.split("<|im_end|>")[0]
-        return content.strip()
-
-    def _generate_fallback_letter(self) -> str:
-        """Génère une lettre de fallback."""
-        return """Objet: Candidature pour le poste de [Titre du poste]
-
-Madame, Monsieur,
-
-Votre annonce pour le poste de [Titre du poste] a retenu toute mon attention. Fort(e) de mon expérience en [domaine], je suis convaincu(e) de pouvoir apporter une contribution significative à votre équipe.
-
-Mon parcours m'a permis de développer des compétences solides en [compétences clés], particulièrement recherchées pour ce poste. Mon expérience chez [entreprise] où j'ai [réalisation], m'a préparé(e) aux défis que représente ce nouveau poste.
-
-Ce qui m'attire particulièrement chez [Entreprise], c'est [élément spécifique à l'entreprise]. Je suis motivé(e) à l'idée de [contribution spécifique] et de participer au développement de vos projets innovants.
-
-Je serais ravi(e) de vous rencontrer pour discuter de ma candidature et vous présenter plus en détail mon parcours et mes motivations.
-
-Dans l'attente de votre retour, je vous prie d'agréer, Madame, Monsieur, mes salutations distinguées.
-
-[Nom]"""
-    
-    def cleanup_memory(self):
-        """Nettoie la mémoire GPU/CPU."""
-        # Si un serveur llama.cpp tourne et qu'on change de modèle, arrêter l'ancien serveur.
-        server = getattr(self, "_llama_cpp_server", None)
-        if server is not None and getattr(self, "_current_model_path", None) != getattr(self, "model_name", None):
-            try:
-                server.stop()
-            except Exception:
-                pass
-            self._llama_cpp_server = None
-        try:
-            import gc
-
-            gc.collect()
-        except Exception:
-            pass
-        if TORCH_AVAILABLE and torch.cuda.is_available():
-            try:
-                torch.cuda.empty_cache()
-                if hasattr(torch.cuda, "ipc_collect"):
-                    torch.cuda.ipc_collect()
-            except Exception:
-                pass
-        logger.info("Mémoire nettoyée")
-
-    def unload_model(self, reason: str = "") -> None:
-        """Décharge le modèle pour libérer la VRAM entre les étapes."""
-        note = f" ({reason})" if reason else ""
-        try:
-            if self.model_loaded or self._model is not None:
-                logger.info("Déchargement du modèle%s", note)
-        except Exception:
-            pass
-        # Forcer l'arrêt d'un serveur llama.cpp si nécessaire.
-        self._current_model_path = None
-        self._model = None
-        self._tokenizer = None
-        self._device = None
-        self.model_loaded = False
-        try:
-            self.cleanup_memory()
-        except Exception:
-            pass
+from .qwen_manager import QwenManager  # noqa: F401 — backward-compat re-export
+
+try:
+    from ..utils.pipeline_orchestrator import build_default_pipeline, PipelineState
+except ImportError:
+    build_default_pipeline = None
+    PipelineState = None
 
 
 class CVGenerationWorker(QThread):
@@ -3773,27 +824,224 @@ class CVGenerationWorker(QThread):
     Note: Utilise ProfileWorkerData au lieu de UserProfile pour éviter
     les erreurs SQLAlchemy DetachedInstanceError dans les threads background.
     """
-
     progress_updated = Signal(str)
     generation_finished = Signal(dict)
     error_occurred = Signal(str)
     # Signal pour incrémenter les stats du profil (exécuté dans le thread principal)
     profile_stats_updated = Signal(int)  # profile_id
 
-    def __init__(self, profile_data: ProfileWorkerData, offer_data: dict, template: str):
+    def __init__(
+        self,
+        profile_data: ProfileWorkerData,
+        offer_data: dict,
+        template: str,
+        application_id: Optional[int] = None,
+        user_instruction: str = "",
+        cv_only_regen: bool = False,
+        previous_generation_audit: Optional[Dict[str, Any]] = None,
+    ):
         super().__init__()
         self.profile_data = profile_data
         self.offer_data = offer_data
         self.template = template
         # Le QwenManager se configure automatiquement selon le modèle sélectionné
         self.qwen_manager = QwenManager(self.profile_data.model_version)
+        self.application_id: Optional[int] = (
+            application_id if isinstance(application_id, int) else None
+        )
+        self.user_instruction: str = str(user_instruction or "").strip()
+        self.cv_only_regen: bool = bool(cv_only_regen)
+        self.previous_generation_audit: dict = (
+            dict(previous_generation_audit)
+            if isinstance(previous_generation_audit, dict)
+            else {}
+        )
+        self._pipeline_profile_json: dict = {}
+        self._pipeline_cv_json_draft: dict = {}
+        self._pipeline_offer_keywords: dict = {}
+
+    def _get_runtime_memory_pressure_level(self, *, force_refresh: bool = False) -> str:
+        try:
+            snapshot = self.qwen_manager._collect_memory_pressure_snapshot(
+                force_refresh=force_refresh
+            ) or {}
+            pressure = str(snapshot.get("pressure_level") or "").strip().lower()
+            if pressure in {"elevated", "tight", "critical"}:
+                return pressure
+            lowram = str(snapshot.get("lowram_level") or "").strip().lower()
+            if lowram in {"tight", "critical"}:
+                return lowram
+        except Exception:
+            pass
+
+        try:
+            profile = self.qwen_manager._get_lowram_profile(
+                force_refresh=force_refresh
+            ) or {}
+            lowram = str(profile.get("level") or "normal").strip().lower()
+            if lowram in {"tight", "critical"}:
+                return lowram
+        except Exception:
+            pass
+
+        return "normal"
 
     def _should_use_stage_subprocess(self) -> bool:
+        try:
+            if self.qwen_manager._is_survival_mode():
+                return True
+        except Exception:
+            pass
         env_flag = os.getenv("CVMATCH_SUBPROCESS_STAGES")
         if env_flag is not None:
             return env_flag.strip().lower() in ("1", "true", "yes", "y")
         custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
-        return bool(custom.get("subprocess_stages"))
+        if "subprocess_stages" in custom:
+            return bool(custom.get("subprocess_stages"))
+
+        pressure = self._get_runtime_memory_pressure_level(force_refresh=True)
+        if pressure in {"tight", "critical"}:
+            return True
+        if pressure == "elevated":
+            try:
+                return bool(self.qwen_manager._is_low_vram_mode())
+            except Exception:
+                return True
+
+        try:
+            return bool(self.qwen_manager._is_low_vram_mode() and pressure != "normal")
+        except Exception:
+            return False
+
+    @staticmethod
+    def _to_bool_setting(value: Any, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in ("1", "true", "yes", "y", "on")
+
+    def _is_memory_ready_gate_enabled(self) -> bool:
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        env_value = os.getenv("CVMATCH_REQUIRE_MEMORY_READY")
+        if env_value is not None:
+            return self._to_bool_setting(env_value, False)
+        if "require_memory_ready" in custom:
+            return self._to_bool_setting(custom.get("require_memory_ready"), False)
+        try:
+            pressure = self._get_runtime_memory_pressure_level(force_refresh=True)
+            return pressure in {"tight", "critical"}
+        except Exception:
+            return False
+
+    def _is_memory_ready_wait_enabled(self) -> bool:
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        env_value = os.getenv("CVMATCH_WAIT_FOR_MEMORY_READY")
+        if env_value is not None:
+            return self._to_bool_setting(env_value, True)
+        if "wait_for_memory_ready" in custom:
+            return self._to_bool_setting(custom.get("wait_for_memory_ready"), True)
+        return True
+
+    def _memory_ready_timeout_seconds(self) -> int:
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        env_value = os.getenv("CVMATCH_MEMORY_READY_TIMEOUT_S")
+        raw = env_value if env_value is not None else custom.get("memory_ready_timeout_s")
+        try:
+            return max(5, int(raw))
+        except Exception:
+            return 90
+
+    def _memory_ready_poll_seconds(self) -> float:
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        env_value = os.getenv("CVMATCH_MEMORY_READY_POLL_S")
+        raw = env_value if env_value is not None else custom.get("memory_ready_poll_s")
+        try:
+            return max(1.0, float(raw))
+        except Exception:
+            return 4.0
+
+    def _ensure_stage_memory_ready(self, stage: str, stage_model_id: Optional[str], progress_callback=None) -> None:
+        stage_key = str(stage or "").strip().lower()
+
+        try:
+            self.qwen_manager.set_runtime_stage(stage_key)
+        except Exception:
+            pass
+
+        if not self._is_memory_ready_gate_enabled():
+            return
+
+        if stage_model_id:
+            try:
+                self.qwen_manager.apply_model_profile(
+                    stage_model_id,
+                    reason=f"memory_guard:{stage_key}",
+                )
+            except Exception as exc:
+                logger.warning("Memory guard model apply failed for stage %s (%s): %s", stage_key, stage_model_id, exc)
+
+        wait_enabled = self._is_memory_ready_wait_enabled()
+        timeout_s = self._memory_ready_timeout_seconds()
+        poll_s = self._memory_ready_poll_seconds()
+        started = time.time()
+        last_error = ""
+
+        while True:
+            can_proceed, error_message = self.qwen_manager._check_memory_before_load()
+            if can_proceed:
+                return
+
+            last_error = str(error_message or "Insufficient memory to load the stage model.")
+            if not wait_enabled:
+                raise RuntimeError(f"Memory guard blocked stage '{stage_key}': {last_error}")
+
+            elapsed = time.time() - started
+            remaining = timeout_s - elapsed
+            if remaining <= 0:
+                raise RuntimeError(
+                    f"Memory guard timeout for stage '{stage_key}' after {timeout_s}s: {last_error}"
+                )
+
+            if progress_callback:
+                progress_callback(
+                    f"[WAIT] Memory gate for '{stage_key}' ({int(remaining)}s left): {last_error}"
+                )
+            time.sleep(poll_s)
+
+    def _should_skip_critic_stage(self) -> bool:
+        def _to_bool(value: Any) -> bool:
+            if isinstance(value, bool):
+                return value
+            return str(value).strip().lower() in ("1", "true", "yes", "y", "on")
+
+        try:
+            if self.qwen_manager._is_survival_mode():
+                return True
+        except Exception:
+            pass
+
+        env_flag = os.getenv("CVMATCH_SKIP_CRITIC")
+        if env_flag is not None:
+            return _to_bool(env_flag)
+
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        if "skip_critic" in custom:
+            return _to_bool(custom.get("skip_critic"))
+
+        if "skip_critic_in_low_vram" in custom:
+            enabled = _to_bool(custom.get("skip_critic_in_low_vram"))
+            if not enabled:
+                return False
+            try:
+                return bool(self.qwen_manager._is_low_vram_mode())
+            except Exception:
+                return enabled
+
+        try:
+            return bool(self.qwen_manager._is_low_vram_mode())
+        except Exception:
+            return False
 
     def _run_stage_subprocess(self, stage: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         from dataclasses import asdict
@@ -3810,9 +1058,17 @@ class CVGenerationWorker(QThread):
         payload["profile_data"] = asdict(self.profile_data)
         payload["offer_data"] = self.offer_data
         payload["template"] = self.template
+        try:
+            stage_model_id = self._choose_stage_model_override(stage)
+        except Exception:
+            stage_model_id = None
+        if stage_model_id:
+            payload["stage_model_id"] = str(stage_model_id).strip()
+
+        self._ensure_stage_memory_ready(stage, stage_model_id)
 
         with open(input_path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=True, default=str)
+            json.dump(payload, handle, ensure_ascii=False, default=str)
 
         cmd = [
             sys.executable,
@@ -3826,28 +1082,155 @@ class CVGenerationWorker(QThread):
             str(output_path),
         ]
 
-        result = subprocess.run(
-            cmd,
-            cwd=str(repo_root),
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            stderr = (result.stderr or "").strip()
-            stdout = (result.stdout or "").strip()
-            details = stderr or stdout or "unknown error"
-            raise RuntimeError(f"Stage subprocess failed: {stage}: {details}")
+        mock_path = os.environ.get("CVMATCH_STAGE_MOCK_PATH")
+        if mock_path:
+            cmd = [sys.executable, mock_path, str(input_path), str(output_path)]
 
-        with open(output_path, "r", encoding="utf-8") as handle:
-            result_payload = json.load(handle)
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        try:
+            survival_mode = bool(self.qwen_manager._is_survival_mode())
+        except Exception:
+            survival_mode = False
+        stage_attempts = resolve_stage_attempts(
+            stage,
+            survival_mode=survival_mode,
+            custom_parameters=custom,
+            env=os.environ,
+        )
+        stage_timeout_seconds = resolve_stage_timeout_seconds(
+            custom_parameters=custom,
+            env=os.environ,
+            default=0,
+        )
 
         try:
-            input_path.unlink(missing_ok=True)
-            output_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+            last_error = "unknown stage subprocess error"
+            for attempt in range(1, stage_attempts + 1):
+                run_env = build_stage_subprocess_env(
+                    base_env=dict(os.environ),
+                    stage=stage,
+                    attempt=attempt,
+                    attempts=stage_attempts,
+                    force_survival_retry=survival_mode,
+                )
+                if survival_mode:
+                    run_env["CVMATCH_SURVIVAL_MODE"] = "1"
+                    run_env.setdefault("CVMATCH_SURVIVAL_IGNORE_SELECTED_MODEL", "1")
+                if attempt > 1:
+                    # Retry in RAM-first mode: keep selected model and reduce GPU fragility.
+                    run_env.setdefault("CVMATCH_PREFER_RAM_OFFLOAD", "1")
+                    run_env.setdefault("CVMATCH_FORCE_DISK_OFFLOAD", "0")
+                    run_env.setdefault("CVMATCH_DISABLE_TORCH_COMPILE", "1")
+                    run_env.setdefault("CVMATCH_CPU_HEADROOM_GB", "0.5")
+                    run_env.setdefault("CVMATCH_MAX_MEMORY_CPU_GB", "12")
+                    run_env.setdefault("CVMATCH_FORCE_GPU", "0")
+                    run_env.setdefault("CVMATCH_KEEP_SELECTED_STAGE_MODEL", "1")
 
-        return result_payload
+                run_kwargs = {
+                    "args": cmd,
+                    "cwd": str(repo_root),
+                    "env": run_env,
+                    "capture_output": True,
+                    "text": True,
+                    "encoding": "utf-8",
+                    "errors": "replace",
+                }
+                if stage_timeout_seconds > 0:
+                    run_kwargs["timeout"] = stage_timeout_seconds
+
+                try:
+                    result = subprocess.run(**run_kwargs)
+                except subprocess.TimeoutExpired as exc:
+                    details = (
+                        f"timeout after {stage_timeout_seconds}s"
+                        if stage_timeout_seconds > 0
+                        else "timeout"
+                    )
+                    stderr = str(getattr(exc, "stderr", "") or "")
+                    stdout = str(getattr(exc, "stdout", "") or "")
+                    diag_path = persist_stage_subprocess_diagnostics(
+                        repo_root=repo_root,
+                        stage=stage,
+                        attempt=attempt,
+                        attempts=stage_attempts,
+                        return_code=-1,
+                        stdout=stdout,
+                        stderr=stderr,
+                        details=details,
+                    )
+                    detail_with_diag = (
+                        f"{details} (diagnostic: {diag_path})"
+                        if diag_path
+                        else details
+                    )
+                    last_error = detail_with_diag
+                    try:
+                        self.qwen_manager._record_failure(
+                            f"stage_subprocess:{stage}:{detail_with_diag[:200]}"
+                        )
+                    except Exception:
+                        pass
+                    if attempt < stage_attempts:
+                        logger.warning(
+                            "Stage subprocess timeout, retrying: stage=%s attempt=%s/%s detail=%s",
+                            stage,
+                            attempt,
+                            stage_attempts,
+                            detail_with_diag,
+                        )
+                        continue
+                    raise RuntimeError(
+                        f"Stage subprocess failed: {stage}: {detail_with_diag}"
+                    ) from exc
+
+                if result.returncode != 0:
+                    stderr = str(result.stderr or "")
+                    stdout = str(result.stdout or "")
+                    details = extract_stage_subprocess_error(stdout, stderr)
+                    diag_path = persist_stage_subprocess_diagnostics(
+                        repo_root=repo_root,
+                        stage=stage,
+                        attempt=attempt,
+                        attempts=stage_attempts,
+                        return_code=result.returncode,
+                        stdout=stdout,
+                        stderr=stderr,
+                        details=details,
+                    )
+                    detail_with_diag = (
+                        f"{details} (diagnostic: {diag_path})"
+                        if diag_path
+                        else details
+                    )
+                    last_error = detail_with_diag
+                    try:
+                        self.qwen_manager._record_failure(
+                            f"stage_subprocess:{stage}:{detail_with_diag[:200]}"
+                        )
+                    except Exception:
+                        pass
+                    is_transient = is_transient_stage_memory_error(details)
+                    if is_transient and attempt < stage_attempts:
+                        logger.warning(
+                            "Stage subprocess memory failure, retrying: stage=%s attempt=%s/%s detail=%s",
+                            stage,
+                            attempt,
+                            stage_attempts,
+                            details,
+                        )
+                        continue
+                    raise RuntimeError(f"Stage subprocess failed: {stage}: {detail_with_diag}")
+
+                with open(output_path, "r", encoding="utf-8") as handle:
+                    return json.load(handle)
+
+            raise RuntimeError(f"Stage subprocess failed: {stage}: {last_error}")
+        finally:
+            try:
+                input_path.unlink(missing_ok=True)
+                output_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     def _build_profile_payload(self) -> Dict[str, Any]:
         personal_info = dict(self.profile_data.extracted_personal_info or {})
@@ -3878,24 +1261,35 @@ class CVGenerationWorker(QThread):
 
     def _build_profile_json(self) -> Dict[str, Any]:
         from ..utils.profile_json import (
-            build_profile_json_from_extracted_profile,
+            compute_profile_json_fingerprint,
             has_profile_json_content,
             load_profile_json_cache,
+            map_payload_to_profile_json,
             save_profile_json_cache,
         )
 
+        profile_payload = self._build_profile_payload()
+        extracted = map_payload_to_profile_json(profile_payload, source="profile")
+        profile_fingerprint = compute_profile_json_fingerprint(extracted)
+
         profile_id = getattr(self.profile_data, "id", None) or 0
         if profile_id:
-            cached = load_profile_json_cache(profile_id)
+            cached = load_profile_json_cache(
+                profile_id,
+                expected_fingerprint=profile_fingerprint,
+            )
             if cached:
                 logger.info("Profile JSON cache hit: profile_id=%s", profile_id)
                 return cached
 
-        extracted = build_profile_json_from_extracted_profile(self.profile_data)
         if has_profile_json_content(extracted):
             if profile_id:
                 try:
-                    save_profile_json_cache(profile_id, extracted)
+                    save_profile_json_cache(
+                        profile_id,
+                        extracted,
+                        fingerprint=profile_fingerprint,
+                    )
                 except Exception as exc:
                     logger.warning(
                         "Unable to persist profile JSON cache: %s", exc
@@ -3932,7 +1326,7 @@ class CVGenerationWorker(QThread):
             profile_text = ""
             if isinstance(profile_json, dict):
                 try:
-                    profile_text = json.dumps(profile_json, ensure_ascii=True).lower()
+                    profile_text = json.dumps(profile_json, ensure_ascii=False).lower()
                 except Exception:
                     profile_text = ""
             filtered = []
@@ -3951,6 +1345,9 @@ class CVGenerationWorker(QThread):
         return sanitized
 
     def _fallback_critic_json(self, *, reason: str = "") -> Dict[str, Any]:
+        if not self._allow_content_fallback():
+            raise RuntimeError(reason or "Critic fallback disabled")
+
         language = self._resolve_language_code()
         job_title = ""
         company = ""
@@ -3997,38 +1394,15 @@ class CVGenerationWorker(QThread):
             return payload
 
     def _fallback_offer_keywords_json(self, *, reason: str = "") -> Dict[str, Any]:
-        from ..schemas.offer_keywords_schema import OfferKeywordsJSON
+        if not self._allow_content_fallback():
+            raise RuntimeError(reason or "Offer keywords fallback disabled")
 
-        language = self._resolve_language_code()
-        job_title = ""
-        company = ""
-        if isinstance(self.offer_data, dict):
-            job_title = self.offer_data.get("job_title") or ""
-            company = self.offer_data.get("company") or ""
-
-        payload = {
-            "schema_version": "offer_keywords.v1",
-            "language": language,
-            "job_title": job_title,
-            "company": company,
-            "seniority": "",
-            "keywords": [],
-            "skills": [],
-            "tools": [],
-            "soft_skills": [],
-            "responsibilities": [],
-            "education": [],
-            "certifications": [],
-        }
-
-        try:
-            parsed = OfferKeywordsJSON.model_validate(payload).model_dump()
-        except Exception:
-            parsed = payload
-
-        if reason:
-            logger.warning("Fallback OfferKeywordsJSON used due to: %s", reason)
-        return parsed
+        return build_offer_keywords_fallback(
+            offer_data=self.offer_data if isinstance(self.offer_data, dict) else {},
+            language_code=self._resolve_language_code(),
+            reason=reason,
+            logger=logger,
+        )
 
     def _is_slow_generation_device(self) -> bool:
         try:
@@ -4053,7 +1427,109 @@ class CVGenerationWorker(QThread):
         return False
 
     def _strict_generator_retries(self) -> int:
-        return 1 if self._is_slow_generation_device() else 2
+        retries = 1 if self._is_slow_generation_device() else 2
+        if not self._allow_content_fallback():
+            # When content fallback is disabled, keep one extra strict attempt
+            # to reduce hard pipeline failures on transient empty JSON outputs.
+            retries = max(retries, 2)
+        return retries
+
+    def _allow_content_fallback(self) -> bool:
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        env_value = os.getenv("CVMATCH_DISABLE_CONTENT_FALLBACK")
+        if env_value is not None:
+            return not self._to_bool_setting(env_value, False)
+        if self._to_bool_setting(custom.get("disable_model_fallback"), False):
+            return False
+        return not self._to_bool_setting(custom.get("disable_content_fallback"), False)
+
+    def _get_max_model_size_cap_b(self) -> float:
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        default_cap = 0.0
+
+        raw_env = os.getenv("CVMATCH_MAX_MODEL_SIZE_B")
+        raw_custom = custom.get("max_model_size_b")
+        raw_value = raw_env if raw_env is not None else raw_custom
+        if raw_value not in (None, ""):
+            try:
+                default_cap = float(raw_value)
+            except Exception:
+                default_cap = 0.0
+
+        small_mode = self._to_bool_setting(
+            os.getenv("CVMATCH_SMALL_MODELS_ONLY"),
+            self._to_bool_setting(custom.get("small_models_only"), False),
+        )
+        if small_mode and default_cap <= 0:
+            default_cap = 2.0
+
+        return max(0.0, default_cap)
+
+    @staticmethod
+    def _estimate_model_size_for_id(model_id: str) -> float:
+        model_key = str(model_id or "").strip()
+        if not model_key:
+            return 0.0
+        try:
+            from ..utils.model_manager import model_manager
+
+            info = model_manager.get_model_info(model_key)
+            if not info:
+                return 0.0
+            model_path = str(getattr(info, "model_path", "") or "")
+            return float(
+                _estimate_model_size_gb(
+                    model_name=model_path,
+                    model_id=model_key,
+                )
+            )
+        except Exception:
+            return 0.0
+
+    def _is_model_within_size_cap(self, model_id: str, max_model_size_b: float) -> bool:
+        cap = float(max_model_size_b or 0.0)
+        if cap <= 0:
+            return True
+        estimate = self._estimate_model_size_for_id(model_id)
+        if estimate <= 0:
+            return True
+        return estimate <= cap + 1e-6
+
+    def _consume_qwen_runtime_error(self) -> str:
+        getter = getattr(self.qwen_manager, "get_last_generation_error", None)
+        if not callable(getter):
+            return ""
+        try:
+            return str(getter(clear=True) or "").strip()
+        except TypeError:
+            try:
+                return str(getter() or "").strip()
+            except Exception:
+                return ""
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _compose_fallback_reason(*, strict_error: Any = "", retry_error: Any = "") -> str:
+        strict_text = str(strict_error or "").strip()
+        retry_text = str(retry_error or "").strip()
+        if strict_text and retry_text:
+            return f"strict={strict_text}; retry={retry_text}"
+        return strict_text or retry_text
+
+    @staticmethod
+    def _is_strict_missing_required_error(error: Any) -> bool:
+        text = str(error or "").lower()
+        if "validation errors for cvjson" not in text:
+            return False
+        required_markers = (
+            "target_job_title",
+            "target_company",
+            "contact",
+            "summary",
+            "field required",
+        )
+        return all(marker in text for marker in required_markers)
 
     def _apply_contact_fallback(
         self, cv_json: Dict[str, Any], profile_json: Dict[str, Any]
@@ -4119,40 +1595,517 @@ class CVGenerationWorker(QThread):
         if not cv_json.get("target_company") and company:
             cv_json["target_company"] = company
 
+    def _build_minimum_summary(
+        self,
+        *,
+        profile_json: Dict[str, Any],
+        target_job_title: str = "",
+        target_company: str = "",
+    ) -> str:
+        profile_data = profile_json if isinstance(profile_json, dict) else {}
+        personal = profile_data.get("personal_info")
+        if not isinstance(personal, dict):
+            personal = {}
+
+        headline = str(personal.get("summary") or personal.get("headline") or "").strip()
+        if headline and not self._text_has_review_markers(headline):
+            return _trim_text(headline, 420)
+
+        exp_titles: List[str] = []
+        for entry in profile_data.get("experiences") or []:
+            if not isinstance(entry, dict):
+                continue
+            title = str(
+                entry.get("title")
+                or entry.get("position")
+                or entry.get("role")
+                or entry.get("job_title")
+                or ""
+            ).strip()
+            if title and title not in exp_titles:
+                exp_titles.append(title)
+            if len(exp_titles) >= 2:
+                break
+
+        skill_terms: List[str] = []
+        for entry in profile_data.get("skills") or []:
+            if isinstance(entry, str):
+                candidate = entry.strip()
+                if candidate and candidate not in skill_terms:
+                    skill_terms.append(candidate)
+            elif isinstance(entry, dict):
+                direct = str(
+                    entry.get("name")
+                    or entry.get("skill")
+                    or entry.get("label")
+                    or ""
+                ).strip()
+                if direct and direct not in skill_terms:
+                    skill_terms.append(direct)
+                items = entry.get("items")
+                if isinstance(items, list):
+                    for item in items:
+                        text = str(item or "").strip()
+                        if text and text not in skill_terms:
+                            skill_terms.append(text)
+                        if len(skill_terms) >= 6:
+                            break
+            if len(skill_terms) >= 6:
+                break
+
+        lang = self._resolve_language_code()
+        role_text = str(target_job_title or "").strip() or ("target role" if lang == "en" else "poste cible")
+        company_text = str(target_company or "").strip()
+
+        if lang == "en":
+            summary = f"Profile aligned with {role_text}"
+            if company_text:
+                summary += f" at {company_text}"
+            if exp_titles:
+                summary += f". Experience in {', '.join(exp_titles[:2])}"
+            if skill_terms:
+                summary += f". Core skills: {', '.join(skill_terms[:5])}"
+            summary += "."
+        else:
+            summary = f"Profil aligne sur le poste {role_text}"
+            if company_text:
+                summary += f" chez {company_text}"
+            if exp_titles:
+                summary += f". Experience en {', '.join(exp_titles[:2])}"
+            if skill_terms:
+                summary += f". Competences cles: {', '.join(skill_terms[:5])}"
+            summary += "."
+
+        return _trim_text(summary, 420)
+
+    @staticmethod
+    def _normalize_language_identity(value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        folded = (
+            unicodedata.normalize("NFKD", text)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+            .lower()
+            .strip()
+        )
+        if not folded:
+            return ""
+        folded = re.sub(r"[^a-z0-9+#]+", " ", folded).strip()
+        aliases = {
+            "en": "english",
+            "eng": "english",
+            "english": "english",
+            "anglais": "english",
+            "fr": "french",
+            "fra": "french",
+            "french": "french",
+            "francais": "french",
+            "francais langue maternelle": "french",
+            "de": "german",
+            "ger": "german",
+            "german": "german",
+            "allemand": "german",
+            "es": "spanish",
+            "spa": "spanish",
+            "spanish": "spanish",
+            "espagnol": "spanish",
+            "it": "italian",
+            "ita": "italian",
+            "italian": "italian",
+            "italien": "italian",
+            "pt": "portuguese",
+            "por": "portuguese",
+            "portuguese": "portuguese",
+            "portugais": "portuguese",
+            "ja": "japanese",
+            "jp": "japanese",
+            "jpn": "japanese",
+            "japanese": "japanese",
+            "japonais": "japanese",
+            "zh": "chinese",
+            "cn": "chinese",
+            "chinese": "chinese",
+            "chinois": "chinese",
+            "mandarin": "chinese",
+            "ru": "russian",
+            "rus": "russian",
+            "russian": "russian",
+            "russe": "russian",
+            "ar": "arabic",
+            "ara": "arabic",
+            "arabic": "arabic",
+            "arabe": "arabic",
+        }
+        if folded in aliases:
+            return aliases[folded]
+        compact = folded.replace(" ", "")
+        if compact in aliases:
+            return aliases[compact]
+        if compact.startswith("fran") and compact.endswith("ais"):
+            return "french"
+        if compact.startswith("angl"):
+            return "english"
+        if compact.startswith("japon"):
+            return "japanese"
+        if compact.startswith("allem"):
+            return "german"
+        if compact.startswith("espagn"):
+            return "spanish"
+        return folded
+
+    @staticmethod
+    def _normalize_language_level(value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        cefr_match = re.search(r"\b([ABC][12])\b", text.upper())
+        if cefr_match:
+            return cefr_match.group(1)
+
+        folded = (
+            unicodedata.normalize("NFKD", text)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+            .lower()
+            .strip()
+        )
+        synonyms = {
+            "native": "C2",
+            "natif": "C2",
+            "mother tongue": "C2",
+            "langue maternelle": "C2",
+            "bilingual": "C2",
+            "bilingue": "C2",
+            "fluent": "C1",
+            "courant": "C1",
+            "advanced": "B2",
+            "avance": "B2",
+            "upper intermediate": "B2",
+            "intermediaire superieur": "B2",
+            "intermediate": "B1",
+            "intermediaire": "B1",
+            "elementary": "A2",
+            "elementaire": "A2",
+            "beginner": "A1",
+            "debutant": "A1",
+            "basic": "A1",
+            "notions": "A1",
+        }
+        for marker, mapped in synonyms.items():
+            if marker in folded:
+                return mapped
+        return text
+
+    @staticmethod
+    def _is_generic_language_level(value: Any) -> bool:
+        text = str(value or "").strip()
+        if not text:
+            return True
+        if re.search(r"\b([ABC][12])\b", text.upper()):
+            return False
+        folded = (
+            unicodedata.normalize("NFKD", text)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+            .lower()
+            .strip()
+        )
+        generic_markers = (
+            "native",
+            "natif",
+            "mother tongue",
+            "langue maternelle",
+            "bilingual",
+            "bilingue",
+            "fluent",
+            "courant",
+            "advanced",
+            "avance",
+            "intermediate",
+            "intermediaire",
+            "beginner",
+            "debutant",
+            "basic",
+            "elementary",
+            "elementaire",
+        )
+        return any(marker in folded for marker in generic_markers)
+
+    def _merge_languages_with_profile(
+        self,
+        generated_languages: Any,
+        profile_languages: Any,
+    ) -> List[Dict[str, str]]:
+        profile_map: Dict[str, Dict[str, str]] = {}
+        profile_order: List[str] = []
+
+        for entry in profile_languages or []:
+            if not isinstance(entry, dict):
+                continue
+            language = str(entry.get("language") or entry.get("name") or "").strip()
+            key = self._normalize_language_identity(language)
+            if not key:
+                continue
+            level = self._normalize_language_level(
+                entry.get("level") or entry.get("proficiency") or ""
+            )
+            certification = str(
+                entry.get("certification")
+                or entry.get("certificate")
+                or entry.get("organization")
+                or entry.get("issuer")
+                or ""
+            ).strip()
+            if key not in profile_map:
+                profile_map[key] = {
+                    "language": language,
+                    "level": level,
+                    "certification": certification,
+                }
+                profile_order.append(key)
+            else:
+                if level and not profile_map[key].get("level"):
+                    profile_map[key]["level"] = level
+                if certification and not profile_map[key].get("certification"):
+                    profile_map[key]["certification"] = certification
+                if language and len(language) > len(profile_map[key].get("language") or ""):
+                    profile_map[key]["language"] = language
+
+        merged: List[Dict[str, str]] = []
+        seen: set = set()
+
+        for entry in generated_languages or []:
+            if not isinstance(entry, dict):
+                continue
+            language = str(entry.get("language") or entry.get("name") or "").strip()
+            key = self._normalize_language_identity(language)
+            if not key or key in seen:
+                continue
+            raw_level = entry.get("level") or entry.get("proficiency") or ""
+            level = self._normalize_language_level(raw_level)
+            certification = str(
+                entry.get("certification")
+                or entry.get("certificate")
+                or entry.get("organization")
+                or entry.get("issuer")
+                or ""
+            ).strip()
+
+            if key in profile_map:
+                profile_entry = profile_map[key]
+                profile_level = profile_entry.get("level") or ""
+                profile_certification = profile_entry.get("certification") or ""
+                if profile_level and (not level or self._is_generic_language_level(raw_level)):
+                    selected_level = profile_level
+                else:
+                    selected_level = level or profile_level
+                selected_certification = certification or profile_certification
+                merged.append(
+                    {
+                        "language": profile_entry.get("language") or language,
+                        "level": selected_level,
+                        "certification": selected_certification,
+                    }
+                )
+            else:
+                merged.append(
+                    {
+                        "language": language,
+                        "level": level,
+                        "certification": certification,
+                    }
+                )
+            seen.add(key)
+
+        for key in profile_order:
+            if key in seen:
+                continue
+            merged.append(profile_map[key])
+            seen.add(key)
+
+        return merged[:4]
+
+    def _ensure_required_cv_fields(
+        self,
+        *,
+        cv_json: Dict[str, Any],
+        profile_json: Dict[str, Any],
+        stage: str = "",
+    ) -> Dict[str, Any]:
+        base = self._coerce_minimum_cv_json_payload(
+            cv_json if isinstance(cv_json, dict) else {},
+            profile_json=profile_json,
+            reason=f"{stage or 'cv'}_required_fields",
+        )
+
+        lang = self._resolve_language_code()
+        job_title = str(base.get("target_job_title") or "").strip()
+        company = str(base.get("target_company") or "").strip()
+        if not job_title:
+            job_title = "Target Role" if lang == "en" else "Poste cible"
+            base["target_job_title"] = job_title
+        if not company:
+            company = "Target Company" if lang == "en" else "Entreprise cible"
+            base["target_company"] = company
+
+        contact = base.get("contact")
+        if not isinstance(contact, dict):
+            contact = {}
+            base["contact"] = contact
+        if not str(contact.get("full_name") or "").strip():
+            contact["full_name"] = (
+                str(self.profile_data.name or "").strip()
+                or ("Candidate" if lang == "en" else "Candidat")
+            )
+
+        summary = str(base.get("summary") or "").strip()
+        if not summary or self._summary_needs_rewrite(summary):
+            base["summary"] = self._build_minimum_summary(
+                profile_json=profile_json,
+                target_job_title=job_title,
+                target_company=company,
+            )
+
+        return base
+
+    def _fallback_or_minimum_cv_json(
+        self,
+        *,
+        profile_json: Dict[str, Any],
+        reason: str = "",
+        stage: str = "",
+    ) -> Dict[str, Any]:
+        try:
+            return self._fallback_cv_json(profile_json=profile_json, reason=reason)
+        except Exception as fallback_exc:
+            logger.warning(
+                "CV fallback unavailable, using deterministic minimum payload: stage=%s reason=%s error=%s",
+                stage or "-",
+                reason,
+                fallback_exc,
+            )
+            recovered = self._ensure_required_cv_fields(
+                cv_json={},
+                profile_json=profile_json,
+                stage=stage or "minimum_recovery",
+            )
+            try:
+                from ..schemas.cv_schema import CVJSON
+
+                return CVJSON.model_validate(recovered).model_dump()
+            except Exception:
+                return recovered
+
+    def _coerce_minimum_cv_json_payload(
+        self,
+        payload: Dict[str, Any],
+        *,
+        profile_json: Dict[str, Any],
+        reason: str = "",
+    ) -> Dict[str, Any]:
+        """Coerce payload to a minimally valid CVJSON shape.
+
+        This is a deterministic schema guard, not a model fallback.
+        It prevents pipeline aborts when the model returns `{}` or
+        partial JSON under memory pressure.
+        """
+        base = dict(payload or {}) if isinstance(payload, dict) else {}
+        profile_data = profile_json if isinstance(profile_json, dict) else {}
+        personal = profile_data.get("personal_info")
+        if not isinstance(personal, dict):
+            personal = {}
+
+        contact = base.get("contact")
+        if not isinstance(contact, dict):
+            contact = {}
+        base["contact"] = contact
+        self._apply_contact_fallback(base, profile_data)
+        self._apply_target_fallback(base)
+
+        if not isinstance(base.get("target_job_title"), str):
+            base["target_job_title"] = str(base.get("target_job_title") or "").strip()
+        if not isinstance(base.get("target_company"), str):
+            base["target_company"] = str(base.get("target_company") or "").strip()
+
+        if not str(base.get("target_job_title") or "").strip():
+            if isinstance(self.offer_data, dict):
+                base["target_job_title"] = str(
+                    self.offer_data.get("job_title")
+                    or ((self.offer_data.get("analysis") or {}).get("title") if isinstance(self.offer_data.get("analysis"), dict) else "")
+                    or ""
+                ).strip()
+        if not str(base.get("target_company") or "").strip():
+            if isinstance(self.offer_data, dict):
+                base["target_company"] = str(self.offer_data.get("company") or "").strip()
+
+        summary = base.get("summary")
+        if not isinstance(summary, str):
+            summary = "" if summary is None else str(summary)
+        summary = summary.strip()
+        if not summary:
+            summary = str(personal.get("summary") or personal.get("headline") or "").strip()
+        base["summary"] = summary
+
+        for list_key in ("skills", "experience", "education"):
+            value = base.get(list_key)
+            if value is None:
+                base[list_key] = []
+            elif not isinstance(value, list):
+                base[list_key] = []
+            else:
+                base[list_key] = [item for item in value if isinstance(item, dict)]
+
+        for optional_list_key in ("projects", "languages", "certifications"):
+            value = base.get(optional_list_key)
+            if value is not None and not isinstance(value, list):
+                base[optional_list_key] = []
+            elif isinstance(value, list):
+                base[optional_list_key] = [item for item in value if isinstance(item, dict)]
+
+        base["languages"] = self._merge_languages_with_profile(
+            base.get("languages") or [],
+            profile_data.get("languages") or [],
+        )
+
+        ats_keywords = base.get("ats_keywords")
+        if ats_keywords is not None and not isinstance(ats_keywords, list):
+            base["ats_keywords"] = []
+        elif isinstance(ats_keywords, list):
+            cleaned_keywords = []
+            for item in ats_keywords:
+                text = str(item or "").strip()
+                if text:
+                    cleaned_keywords.append(text)
+            base["ats_keywords"] = cleaned_keywords
+
+        render_hints = base.get("render_hints")
+        if render_hints is not None and not isinstance(render_hints, dict):
+            base["render_hints"] = None
+
+        if reason:
+            logger.warning(
+                "CVJSON payload coerced to minimum schema shape: %s",
+                reason,
+            )
+        return base
+
     def _fallback_cv_json(
         self, *, profile_json: Dict[str, Any], reason: str = ""
     ) -> Dict[str, Any]:
-        from ..schemas.cv_schema import CVJSON
+        if not self._allow_content_fallback():
+            raise RuntimeError(reason or "CV fallback disabled")
 
-        payload = {
-            "schema_version": "cv.v1",
-            "target_job_title": "",
-            "target_company": "",
-            "contact": {},
-            "summary": "",
-            "skills": [],
-            "experience": [],
-            "education": [],
-            "projects": [],
-            "languages": [],
-            "certifications": [],
-            "ats_keywords": [],
-            "render_hints": {
-                "notes": "",
-                "section_order": [],
-                "emphasis": [],
-                "tone": "",
-            },
-        }
-
-        try:
-            parsed = CVJSON.model_validate(payload).model_dump()
-        except Exception:
-            parsed = payload
-
-        if reason:
-            logger.warning("Fallback CVJSON used due to: %s", reason)
-        return parsed
+        return build_cv_json_fallback(
+            profile_json=profile_json or {},
+            profile_data=self.profile_data,
+            offer_data=self.offer_data if isinstance(self.offer_data, dict) else {},
+            language_code=self._resolve_language_code(),
+            offer_keywords_collector=self._collect_offer_keywords,
+            reason=reason,
+            logger=logger,
+        )
 
     def _resolve_language_code(self) -> str:
         analysis = self.offer_data.get("analysis") if isinstance(self.offer_data, dict) else None
@@ -4172,7 +2125,377 @@ class CVGenerationWorker(QThread):
         if preferred:
             return _normalize_language(preferred)
         return "fr"
+    # Stage model routing
+    def _is_stage_model_routing_enabled(self) -> bool:
+        from ..utils.stage_model_routing import is_stage_model_routing_enabled
+        return is_stage_model_routing_enabled()
 
+    def _choose_stage_model_override(self, stage: str) -> Optional[str]:
+        from ..utils.stage_model_routing import (
+            StageModelConfig,
+            is_writer_stage,
+            resolve_stage_model_override,
+        )
+
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        current = getattr(self.qwen_manager, "current_model_id", "")
+        try:
+            allow_model_fallback = bool(self.qwen_manager._allow_model_fallback())
+        except Exception:
+            allow_model_fallback = True
+        try:
+            prefer_ram_offload = bool(self.qwen_manager._prefer_ram_offload_mode())
+        except Exception:
+            prefer_ram_offload = False
+        lock_selected_model = (not allow_model_fallback) or prefer_ram_offload
+        max_model_size_b = self._get_max_model_size_cap_b()
+        pressure = self._get_runtime_memory_pressure_level(force_refresh=True)
+        snapshot: Dict[str, Any] = {}
+        try:
+            snapshot = self.qwen_manager._collect_memory_pressure_snapshot(
+                force_refresh=True
+            ) or {}
+        except Exception:
+            snapshot = {}
+        try:
+            ram_available_gb = float(snapshot.get("ram_available_gb") or 0.0)
+        except Exception:
+            ram_available_gb = 0.0
+        try:
+            commit_available_gb = float(snapshot.get("commit_available_gb") or 0.0)
+        except Exception:
+            commit_available_gb = 0.0
+        lowram_level = pressure if pressure in {"tight", "critical"} else "normal"
+        base_config = StageModelConfig.from_env_and_custom(custom)
+        routing_config = StageModelConfig(
+            enabled=base_config.enabled,
+            keep_selected_model=(True if lock_selected_model else base_config.keep_selected_model),
+            prefer_small_extractor=(bool(base_config.prefer_small_extractor) and not lock_selected_model),
+            extractor_model_id=base_config.extractor_model_id,
+            writer_model_id=base_config.writer_model_id,
+            lowram_level=lowram_level,
+        )
+        resolution = resolve_stage_model_override(
+            stage,
+            config=routing_config,
+            custom_parameters=custom,
+            current_model_id=current,
+        )
+
+        if lock_selected_model and resolution.requires_switch and not resolution.is_explicit:
+            logger.info(
+                "Stage override ignored (keep selected model): stage=%s target=%s current=%s",
+                stage,
+                resolution.model_id,
+                current,
+            )
+        elif resolution.requires_switch and resolution.model_id:
+            if self._is_model_within_size_cap(resolution.model_id, max_model_size_b):
+                return resolution.model_id
+            logger.info(
+                "Stage override skipped by model size cap: stage=%s model=%s cap=%.2fB",
+                stage,
+                resolution.model_id,
+                max_model_size_b,
+            )
+
+        # Low-memory route for writer stages: proactively downshift from heavy models
+        # to avoid mid-stage OOM and degraded deterministic fallback.
+        writer_low_headroom = is_writer_stage(stage) and (
+            pressure in {"tight", "critical"}
+            or (ram_available_gb > 0 and ram_available_gb < 3.5)
+            or (commit_available_gb > 0 and commit_available_gb < 4.0)
+        )
+        if writer_low_headroom and allow_model_fallback and not lock_selected_model:
+            try:
+                from ..utils.model_manager import model_manager
+
+                available = {
+                    str(mid or "").strip().lower()
+                    for mid in getattr(model_manager, "available_models", [])
+                    if str(mid or "").strip()
+                }
+
+                preferred = []
+
+                env_pref = str(os.getenv("CVMATCH_WRITER_LOWRAM_MODEL_ID") or "").strip()
+                if env_pref:
+                    preferred.append(env_pref)
+
+                custom_pref = str(custom.get("writer_lowram_model_id") or "").strip()
+                if custom_pref:
+                    preferred.append(custom_pref)
+
+                # Keep writer quality as high as possible under pressure.
+                preferred.extend(["qwen2-1.5b", "qwen2-0.5b", "qwen2-3b", "mistral-7b"])
+
+                current_key = str(current or "").strip().lower()
+                for candidate in preferred:
+                    candidate_key = str(candidate or "").strip().lower()
+                    if not candidate_key or candidate_key == current_key:
+                        continue
+                    if candidate_key in available:
+                        if not self._is_model_within_size_cap(candidate_key, max_model_size_b):
+                            continue
+                        return candidate_key
+            except Exception:
+                pass
+
+        try:
+            from ..utils.model_manager import model_manager
+
+            quality_candidate = resolve_writer_quality_override(
+                stage=stage,
+                current_model_id=current,
+                available_model_ids=getattr(model_manager, "available_models", []),
+            )
+            if (
+                quality_candidate
+                and quality_candidate != current
+                and self._is_model_within_size_cap(quality_candidate, max_model_size_b)
+            ):
+                return quality_candidate
+        except Exception:
+            pass
+
+        return None
+
+    def _resolve_stage_model_override(self, stage: str) -> Optional[str]:
+        return self._choose_stage_model_override(stage)
+
+    def _apply_stage_model_override(self, stage: str, progress_callback=None) -> None:
+        target_model_id = self._choose_stage_model_override(stage)
+        if not target_model_id:
+            return
+
+        try:
+            applied = self.qwen_manager.apply_model_profile(
+                target_model_id,
+                reason=f"stage:{stage}",
+            )
+            if not applied:
+                logger.warning(
+                    "Stage model override not applied for %s: %s",
+                    stage,
+                    target_model_id,
+                )
+        except Exception as exc:
+            logger.warning(
+                "Stage model override failed for %s (%s): %s",
+                stage,
+                target_model_id,
+                exc,
+            )
+
+    # Language consistency
+    def _ensure_cv_json_language_consistency(
+        self, cv_json: dict, stage: str = ""
+    ) -> dict:
+        from ..utils.language_policy import normalize_language_code
+        lang = normalize_language_code(self._resolve_language_code())
+        if isinstance(cv_json, dict) and cv_json.get("language") != lang:
+            cv_json = dict(cv_json)
+            cv_json["language"] = lang
+        return cv_json
+
+    # CV postprocessing
+    def _postprocess_final_candidate_wrapper(
+        self, cv_json: dict, critic_json: dict = None
+    ) -> dict:
+        try:
+            from ..utils.cv_postprocessing import coerce_generated_cv_payload
+            profile_json = getattr(self, "_pipeline_profile_json", {}) or {}
+            if not isinstance(profile_json, dict) or not profile_json:
+                try:
+                    profile_json = self._build_profile_json()
+                except Exception as profile_exc:
+                    logger.warning(
+                        "Unable to refresh profile_json for final postprocess: %s",
+                        profile_exc,
+                    )
+                    profile_json = {}
+            personal_info = self._build_profile_payload().get("personal_info", {})
+
+            def safe_fallback_generator(pj: Dict[str, Any], reason: str) -> Dict[str, Any]:
+                source_profile = pj if isinstance(pj, dict) else {}
+                try:
+                    return self._fallback_cv_json(
+                        profile_json=source_profile,
+                        reason=reason,
+                    )
+                except Exception as fallback_exc:
+                    logger.warning(
+                        "CV fallback unavailable during final postprocess; using deterministic minimum payload: %s",
+                        fallback_exc,
+                    )
+                    return self._coerce_minimum_cv_json_payload(
+                        {},
+                        profile_json=source_profile,
+                        reason=f"postprocess_minimum:{reason or fallback_exc}",
+                    )
+
+            return coerce_generated_cv_payload(
+                payload=cv_json or {},
+                profile_json=profile_json,
+                fallback_generator=safe_fallback_generator,
+                critic_json=critic_json,
+                job_title=str(
+                    self.offer_data.get("job_title") or ""
+                ) if isinstance(self.offer_data, dict) else "",
+                company=str(
+                    self.offer_data.get("company") or ""
+                ) if isinstance(self.offer_data, dict) else "",
+                profile_name=personal_info.get("full_name", ""),
+                profile_email=personal_info.get("email", ""),
+                profile_phone=personal_info.get("phone", ""),
+                profile_linkedin=personal_info.get("linkedin_url", ""),
+                language_code=self._resolve_language_code(),
+                keyword_alignment_fn=lambda candidate, review: self._apply_keyword_alignment(
+                    candidate,
+                    critic_json=review,
+                ),
+            )
+        except Exception as exc:
+            logger.warning("_postprocess_final_candidate_wrapper failed: %s", exc)
+            return cv_json or {}
+
+    # Alignment scoring
+    def _score_cv_offer_alignment(
+        self, cv_json: dict, critic_json: dict = None
+    ) -> dict:
+        try:
+            from ..utils.alignment_scoring import build_alignment_audit
+            from ..utils.alignment_retry_controller import get_alignment_thresholds
+            from ..utils.keyword_alignment import normalize_keyword_for_match
+
+            probe_parts: List[str] = []
+            if isinstance(cv_json, dict):
+                for field in ("summary", "target_job_title", "target_company"):
+                    val = cv_json.get(field)
+                    if isinstance(val, str):
+                        probe_parts.append(val)
+                for section_key in ("skills", "ats_keywords", "experience", "projects"):
+                    items = cv_json.get(section_key)
+                    if isinstance(items, list):
+                        for item in items:
+                            if isinstance(item, str):
+                                probe_parts.append(item)
+                            elif isinstance(item, dict):
+                                for v in item.values():
+                                    if isinstance(v, str):
+                                        probe_parts.append(v)
+            normalized_probe = normalize_keyword_for_match(" ".join(probe_parts))
+
+            offer_kw = self._collect_offer_keywords_only(critic_json=critic_json)
+            required_exact_terms = [normalize_keyword_for_match(k) for k in offer_kw]
+
+            offer_kw_json = self._get_offer_keywords_json() or {}
+            keyword_families: Dict[str, List[str]] = {}
+            families_raw = offer_kw_json.get("keyword_families") if isinstance(offer_kw_json, dict) else None
+            if isinstance(families_raw, dict):
+                for fam_key, fam_terms in families_raw.items():
+                    if isinstance(fam_terms, list):
+                        keyword_families[str(fam_key)] = [
+                            normalize_keyword_for_match(t) for t in fam_terms if t
+                        ]
+
+            thresholds = get_alignment_thresholds()
+
+            def _term_present(probe: str, term: str) -> bool:
+                return term in probe if term else False
+
+            return build_alignment_audit(
+                normalized_probe=normalized_probe,
+                required_exact_terms=required_exact_terms,
+                keyword_families=keyword_families,
+                thresholds=thresholds,
+                term_present_fn=_term_present,
+            )
+        except Exception as exc:
+            logger.warning("_score_cv_offer_alignment failed: %s", exc)
+            return {"overall_score": 0.0, "sufficient": True, "error": str(exc)}
+
+    def _get_alignment_retry_attempts(self) -> int:
+        from ..utils.alignment_retry_controller import get_alignment_retry_attempts
+        return get_alignment_retry_attempts()
+
+    def _augment_critic_with_alignment_feedback(
+        self, critic_json: dict, alignment_audit: dict
+    ) -> dict:
+        from ..utils.alignment_retry_controller import (
+            augment_critic_with_alignment_feedback,
+        )
+        return augment_critic_with_alignment_feedback(critic_json, alignment_audit)
+
+    # Cover letter methods
+    def _ensure_cover_letter_language_consistency(
+        self, letter: str, lang: str
+    ) -> str:
+        try:
+            from ..utils.cover_letter_pipeline import (
+                ensure_cover_letter_language_consistency,
+            )
+            return ensure_cover_letter_language_consistency(letter, lang)
+        except Exception as exc:
+            logger.warning("Cover letter language check failed: %s", exc)
+            return letter
+
+    def _is_cover_letter_structure_coherent(
+        self, letter: str, language_code: Optional[str] = None
+    ) -> bool:
+        try:
+            from ..utils.cover_letter_rules import is_cover_letter_structure_coherent
+            lang = language_code or self._resolve_language_code()
+            return is_cover_letter_structure_coherent(letter, language_code=lang)
+        except Exception as exc:
+            logger.warning("Cover letter structure check failed: %s", exc)
+            return True
+
+    def _enforce_cover_letter_offer_alignment(
+        self, letter: str, offer_data: dict
+    ) -> str:
+        return letter
+
+    def critique_and_rewrite_cover_letter(
+        self,
+        cover_letter: str,
+        language_code: str,
+        progress_callback=None,
+    ) -> str:
+        try:
+            from ..utils.cover_letter_pipeline import build_cover_letter_rewrite_prompt
+            base_prompt = self.build_cover_letter_prompt()
+            prompt = build_cover_letter_rewrite_prompt(
+                base_prompt=base_prompt,
+                cover_letter=cover_letter,
+                review={},
+                language_code=language_code,
+            )
+            return self.qwen_manager.generate_cover_letter(prompt, progress_callback)
+        except Exception as exc:
+            logger.warning("critique_and_rewrite_cover_letter failed: %s", exc)
+            return cover_letter
+
+    def _fallback_cover_letter(
+        self, offer_data: dict, lang: str, progress_callback=None
+    ) -> str:
+        if not self._allow_content_fallback():
+            raise RuntimeError("Cover letter fallback disabled")
+
+        try:
+            from ..utils.cover_letter_fallback import generate_fallback_cover_letter
+            return generate_fallback_cover_letter(
+                profile_data=self.profile_data,
+                offer_data=offer_data,
+                language_code=lang,
+                offer_keywords_collector=self._collect_offer_keywords,
+            )
+        except Exception as exc:
+            logger.warning("_fallback_cover_letter failed: %s", exc)
+            return ""
+
+    def _should_run_cover_letter_critic_stage(self) -> bool:
+        return bool(getattr(self, "cover_letter_critic_enabled", False))
     def _text_has_review_markers(self, text: str) -> bool:
         if not text:
             return False
@@ -4368,9 +2691,16 @@ class CVGenerationWorker(QThread):
                 continue
             language = clean_text(entry.get("language") or "")
             level = clean_text(entry.get("level") or "")
+            certification = clean_text(entry.get("certification") or "")
             if not language:
                 continue
-            cleaned_languages.append({"language": language, "level": level})
+            cleaned_languages.append(
+                {
+                    "language": language,
+                    "level": level,
+                    "certification": certification,
+                }
+            )
         cv_json["languages"] = cleaned_languages
 
         cleaned_certs = []
@@ -4667,7 +2997,9 @@ class CVGenerationWorker(QThread):
         return _dedup_preserve([k for k in keywords if isinstance(k, str) and k.strip()])[:60]
 
     def _prepare_offer_text(self, *, max_chars: int) -> str:
-        offer_text = self.offer_data.get("text") if isinstance(self.offer_data, dict) else ""
+        offer_text = extract_offer_text_from_offer_data(
+            self.offer_data if isinstance(self.offer_data, dict) else {}
+        )
         offer_text = offer_text or ""
         if not offer_text:
             return ""
@@ -4774,6 +3106,8 @@ JOB_OFFER_TEXT:
   OUTPUT RULES:
   - Return JSON only.
   - Keep lists short (max 12 items per list).
+  - If JOB_OFFER_TEXT is non-empty, avoid empty extraction lists.
+  - Prefer at least: keywords>=8, skills>=4, tools>=2 when evidence exists in offer text.
   - Use short noun phrases (2-5 words).
   - skills = hard skills/tech stack only.
   - soft_skills = interpersonal traits only.
@@ -4798,7 +3132,7 @@ JOB_OFFER_TEXT:
         language_code = self._resolve_language_code()
 
         compact_profile = _compact_profile_json_for_prompt(profile_json)
-        profile_block = json.dumps(compact_profile, indent=2, ensure_ascii=True)
+        profile_block = json.dumps(compact_profile, indent=2, ensure_ascii=False)
         profile_block = _trim_text(profile_block, 2600)
         matched_keywords = _match_offer_keywords(
             offer_text, _collect_candidate_keywords(self.profile_data)
@@ -4818,7 +3152,7 @@ JOB_OFFER_TEXT:
         if offer_keywords:
             offer_keywords_block = (
                 "\n\nOFFER_KEYWORDS_JSON (job offer summary):\n"
-                f"{_trim_text(json.dumps(offer_keywords, indent=2, ensure_ascii=True), 1400)}"
+                f"{_trim_text(json.dumps(offer_keywords, indent=2, ensure_ascii=False), 1400)}"
             )
         matched_keywords_block = ""
         if matched_keywords_text:
@@ -4835,7 +3169,7 @@ JOB_OFFER_TEXT:
             if critic_payload:
                 critic_block = (
                     "\n\nCRITIC_JSON (feedback to apply):\n"
-                    f"{_trim_text(json.dumps(critic_payload, indent=2, ensure_ascii=True), 2000)}"
+                    f"{_trim_text(json.dumps(critic_payload, indent=2, ensure_ascii=False), 2000)}"
                 )
 
         user_prompt = f"""
@@ -4864,18 +3198,25 @@ OUTPUT RULES:
 - If OFFER_KEYWORDS_JSON is present, prioritize it for relevance and ATS terms.
 - render_hints.notes can be freeform guidance for rendering.
 - render_hints.section_order/emphasis/tone are structured hints.
-  - Do not include review or instruction text in any field (no critique, no "this CV needs", no "should").
-  - Summary must be candidate-focused (role, strengths, impact). Do not describe employer mission/history.
-  - If MATCHED_KEYWORDS is present, ensure those terms appear in summary/skills/experience when relevant.
-  - If PROFILE_JSON text is in another language, translate it to LANGUAGE (keep proper nouns, tools, company names).
-  - Keep output compact:
-  * experience <= 4 items, highlights <= 3 each.
-  * skills <= 4 categories, items <= 8 each.
-  * education <= 3 items.
-  * projects <= 3 items.
-  * languages <= 4 items.
-  * certifications <= 3 items.
-  * ats_keywords <= 15 items.
+- Do not include review or instruction text in any field (no critique, no "this CV needs", no "should").
+- Summary must be candidate-focused (role, strengths, impact). Do not describe employer mission/history.
+- If MATCHED_KEYWORDS is present, ensure those terms appear in summary/skills/experience when relevant.
+- If PROFILE_JSON text is in another language, translate it to LANGUAGE (keep proper nouns, tools, company names).
+- Avoid repetition:
+  - Never repeat the same sentence, clause, or employer description twice.
+  - Do not copy the company mission text into candidate achievements.
+- For each experience item, prefer:
+  - a concise context in summary
+  - 2-4 distinct highlights focused on actions, tools, and outcomes
+- For each language item, keep `certification` when PROFILE_JSON provides one (issuer/certificate name).
+- Keep output focused but informative:
+  - experience <= 5 items, highlights <= 4 each.
+  - skills <= 5 categories, items <= 10 each.
+  - education <= 3 items.
+  - projects <= 3 items.
+  - languages <= 4 items.
+  - certifications <= 3 items.
+  - ats_keywords <= 18 items.
 """.strip()
 
         if stage == "final":
@@ -4932,8 +3273,37 @@ OUTPUT RULES:
         from ..utils.json_strict import generate_json_with_schema, JsonStrictError
 
         messages = self._build_offer_keywords_messages()
+        language_code = self._resolve_language_code()
+        offer_data = self.offer_data if isinstance(self.offer_data, dict) else {}
+
+        def _stabilize(payload: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
+            return stabilize_offer_keywords_payload(
+                payload=payload if isinstance(payload, dict) else {},
+                offer_data=offer_data,
+                language_code=language_code,
+                reason=reason,
+                logger=logger,
+            )
+
+        def _second_pass_if_needed(payload: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
+            retry_payload = run_offer_keywords_second_pass(
+                base_messages=messages,
+                current_payload=payload if isinstance(payload, dict) else {},
+                offer_data=offer_data,
+                language_code=language_code,
+                qwen_manager=self.qwen_manager,
+                parse_json_response=self._parse_json_response,
+                progress_callback=progress_callback,
+                logger=logger,
+            )
+            if isinstance(retry_payload, dict) and retry_payload:
+                if retry_payload != payload:
+                    logger.info("Offer keywords second-pass applied (%s).", reason)
+                return retry_payload
+            return payload
+
         try:
-            return generate_json_with_schema(
+            payload = generate_json_with_schema(
                 role="offer_critic",
                 schema_model=OfferKeywordsJSON,
                 messages=messages,
@@ -4941,26 +3311,67 @@ OUTPUT RULES:
                 retries=3,
                 progress_callback=progress_callback,
             )
+            payload = _second_pass_if_needed(payload, reason="strict_weak_output")
+            return _stabilize(payload, reason="strict_offer_keywords")
         except JsonStrictError as exc:
             logger.warning(
                 "Strict OfferKeywordsJSON failed, retrying non-strict: %s", exc
             )
-            raw = self.qwen_manager.generate_structured_json(
-                messages["system"],
-                messages["user"],
-                progress_callback,
-            )
-            payload = self._parse_json_response(raw)
-            if not payload:
-                return self._fallback_offer_keywords_json(reason=str(exc))
             try:
-                parsed = OfferKeywordsJSON.model_validate(payload)
-            except ValidationError as val_exc:
-                logger.warning(
-                    "Non-strict OfferKeywordsJSON validation failed: %s", val_exc
+                raw = self.qwen_manager.generate_structured_json(
+                    messages["system"],
+                    messages["user"],
+                    progress_callback,
+                    role="offer_critic",
                 )
-                return self._fallback_offer_keywords_json(reason=str(val_exc))
-            return parsed.model_dump()
+                payload = self._parse_json_response(raw)
+                if not payload:
+                    retry_reason = self._consume_qwen_runtime_error() or "non-strict empty output"
+                    fallback_reason = self._compose_fallback_reason(
+                        strict_error=exc,
+                        retry_error=retry_reason,
+                    )
+                    return _stabilize(
+                        self._fallback_offer_keywords_json(reason=fallback_reason),
+                        reason=fallback_reason,
+                    )
+                try:
+                    parsed = OfferKeywordsJSON.model_validate(payload)
+                except ValidationError as val_exc:
+                    logger.warning(
+                        "Non-strict OfferKeywordsJSON validation failed: %s", val_exc
+                    )
+                    fallback_reason = self._compose_fallback_reason(
+                        strict_error=exc,
+                        retry_error=val_exc,
+                    )
+                    return _stabilize(
+                        self._fallback_offer_keywords_json(reason=fallback_reason),
+                        reason=fallback_reason,
+                    )
+                payload = _second_pass_if_needed(
+                    parsed.model_dump(), reason="non_strict_weak_output"
+                )
+                return _stabilize(payload, reason="non_strict_offer_keywords")
+            except Exception as retry_exc:
+                logger.error(
+                    "OfferKeywords non-strict retry failed, using fallback: %s",
+                    retry_exc,
+                )
+                fallback_reason = self._compose_fallback_reason(
+                    strict_error=exc,
+                    retry_error=retry_exc,
+                )
+                return _stabilize(
+                    self._fallback_offer_keywords_json(reason=fallback_reason),
+                    reason=fallback_reason,
+                )
+        except Exception as exc:
+            logger.error("OfferKeywords generation failed, using fallback: %s", exc)
+            return _stabilize(
+                self._fallback_offer_keywords_json(reason=str(exc)),
+                reason=str(exc),
+            )
 
     def generate_cv_json_draft(
         self,
@@ -4976,7 +3387,7 @@ OUTPUT RULES:
             profile_json=profile_json, stage="draft"
         )
         try:
-            return generate_json_with_schema(
+            strict_payload = generate_json_with_schema(
                 role="generator",
                 schema_model=CVJSON,
                 messages=messages,
@@ -4984,22 +3395,114 @@ OUTPUT RULES:
                 retries=self._strict_generator_retries(),
                 progress_callback=progress_callback,
             )
-        except JsonStrictError as exc:
-            logger.warning("Strict CVJSON draft failed, retrying non-strict: %s", exc)
-            raw = self.qwen_manager.generate_structured_json(
-                messages["system"],
-                messages["user"],
-                progress_callback,
+            strict_payload = self._ensure_required_cv_fields(
+                cv_json=strict_payload,
+                profile_json=profile_json,
+                stage="draft_strict",
             )
-            payload = self._parse_json_response(raw)
-            if not payload:
-                return self._fallback_cv_json(profile_json=profile_json, reason=str(exc))
+            return CVJSON.model_validate(strict_payload).model_dump()
+        except JsonStrictError as exc:
+            if self._is_strict_missing_required_error(exc):
+                logger.warning(
+                    "Strict CVJSON draft returned missing required fields; using deterministic required-field payload."
+                )
+                recovered = self._ensure_required_cv_fields(
+                    cv_json={},
+                    profile_json=profile_json,
+                    stage="draft_strict_missing_required",
+                )
+                return CVJSON.model_validate(recovered).model_dump()
+            logger.warning("Strict CVJSON draft failed, retrying non-strict: %s", exc)
             try:
-                parsed = CVJSON.model_validate(payload)
-            except ValidationError as val_exc:
-                logger.warning("Non-strict CVJSON draft validation failed: %s", val_exc)
-                return self._fallback_cv_json(profile_json=profile_json, reason=str(val_exc))
-            return parsed.model_dump()
+                raw = self.qwen_manager.generate_structured_json(
+                    messages["system"],
+                    messages["user"],
+                    progress_callback,
+                    role="generator",
+                )
+                payload = self._parse_json_response(raw)
+                if not payload:
+                    retry_reason = self._consume_qwen_runtime_error() or "non-strict empty output"
+                    recovered = self._coerce_minimum_cv_json_payload(
+                        {},
+                        profile_json=profile_json,
+                        reason=f"draft_non_strict_empty:{retry_reason}",
+                    )
+                    try:
+                        parsed = CVJSON.model_validate(recovered)
+                        logger.warning(
+                            "Draft CVJSON recovered from empty non-strict output via minimum schema coercion."
+                        )
+                        enriched = self._ensure_required_cv_fields(
+                            cv_json=parsed.model_dump(),
+                            profile_json=profile_json,
+                            stage="draft_recovered_empty",
+                        )
+                        return CVJSON.model_validate(enriched).model_dump()
+                    except ValidationError as recover_exc:
+                        fallback_reason = self._compose_fallback_reason(
+                            strict_error=exc,
+                            retry_error=f"{retry_reason}; recover={recover_exc}",
+                        )
+                        return self._fallback_or_minimum_cv_json(
+                            profile_json=profile_json,
+                            reason=fallback_reason,
+                            stage="draft",
+                        )
+                try:
+                    parsed = CVJSON.model_validate(payload)
+                except ValidationError as val_exc:
+                    logger.warning("Non-strict CVJSON draft validation failed: %s", val_exc)
+                    recovered = self._coerce_minimum_cv_json_payload(
+                        payload,
+                        profile_json=profile_json,
+                        reason=f"draft_non_strict_invalid:{val_exc}",
+                    )
+                    try:
+                        parsed = CVJSON.model_validate(recovered)
+                        logger.warning(
+                            "Draft CVJSON recovered from invalid non-strict payload via minimum schema coercion."
+                        )
+                        enriched = self._ensure_required_cv_fields(
+                            cv_json=parsed.model_dump(),
+                            profile_json=profile_json,
+                            stage="draft_recovered_invalid",
+                        )
+                        return CVJSON.model_validate(enriched).model_dump()
+                    except ValidationError as recover_exc:
+                        fallback_reason = self._compose_fallback_reason(
+                            strict_error=exc,
+                            retry_error=f"{val_exc}; recover={recover_exc}",
+                        )
+                        return self._fallback_or_minimum_cv_json(
+                            profile_json=profile_json,
+                            reason=fallback_reason,
+                            stage="draft",
+                        )
+                enriched = self._ensure_required_cv_fields(
+                    cv_json=parsed.model_dump(),
+                    profile_json=profile_json,
+                    stage="draft_non_strict",
+                )
+                return CVJSON.model_validate(enriched).model_dump()
+            except Exception as retry_exc:
+                logger.error("Draft CVJSON non-strict retry failed, using fallback: %s", retry_exc)
+                fallback_reason = self._compose_fallback_reason(
+                    strict_error=exc,
+                    retry_error=retry_exc,
+                )
+                return self._fallback_or_minimum_cv_json(
+                    profile_json=profile_json,
+                    reason=fallback_reason,
+                    stage="draft",
+                )
+        except Exception as exc:
+            logger.error("Draft CVJSON generation failed, using fallback: %s", exc)
+            return self._fallback_or_minimum_cv_json(
+                profile_json=profile_json,
+                reason=str(exc),
+                stage="draft",
+            )
 
     def generate_cv_json_final(
         self,
@@ -5018,7 +3521,7 @@ OUTPUT RULES:
             stage="final",
         )
         try:
-            return generate_json_with_schema(
+            strict_payload = generate_json_with_schema(
                 role="generator",
                 schema_model=CVJSON,
                 messages=messages,
@@ -5026,22 +3529,114 @@ OUTPUT RULES:
                 retries=self._strict_generator_retries(),
                 progress_callback=progress_callback,
             )
-        except JsonStrictError as exc:
-            logger.warning("Strict CVJSON final failed, retrying non-strict: %s", exc)
-            raw = self.qwen_manager.generate_structured_json(
-                messages["system"],
-                messages["user"],
-                progress_callback,
+            strict_payload = self._ensure_required_cv_fields(
+                cv_json=strict_payload,
+                profile_json=profile_json,
+                stage="final_strict",
             )
-            payload = self._parse_json_response(raw)
-            if not payload:
-                return self._fallback_cv_json(profile_json=profile_json, reason=str(exc))
+            return CVJSON.model_validate(strict_payload).model_dump()
+        except JsonStrictError as exc:
+            if self._is_strict_missing_required_error(exc):
+                logger.warning(
+                    "Strict CVJSON final returned missing required fields; using deterministic required-field payload."
+                )
+                recovered = self._ensure_required_cv_fields(
+                    cv_json={},
+                    profile_json=profile_json,
+                    stage="final_strict_missing_required",
+                )
+                return CVJSON.model_validate(recovered).model_dump()
+            logger.warning("Strict CVJSON final failed, retrying non-strict: %s", exc)
             try:
-                parsed = CVJSON.model_validate(payload)
-            except ValidationError as val_exc:
-                logger.warning("Non-strict CVJSON final validation failed: %s", val_exc)
-                return self._fallback_cv_json(profile_json=profile_json, reason=str(val_exc))
-            return parsed.model_dump()
+                raw = self.qwen_manager.generate_structured_json(
+                    messages["system"],
+                    messages["user"],
+                    progress_callback,
+                    role="generator",
+                )
+                payload = self._parse_json_response(raw)
+                if not payload:
+                    retry_reason = self._consume_qwen_runtime_error() or "non-strict empty output"
+                    recovered = self._coerce_minimum_cv_json_payload(
+                        {},
+                        profile_json=profile_json,
+                        reason=f"final_non_strict_empty:{retry_reason}",
+                    )
+                    try:
+                        parsed = CVJSON.model_validate(recovered)
+                        logger.warning(
+                            "Final CVJSON recovered from empty non-strict output via minimum schema coercion."
+                        )
+                        enriched = self._ensure_required_cv_fields(
+                            cv_json=parsed.model_dump(),
+                            profile_json=profile_json,
+                            stage="final_recovered_empty",
+                        )
+                        return CVJSON.model_validate(enriched).model_dump()
+                    except ValidationError as recover_exc:
+                        fallback_reason = self._compose_fallback_reason(
+                            strict_error=exc,
+                            retry_error=f"{retry_reason}; recover={recover_exc}",
+                        )
+                        return self._fallback_or_minimum_cv_json(
+                            profile_json=profile_json,
+                            reason=fallback_reason,
+                            stage="final",
+                        )
+                try:
+                    parsed = CVJSON.model_validate(payload)
+                except ValidationError as val_exc:
+                    logger.warning("Non-strict CVJSON final validation failed: %s", val_exc)
+                    recovered = self._coerce_minimum_cv_json_payload(
+                        payload,
+                        profile_json=profile_json,
+                        reason=f"final_non_strict_invalid:{val_exc}",
+                    )
+                    try:
+                        parsed = CVJSON.model_validate(recovered)
+                        logger.warning(
+                            "Final CVJSON recovered from invalid non-strict payload via minimum schema coercion."
+                        )
+                        enriched = self._ensure_required_cv_fields(
+                            cv_json=parsed.model_dump(),
+                            profile_json=profile_json,
+                            stage="final_recovered_invalid",
+                        )
+                        return CVJSON.model_validate(enriched).model_dump()
+                    except ValidationError as recover_exc:
+                        fallback_reason = self._compose_fallback_reason(
+                            strict_error=exc,
+                            retry_error=f"{val_exc}; recover={recover_exc}",
+                        )
+                        return self._fallback_or_minimum_cv_json(
+                            profile_json=profile_json,
+                            reason=fallback_reason,
+                            stage="final",
+                        )
+                enriched = self._ensure_required_cv_fields(
+                    cv_json=parsed.model_dump(),
+                    profile_json=profile_json,
+                    stage="final_non_strict",
+                )
+                return CVJSON.model_validate(enriched).model_dump()
+            except Exception as retry_exc:
+                logger.error("Final CVJSON non-strict retry failed, using fallback: %s", retry_exc)
+                fallback_reason = self._compose_fallback_reason(
+                    strict_error=exc,
+                    retry_error=retry_exc,
+                )
+                return self._fallback_or_minimum_cv_json(
+                    profile_json=profile_json,
+                    reason=fallback_reason,
+                    stage="final",
+                )
+        except Exception as exc:
+            logger.error("Final CVJSON generation failed, using fallback: %s", exc)
+            return self._fallback_or_minimum_cv_json(
+                profile_json=profile_json,
+                reason=str(exc),
+                stage="final",
+            )
 
     def generate_critic_json(
         self,
@@ -5065,370 +3660,133 @@ OUTPUT RULES:
             )
         except JsonStrictError as exc:
             logger.warning("Strict CriticJSON failed, retrying non-strict: %s", exc)
-            raw = self.qwen_manager.generate_structured_json(
-                messages["system"], messages["user"], progress_callback
-            )
-            payload = self._parse_json_response(raw)
-            if payload:
-                try:
-                    parsed = CriticJSON.model_validate(payload)
-                    return parsed.model_dump()
-                except ValidationError as val_exc:
-                    logger.warning(
-                        "Non-strict CriticJSON validation failed: %s", val_exc
-                    )
+            try:
+                raw = self.qwen_manager.generate_structured_json(
+                    messages["system"], messages["user"], progress_callback, role="critic"
+                )
+                payload = self._parse_json_response(raw)
+                if payload:
+                    try:
+                        parsed = CriticJSON.model_validate(payload)
+                        return parsed.model_dump()
+                    except ValidationError as val_exc:
+                        logger.warning(
+                            "Non-strict CriticJSON validation failed: %s", val_exc
+                        )
+                        fallback_reason = self._compose_fallback_reason(
+                            strict_error=exc,
+                            retry_error=val_exc,
+                        )
+                        return self._fallback_critic_json(reason=fallback_reason)
+                retry_reason = self._consume_qwen_runtime_error() or "non-strict empty output"
+                fallback_reason = self._compose_fallback_reason(
+                    strict_error=exc,
+                    retry_error=retry_reason,
+                )
+                return self._fallback_critic_json(reason=fallback_reason)
+            except Exception as retry_exc:
+                logger.error("CriticJSON non-strict retry failed, using fallback: %s", retry_exc)
+                fallback_reason = self._compose_fallback_reason(
+                    strict_error=exc,
+                    retry_error=retry_exc,
+                )
+                return self._fallback_critic_json(reason=fallback_reason)
+        except Exception as exc:
+            logger.error("Critic JSON generation failed, using fallback: %s", exc)
             return self._fallback_critic_json(reason=str(exc))
 
-    def run(self):
-        """Run the Extractor/Critic/Generator pipeline."""
-        from ..utils.json_strict import JsonStrictError
-        from ..utils.cv_json_renderer import cv_json_to_html, cv_json_to_markdown
-
+    def run(self) -> None:
+        """Run the CV generation pipeline via PipelineOrchestrator."""
         try:
-            def progress_callback(message):
-                self.progress_updated.emit(message)
-
-            start_ts = time.time()
-            logger.info(
-                "Generation start: profile_id=%s template=%s",
-                getattr(self.profile_data, "id", "unknown"),
-                self.template,
-            )
-
-            self.qwen_manager._load_selected_model_config()
-            note = getattr(self.qwen_manager, "last_model_resolution_note", None)
-            if note:
-                progress_callback(note)
-                self.qwen_manager.last_model_resolution_note = None
-
-            use_subprocess = self._should_use_stage_subprocess()
-            model_name = getattr(self.qwen_manager, "current_model_id", "IA")
-            progress_callback(f"[MODEL] Initialisation {model_name}...")
-            if use_subprocess:
-                progress_callback("[MODEL] Mode VRAM: etapes isolees en sous-processus")
-            elif self.qwen_manager._should_unload_between_stages():
-                progress_callback("[MODEL] Mode VRAM: chargement paresseux par etape")
-            else:
-                self.qwen_manager.load_model(progress_callback, allow_fallback=False)
-
-            progress_callback("[EXTRACTOR] Building ProfileJSON...")
-            logger.info("ProfileJSON build start")
             profile_json = self._build_profile_json()
-            logger.info(
-                "ProfileJSON build done: experiences=%s education=%s skills=%s projects=%s languages=%s",
-                len(profile_json.get("experiences") or []),
-                len(profile_json.get("education") or []),
-                len(profile_json.get("skills") or []),
-                len(profile_json.get("projects") or []),
-                len(profile_json.get("languages") or []),
-            )
-            language_code = self._resolve_language_code()
-            if isinstance(self.offer_data, dict):
-                analysis = self.offer_data.get("analysis")
-                if isinstance(analysis, dict) and analysis.get("language") != language_code:
-                    updated = dict(analysis)
-                    updated["language"] = language_code
-                    self.offer_data["analysis"] = updated
-                    logger.info("Offer language set to %s", language_code)
+            self._pipeline_profile_json = profile_json if isinstance(profile_json, dict) else {}
+            existing_snapshot = self._load_application_snapshot()
 
-            offer_text = (
-                self.offer_data.get("text") if isinstance(self.offer_data, dict) else ""
+            orchestrator, state = build_default_pipeline(
+                worker=self, qwen_manager=self.qwen_manager
             )
-            if offer_text and len(str(offer_text).strip()) >= 50:
-                progress_callback("[OFFER] Extracting keywords...")
-                logger.info("Offer keyword extraction start")
-                try:
-                    if use_subprocess:
-                        offer_keywords = self._run_stage_subprocess(
-                            "offer_keywords", {}
-                        )
-                    else:
-                        offer_keywords = self.generate_offer_keywords_json(
-                            progress_callback=progress_callback,
-                        )
-                    self._merge_offer_keywords(offer_keywords)
-                    logger.info(
-                        "Offer keyword extraction done: keywords=%s skills=%s tools=%s",
-                        len((offer_keywords or {}).get("keywords") or []),
-                        len((offer_keywords or {}).get("skills") or []),
-                        len((offer_keywords or {}).get("tools") or []),
+            state.profile_json = profile_json
+            state.existing_snapshot = existing_snapshot
+            state.progress_callback = self.progress_updated.emit
+
+            success, _phase_results = orchestrator.run(state)
+
+            if not success:
+                self._complete_with_deterministic_fallback()
+                return
+
+            self.generation_finished.emit(self._build_result_dict(state))
+
+        except Exception as exc:
+            logger.error("CVGenerationWorker.run failed: %s", exc)
+            try:
+                self.qwen_manager._record_failure(
+                    f"pipeline_error: {str(exc)[:240]}"
+                )
+            except Exception:
+                pass
+            try:
+                self.qwen_manager.cleanup_memory()
+            except Exception:
+                pass
+            self.error_occurred.emit(f"Erreur generation: {str(exc)}")
+
+    def _build_result_dict(self, state) -> dict:
+        """Build generation_finished payload from completed pipeline state."""
+        return {
+            "application_id": getattr(state, "saved_application_id", None),
+            "cv_markdown": getattr(state, "cv_markdown", ""),
+            "cv_html": getattr(state, "cv_html", ""),
+            "cover_letter": getattr(state, "cover_letter", ""),
+            "cv_json_draft": getattr(state, "cv_json_draft", {}),
+            "cv_json_final": getattr(state, "cv_json_final", {}),
+            "critic_json": getattr(state, "critic_json", {}),
+            "profile_json": getattr(state, "profile_json", {}),
+            "template": self.template,
+            "model_version": self.profile_data.model_version,
+            "model_used": getattr(self.qwen_manager, "current_model_id", "unknown"),
+            "gpu_used": gpu_manager.gpu_info["available"],
+            "degraded_mode": state.is_degraded() if hasattr(state, "is_degraded") else False,
+            "degraded_reasons": getattr(state, "degraded_reasons", []),
+            "alignment_audit": dict(state.alignment_audit) if isinstance(getattr(state, "alignment_audit", None), dict) else {},
+            "cover_letter_review": dict(state.cover_letter_review) if isinstance(getattr(state, "cover_letter_review", None), dict) else {},
+            "generation_audit": dict(state.generation_audit) if isinstance(getattr(state, "generation_audit", None), dict) else {},
+        }
+
+    def _load_application_snapshot(self) -> dict:
+        """Load existing application snapshot for cv_only_regen mode."""
+        if not self.cv_only_regen:
+            return {}
+        try:
+            from ..models.database import get_session
+            from ..models.job_application import JobApplication
+            with get_session() as session:
+                app = session.get(JobApplication, self.application_id)
+                if app:
+                    offer_analysis = app.offer_analysis if isinstance(app.offer_analysis, dict) else {}
+                    generation_audit = (
+                        offer_analysis.get("generation_audit")
+                        if isinstance(offer_analysis.get("generation_audit"), dict)
+                        else {}
                     )
-                except JsonStrictError as exc:
-                    logger.warning("Offer keyword extraction failed: %s", exc)
-                except Exception as exc:
-                    logger.warning("Offer keyword extraction error: %s", exc)
+                    return {
+                        "cv_json_draft": app.cv_json_draft or {},
+                        "cv_json_final": app.cv_json_final or {},
+                        "cv_markdown": app.final_cv_markdown or app.generated_cv_markdown or "",
+                        "cv_html": app.final_cv_html or app.generated_cv_html or "",
+                        "cover_letter": app.final_cover_letter or app.generated_cover_letter or "",
+                        "generation_audit": generation_audit,
+                    }
+        except Exception as exc:
+            logger.warning("Could not load application snapshot: %s", exc)
+        return {}
 
-            progress_callback("[GENERATOR] Draft CVJSON...")
-            logger.info("Draft CVJSON generation start")
-            if use_subprocess:
-                cv_json_draft = self._run_stage_subprocess(
-                    "draft", {"profile_json": profile_json}
-                )
-            else:
-                cv_json_draft = self.generate_cv_json_draft(
-                    profile_json=profile_json,
-                    progress_callback=progress_callback,
-                )
-            self._apply_contact_fallback(cv_json_draft, profile_json)
-            self._apply_target_fallback(cv_json_draft)
-            logger.info("Draft CVJSON generation done")
-
-            if not use_subprocess and self.qwen_manager._should_unload_between_stages():
-                progress_callback("[VRAM] Dechargement modele apres draft...")
-                self.qwen_manager.unload_model(reason="after draft")
-
-            try:
-                from ..utils.cv_json_storage import save_cv_json_draft
-
-                draft_path = save_cv_json_draft(
-                    cv_json_draft,
-                    profile_id=self.profile_data.id,
-                    job_title=self.offer_data.get("job_title"),
-                    company=self.offer_data.get("company"),
-                )
-                logger.info("Draft CVJSON saved: %s", draft_path)
-            except Exception as exc:
-                logger.warning("Draft CVJSON save failed: %s", exc)
-
-            progress_callback("[RENDER] Draft HTML...")
-            logger.info("Draft HTML render start")
-            draft_html = cv_json_to_html(
-                cv_json_draft, template=self.template, language=language_code
-            )
-            logger.info("Draft HTML render done: html_len=%s", len(draft_html or ""))
-
-            progress_callback("[CRITIC] Reviewing draft...")
-            logger.info("Critic JSON generation start")
-            if use_subprocess:
-                critic_json = self._run_stage_subprocess(
-                    "critic", {"cv_html": draft_html}
-                )
-            else:
-                critic_json = self.generate_critic_json(
-                    cv_html=draft_html,
-                    progress_callback=progress_callback,
-                )
-            logger.info("Critic JSON generation done")
-
-            if not use_subprocess and self.qwen_manager._should_unload_between_stages():
-                progress_callback("[VRAM] Dechargement modele apres critic...")
-                self.qwen_manager.unload_model(reason="after critic")
-
-            progress_callback("[GENERATOR] Rewrite CVJSON...")
-            logger.info("Final CVJSON generation start")
-            if use_subprocess:
-                cv_json_final = self._run_stage_subprocess(
-                    "final",
-                    {"profile_json": profile_json, "critic_json": critic_json},
-                )
-            else:
-                cv_json_final = self.generate_cv_json_final(
-                    profile_json=profile_json,
-                    critic_json=critic_json,
-                    progress_callback=progress_callback,
-                )
-            self._apply_contact_fallback(cv_json_final, profile_json)
-            self._apply_target_fallback(cv_json_final)
-            self._merge_cv_json_missing_sections(cv_json_final, cv_json_draft)
-            self._sanitize_cv_json_output(cv_json_final)
-            self._repair_summary_if_needed(cv_json_final, cv_json_draft)
-            progress_callback("[POST] Aligning keywords...")
-            logger.info("Keyword alignment start")
-            self._apply_keyword_alignment(cv_json_final, critic_json=critic_json)
-            logger.info("Keyword alignment done")
-            logger.info("Final CVJSON generation done")
-
-            progress_callback("[RENDER] Final output...")
-            logger.info("Final render start")
-            cv_markdown = cv_json_to_markdown(cv_json_final, language=language_code)
-            cv_html = cv_json_to_html(
-                cv_json_final, template=self.template, language=language_code
-            )
-            logger.info(
-                "Final render done: markdown_len=%s html_len=%s",
-                len(cv_markdown or ""),
-                len(cv_html or ""),
-            )
-
-            progress_callback("[LETTER] Generating cover letter...")
-            logger.info("Cover letter generation start")
-            letter_prompt = self.build_cover_letter_prompt()
-            if use_subprocess:
-                cover_payload = {"letter_prompt": letter_prompt}
-                cover_result = self._run_stage_subprocess("cover_letter", cover_payload)
-                cover_letter = cover_result.get("cover_letter", "")
-            else:
-                cover_letter = self.qwen_manager.generate_cover_letter(
-                    letter_prompt, progress_callback
-                )
-            logger.info("Cover letter generation done: length=%s", len(cover_letter or ""))
-
-            progress_callback("[SAVE] Persisting application...")
-            logger.info("Save application start")
-            application = self.save_application(
-                cv_markdown,
-                cover_letter,
-                profile_json=profile_json,
-                critic_json=critic_json,
-                cv_json_draft=cv_json_draft,
-                cv_json_final=cv_json_final,
-                cv_html=cv_html,
-            )
-            logger.info("Save application done: id=%s", getattr(application, "id", "unknown"))
-
-            progress_callback("[CLEANUP] Releasing memory...")
-            try:
-                if not use_subprocess and self.qwen_manager._should_unload_after_generation():
-                    progress_callback("[VRAM] Unloading model after run (low headroom)...")
-                    self.qwen_manager.unload_model(reason="after generation")
-                else:
-                    self.qwen_manager.cleanup_memory()
-            except Exception:
-                self.qwen_manager.cleanup_memory()
-
-            result = {
-                "application_id": application.id,
-                "cv_markdown": cv_markdown,
-                "cv_html": cv_html,
-                "cover_letter": cover_letter,
-                "cv_json_draft": cv_json_draft,
-                "cv_json_final": cv_json_final,
-                "critic_json": critic_json,
-                "profile_json": profile_json,
-                "template": self.template,
-                "model_version": self.profile_data.model_version,
-                "model_used": getattr(self.qwen_manager, "current_model_id", "unknown"),
-                "gpu_used": gpu_manager.gpu_info["available"],
-            }
-
-            progress_callback("[OK] Generation complete.")
-            self.generation_finished.emit(result)
-            logger.info("Generation complete: elapsed=%.2fs", time.time() - start_ts)
-
-        except JsonStrictError as exc:
-            logger.error("Strict JSON pipeline failed: %s", exc)
-            try:
-                self.qwen_manager.cleanup_memory()
-            except Exception:
-                pass
-            self.error_occurred.emit(str(exc))
-        except Exception as e:
-            logger.error(f"Erreur génération CV : {e}")
-            try:
-                self.qwen_manager.cleanup_memory()
-            except Exception:
-                pass
-            self.error_occurred.emit(f"Erreur génération: {str(e)}")
-
-    def build_prompt(self) -> str:
-        """Construit le prompt optimisé pour Qwen2.5-32B."""
-        analysis = self.offer_data.get("analysis", {}) if isinstance(self.offer_data, dict) else {}
-        keywords: List[str] = []
-        if isinstance(analysis, dict):
-            for key in ("keywords", "skills", "tech_keywords", "soft_keywords", "tools"):
-                value = analysis.get(key)
-                if isinstance(value, list):
-                    keywords.extend(str(item) for item in value)
-                elif isinstance(value, str):
-                    keywords.extend(part.strip() for part in value.split(",") if part.strip())
-        keywords = _dedup_preserve([item for item in keywords if item])
-        language = (
-            (analysis.get("language") if isinstance(analysis, dict) else None)
-            or getattr(self.profile_data, "preferred_language", None)
-            or "fr"
+    def _complete_with_deterministic_fallback(self) -> None:
+        """Emit error when orchestrator pipeline fails with no recoverable path."""
+        self.error_occurred.emit(
+            "La generation a echoue apres plusieurs tentatives. "
+            "Consultez les logs pour les details."
         )
-        language_code = _normalize_language(language)
-        placeholder = "[TO COMPLETE]" if language_code == "en" else "[A COMPLETER]"
-        sector = analysis.get("sector") if isinstance(analysis, dict) else None
-
-        template_key = _normalize_template_name(self.template)
-        style_hint = {
-            "modern": "Style moderne: clair, concis, 1 page si possible, bullets orientées impact.",
-            "classic": "Style classique/corporate: sobre, formel, chronologique, pas d'emojis.",
-            "tech": "Style tech: focus competences techniques + projets, mots-cles ATS, bullets precises.",
-            "creative": "Style creatif: focus projets/portfolio + centres d'interet, ton dynamique mais pro.",
-        }.get(template_key, "Style professionnel, clair et concis.")
-
-        job_title = self.offer_data.get("job_title") if isinstance(self.offer_data, dict) else None
-        company = self.offer_data.get("company") if isinstance(self.offer_data, dict) else None
-        offer_text = self.offer_data.get("text") if isinstance(self.offer_data, dict) else None
-        offer_keywords = analysis.get("offer_keywords_llm") if isinstance(analysis, dict) else None
-
-        profile_block = _format_profile_detailed_data(self.profile_data)
-        skeleton = _markdown_skeleton_for_template(self.template, language=language_code)
-
-        keywords_text = ", ".join(str(k) for k in keywords[:15] if str(k).strip())
-        if not keywords_text:
-            keywords_text = "None" if language_code == "en" else "Aucun"
-
-        candidate_terms = _collect_candidate_keywords(self.profile_data)
-        matched_keywords = _match_offer_keywords(offer_text, candidate_terms)
-        matched_keywords_text = ", ".join(matched_keywords) if matched_keywords else ("None" if language_code == "en" else "Aucun")
-
-        if language_code == "en":
-            identity_block = "\n".join(
-                [
-                    "CANDIDATE IDENTITY (placeholders - keep exact):",
-                    "- Name: [Your First Name] [Your Last Name]",
-                    "- Email: [Your Email]",
-                    "- Phone: [Your Phone]",
-                    "- LinkedIn: [Your LinkedIn]",
-                ]
-            )
-        else:
-            identity_block = "\n".join(
-                [
-                    "IDENTITE CANDIDAT (placeholders - garder exact):",
-                    "- Nom: [Votre Prenom] [Votre Nom]",
-                    "- Email: [Votre Email]",
-                    "- Telephone: [Votre Telephone]",
-                    "- LinkedIn: [Votre LinkedIn]",
-                ]
-            )
-
-        return f"""
-LANGUE: {language_code}
-STYLE (template): {self.template} ({style_hint})
-
-OFFRE CIBLE:
-- Poste: {job_title}
-- Entreprise: {company}
-- Secteur detecte: {sector or 'inconnu'}
-- Mots-cles detectes: {keywords_text}
-- Mots-cles OFFRE x CANDIDAT (a reutiliser si possible): {matched_keywords_text}
-- Description (brut, tronquee si besoin):
-{_trim_text(offer_text, 3500)}
-
-{identity_block}
-
-DONNEES CANDIDAT (Profil detaille + CV de reference):
-{profile_block}
-
-SORTIE OBLIGATOIRE (Markdown uniquement):
-- Respecte STRICTEMENT cette structure et cet ordre de sections.
-- Remplace les <...> par les informations reelles.
-- Si une information manque, ecris {placeholder} au lieu d'inventer.
-- Conserve les placeholders d'identite EXACTS (nom/email/telephone/linkedin); ils seront remplis apres generation.
-
-{skeleton}
-
-REGLES DE CONTENU:
-- Priorise les experiences/projets/competences les plus pertinents pour l'offre.
-- Mots-cles ATS: privilegie d'abord les mots-cles OFFRE x CANDIDAT. N'utilise pas de mots-cles absents des donnees candidat.
-- Pour chaque experience: 3-5 puces orientees impact; chiffres uniquement si presents; sinon {placeholder} ou [impact a preciser].
-        """.strip()
-
-    def _get_language_code(self) -> str:
-        analysis = self.offer_data.get("analysis", {}) if isinstance(self.offer_data, dict) else {}
-        language = (
-            (analysis.get("language") if isinstance(analysis, dict) else None)
-            or getattr(self.profile_data, "preferred_language", None)
-            or "fr"
-        )
-        return _normalize_language(language)
-
-    def _normalize_for_compare(self, text: str) -> str:
-        return re.sub(r"\s+", " ", (text or "").strip().lower())
 
     def _parse_json_response(self, text: str) -> Dict[str, Any]:
         if not text:
@@ -5469,374 +3827,6 @@ REGLES DE CONTENU:
                     except Exception:
                         pass
         return {}
-
-    def _autocheck_unavailable_reason(self) -> str:
-        loader = getattr(self.qwen_manager, "current_loader", "transformers")
-        reasons: List[str] = []
-        if loader == "llama_cpp":
-            server = getattr(self.qwen_manager, "_llama_cpp_server", None)
-            if server is None:
-                reasons.append("llama.cpp server not initialized")
-            else:
-                try:
-                    if hasattr(server, "is_ready") and not server.is_ready():
-                        reasons.append("llama.cpp server not ready")
-                except Exception:
-                    reasons.append("llama.cpp server status unknown")
-        else:
-            if not TRANSFORMERS_AVAILABLE:
-                reasons.append("transformers not available")
-            if not TORCH_AVAILABLE:
-                reasons.append("torch not available")
-            if getattr(self.qwen_manager, "_model", None) is None:
-                reasons.append("model not loaded")
-        return "; ".join(reasons) if reasons else "LLM unavailable"
-
-    def _llm_ready_for_autocheck(self) -> bool:
-        loader = getattr(self.qwen_manager, "current_loader", "transformers")
-        if loader == "llama_cpp":
-            server = getattr(self.qwen_manager, "_llama_cpp_server", None)
-            if server is None:
-                return False
-            try:
-                return bool(getattr(server, "is_ready", lambda: False)())
-            except Exception:
-                return False
-        if not TRANSFORMERS_AVAILABLE or not TORCH_AVAILABLE:
-            return False
-        return getattr(self.qwen_manager, "_model", None) is not None
-
-    def _build_autocheck_prompts(self, cv_markdown: str) -> Dict[str, str]:
-        analysis = self.offer_data.get("analysis", {}) if isinstance(self.offer_data, dict) else {}
-        language_code = self._get_language_code()
-        job_title = self.offer_data.get("job_title") if isinstance(self.offer_data, dict) else None
-        company = self.offer_data.get("company") if isinstance(self.offer_data, dict) else None
-        offer_text = self.offer_data.get("text") if isinstance(self.offer_data, dict) else None
-
-        candidate_terms = _collect_candidate_keywords(self.profile_data)
-        matched_keywords = _match_offer_keywords(offer_text, candidate_terms)
-        matched_keywords_text = ", ".join(matched_keywords) if matched_keywords else ("None" if language_code == "en" else "Aucun")
-
-        profile_block = _format_profile_detailed_data(self.profile_data)
-        profile_block = _trim_text(profile_block, 2400)
-        offer_block = _trim_text(offer_text, 2400)
-        cv_block = _trim_text(cv_markdown, 3600)
-
-        system_prompt = (
-            "You are a strict ATS reviewer. Compare the CV to the offer and the candidate data. "
-            "Return JSON only, with the exact schema requested. "
-            "Do not invent facts. Use only candidate data as source of truth."
-        )
-
-        user_prompt = f"""
-LANGUAGE: {language_code}
-TARGET ROLE: {job_title}
-COMPANY: {company}
-MATCHED KEYWORDS (offer x candidate): {matched_keywords_text}
-OFFER TEXT:
-{offer_block}
-
-CANDIDATE DATA (source of truth):
-{profile_block}
-
-CURRENT CV (markdown):
-{cv_block}
-
-Return JSON only with this schema:
-{{
-  "should_improve": true,
-  "summary": "short reason",
-  "issues": [
-    {{"type": "missing_keyword|misaligned|format|fact_mismatch|missing_section", "detail": "...", "severity": "high|medium|low"}}
-  ],
-  "actions": [
-    {{"instruction": "...", "target_section": "...", "priority": "high|medium|low"}}
-  ],
-  "missing_keywords": ["..."],
-  "job_title_present": true
-}}
-
-Rules:
-- If no improvements, set should_improve=false and return empty arrays.
-- Do not add new facts. Only suggest reordering, rewriting, or removing.
-""".strip()
-
-        return {"system": system_prompt, "user": user_prompt}
-
-    def _format_autocheck_feedback(self, review: Dict[str, Any]) -> str:
-        actions = review.get("actions") if isinstance(review.get("actions"), list) else []
-        issues = review.get("issues") if isinstance(review.get("issues"), list) else []
-        missing = review.get("missing_keywords") if isinstance(review.get("missing_keywords"), list) else []
-
-        lines: List[str] = []
-        if issues:
-            lines.append("Issues:")
-            for item in issues[:8]:
-                if isinstance(item, dict):
-                    detail = (item.get("detail") or "").strip()
-                    issue_type = (item.get("type") or "").strip()
-                    if detail or issue_type:
-                        lines.append(f"- {issue_type}: {detail}".strip())
-        if actions:
-            lines.append("Actions:")
-            for item in actions[:8]:
-                if isinstance(item, dict):
-                    instruction = (item.get("instruction") or "").strip()
-                    target = (item.get("target_section") or "").strip()
-                    if instruction and target:
-                        lines.append(f"- {target}: {instruction}")
-                    elif instruction:
-                        lines.append(f"- {instruction}")
-        if missing:
-            lines.append("Missing keywords to consider (only if present in candidate data):")
-            for term in missing[:12]:
-                if isinstance(term, str) and term.strip():
-                    lines.append(f"- {term.strip()}")
-
-        return "\n".join(lines).strip()
-
-    def _build_revision_prompt(self, cv_markdown: str, review: Dict[str, Any], strict: bool = False) -> str:
-        base_prompt = self.build_prompt()
-        feedback = self._format_autocheck_feedback(review)
-        cv_block = _trim_text(cv_markdown, 3600)
-        strict_block = ""
-        if strict:
-            strict_block = (
-                "STRICT OUTPUT RULES:\n"
-                "- Output only the CV in Markdown.\n"
-                "- Do not include feedback, JSON, or instructions.\n"
-                "- Do not include reviewer labels (AUTO-CHECK, FEEDBACK, Issues, Actions, Missing keywords).\n"
-                "- Start with a '# ' heading.\n"
-            )
-        return f"""
-{base_prompt}
-
-AUTO-CHECK FEEDBACK (use to revise; never copy into the CV):
-{feedback or "No feedback."}
-
-{strict_block}CURRENT CV (markdown):
-{cv_block}
-
-Regenerate the full CV in markdown, same structure and order as required.
-""".strip()
-
-    def _contains_review_artifacts(self, cv_markdown: str) -> bool:
-        lowered = (cv_markdown or "").lower()
-        signals = [
-            "auto-check feedback",
-            "missing_keywords",
-            "should_improve",
-            "issues:",
-            "actions:",
-            "return json",
-        ]
-        return any(signal in lowered for signal in signals)
-
-    def _apply_autocheck_review(
-        self,
-        cv_markdown: str,
-        review: Dict[str, Any],
-        progress_callback=None,
-    ) -> Optional[str]:
-        if not self._llm_ready_for_autocheck():
-            reason = self._autocheck_unavailable_reason()
-            logger.warning("Auto-check revision skipped: %s", reason)
-            return None
-
-        if progress_callback:
-            progress_callback("Auto-check: applying revisions...")
-
-        revision_prompt = self._build_revision_prompt(cv_markdown, review, strict=True)
-        revised = self.qwen_manager.generate_cv(
-            revision_prompt,
-            progress_callback,
-            allow_fallback=False,
-        )
-
-        if not revised or not revised.strip():
-            return None
-
-        try:
-            revised = revised.format(
-                name=self.profile_data.name or "[Votre Prenom] [Votre Nom]",
-                email=self.profile_data.email or "[Votre Email]",
-                phone=self.profile_data.phone or "[Votre Telephone]",
-                linkedin=self.profile_data.linkedin_url or "[Votre LinkedIn]",
-            )
-        except KeyError as e:
-            logger.warning("Erreur formatage CV revision: %s", e)
-
-        revised = self._force_profile_identity(revised).strip()
-
-        if not revised.startswith("#") or self._contains_review_artifacts(revised):
-            strict_prompt = self._build_revision_prompt(cv_markdown, review, strict=True)
-            strict_output = self.qwen_manager.generate_cv(
-                strict_prompt,
-                progress_callback,
-                allow_fallback=False,
-            )
-            if not strict_output or not strict_output.strip():
-                return None
-            try:
-                strict_output = strict_output.format(
-                    name=self.profile_data.name or "[Votre Prenom] [Votre Nom]",
-                    email=self.profile_data.email or "[Votre Email]",
-                    phone=self.profile_data.phone or "[Votre Telephone]",
-                    linkedin=self.profile_data.linkedin_url or "[Votre LinkedIn]",
-                )
-            except KeyError as e:
-                logger.warning("Erreur formatage CV revision strict: %s", e)
-            strict_output = self._force_profile_identity(strict_output).strip()
-            if not strict_output.startswith("#") or self._contains_review_artifacts(strict_output):
-                return None
-            return strict_output
-
-        return revised
-
-    def _auto_check_cv(self, cv_markdown: str, progress_callback=None) -> str:
-        if not cv_markdown or not cv_markdown.strip():
-            return cv_markdown
-
-        if not self._llm_ready_for_autocheck():
-            reason = self._autocheck_unavailable_reason()
-            logger.warning("Auto-check skipped: %s", reason)
-            return cv_markdown
-
-        model_id = getattr(self.qwen_manager, "current_model_id", None) or getattr(
-            self.qwen_manager, "model_name", "unknown"
-        )
-        logger.info("Auto-check uses model: %s", model_id)
-
-        max_iterations = 5
-        current_cv = cv_markdown
-
-        for iteration in range(1, max_iterations + 1):
-            if progress_callback:
-                progress_callback(f"Auto-check LLM (iteration {iteration}/{max_iterations})...")
-
-            prompts = self._build_autocheck_prompts(current_cv)
-            review_raw = self.qwen_manager.generate_structured_json(
-                prompts["system"],
-                prompts["user"],
-                progress_callback,
-            )
-            review = self._parse_json_response(review_raw)
-
-            if not review:
-                logger.warning("Auto-check LLM review failed: empty or invalid JSON")
-                break
-
-            actions = review.get("actions") if isinstance(review.get("actions"), list) else []
-            missing_keywords = review.get("missing_keywords") if isinstance(review.get("missing_keywords"), list) else []
-            issues = review.get("issues") if isinstance(review.get("issues"), list) else []
-            should_improve = bool(review.get("should_improve"))
-
-            if not should_improve and not actions and not missing_keywords and not issues:
-                logger.info("Auto-check: no improvements detected")
-                break
-
-            revised = self._apply_autocheck_review(current_cv, review, progress_callback)
-            if not revised:
-                logger.warning("Auto-check stopped: revision step failed")
-                break
-
-            if self._normalize_for_compare(revised) == self._normalize_for_compare(current_cv):
-                logger.info("Auto-check: no change after iteration %s", iteration)
-                break
-
-            current_cv = revised
-
-        return current_cv
-
-    def _ensure_job_title(self, cv_markdown: str) -> str:
-        if not cv_markdown:
-            return cv_markdown
-
-        job_title = ""
-        if isinstance(self.offer_data, dict):
-            job_title = (self.offer_data.get("job_title") or "").strip()
-
-        if not job_title:
-            return cv_markdown
-
-        lines = cv_markdown.splitlines()
-        normalized_job = job_title.lower()
-
-        for line in lines:
-            if line.strip().startswith("## ") and normalized_job in line.strip().lower():
-                return cv_markdown
-
-        heading = f"## {job_title}"
-        insert_idx = 0
-        for idx, line in enumerate(lines):
-            if line.strip().startswith("# "):
-                insert_idx = idx + 1
-                break
-
-        scan_idx = insert_idx
-        while scan_idx < len(lines) and not lines[scan_idx].strip():
-            scan_idx += 1
-
-        if scan_idx < len(lines) and lines[scan_idx].strip().startswith("## "):
-            existing = lines[scan_idx].strip()[3:]
-            existing_lower = existing.lower()
-            if any(token in existing_lower for token in ["titre du poste", "poste cible", "target role", "<", ">"]):
-                lines[scan_idx] = heading
-                return "\n".join(lines).strip()
-            if any(token in existing_lower for token in ["contact", "profil professionnel", "professional summary"]):
-                lines.insert(scan_idx, heading)
-                return "\n".join(lines).strip()
-
-        lines.insert(insert_idx, heading)
-        return "\n".join(lines).strip()
-
-    def _force_profile_identity(self, cv_markdown: str) -> str:
-        """Ensure the generated CV uses the profile identity (name/contact)."""
-        if not cv_markdown:
-            return cv_markdown
-
-        lines = cv_markdown.splitlines()
-        name = (self.profile_data.name or "[Votre Prenom] [Votre Nom]").strip()
-        email = (self.profile_data.email or "[Votre Email]").strip()
-        phone = (self.profile_data.phone or "[Votre Telephone]").strip()
-        linkedin = (self.profile_data.linkedin_url or "[Votre LinkedIn]").strip()
-
-        if name:
-            replaced = False
-            for idx, line in enumerate(lines):
-                if line.strip().startswith("# "):
-                    lines[idx] = f"# {name}"
-                    replaced = True
-                    break
-            if not replaced:
-                lines.insert(0, f"# {name}")
-
-        if email:
-            for idx, line in enumerate(lines):
-                if "@" in line or "email" in line.lower():
-                    updated = EMAIL_RE.sub(email, line)
-                    if updated == line and "email" in line.lower():
-                        updated = f"- Email: {email}"
-                    lines[idx] = updated
-
-        if phone:
-            for idx, line in enumerate(lines):
-                lowered = line.lower()
-                if any(token in lowered for token in ["tel", "telephone", "phone", "mobile"]):
-                    updated = PHONE_RE.sub(phone, line)
-                    if updated == line:
-                        updated = f"- Telephone: {phone}"
-                    lines[idx] = updated
-
-        if linkedin:
-            for idx, line in enumerate(lines):
-                if "linkedin" in line.lower():
-                    updated = LINKEDIN_RE.sub(linkedin, line)
-                    if updated == line:
-                        updated = f"- LinkedIn: {linkedin}"
-                    lines[idx] = updated
-
-        return "\n".join(lines).strip()
 
     def build_cover_letter_prompt(self) -> str:
         """Construit le prompt optimisé pour générer la lettre de motivation."""
@@ -5905,7 +3895,6 @@ Madame, Monsieur,
 Je vous prie d'agreer, Madame, Monsieur, l'expression de mes salutations distinguees.
 
 {self.profile_data.name or placeholder}"""
-
         return f"""
 LANGUE: {language_code}
 STYLE (template): {self.template} ({style_hint})
@@ -5918,7 +3907,7 @@ OFFRE CIBLE:
 {_trim_text(offer_text, 2000 if isinstance(offer_keywords, dict) else 3000)}
 
 OFFER_KEYWORDS_JSON (si disponible):
-{_trim_text(json.dumps(offer_keywords, indent=2, ensure_ascii=True), 1200) if isinstance(offer_keywords, dict) else "N/A"}
+{_trim_text(json.dumps(offer_keywords, indent=2, ensure_ascii=False), 1200) if isinstance(offer_keywords, dict) else "N/A"}
 
 DONNEES CANDIDAT (Profil detaille + CV de reference + lettre type si fournie):
 {profile_block}
@@ -5932,7 +3921,7 @@ SORTIE OBLIGATOIRE (texte uniquement, pas de Markdown):
 STRUCTURE:
 {letter_skeleton}
 """.strip()
-    
+
     def save_application(
         self,
         cv_markdown: str,
@@ -5943,27 +3932,96 @@ STRUCTURE:
         cv_json_draft: Optional[Dict[str, Any]] = None,
         cv_json_final: Optional[Dict[str, Any]] = None,
         cv_html: Optional[str] = None,
+        generation_audit: Optional[Dict[str, Any]] = None,
+        alignment_audit: Optional[Dict[str, Any]] = None,
+        cover_letter_review: Optional[Dict[str, Any]] = None,
+        application_id: Optional[int] = None,
+        preserve_cover_letter: bool = False,
     ) -> JobApplication:
         """Sauvegarde la candidature en base."""
-        application = JobApplication(
-            profile_id=self.profile_data.id,
-            job_title=self.offer_data['job_title'],
-            company=self.offer_data['company'],
-            offer_text=self.offer_data['text'],
-            offer_analysis=self.offer_data.get('analysis', {}),
-            template_used=self.template,
-            model_version_used=self.profile_data.model_version,
-            generated_cv_markdown=cv_markdown,
-            generated_cv_html=cv_html,
-            generated_cover_letter=cover_letter,
-            profile_json=profile_json,
-            critic_json=critic_json,
-            cv_json_draft=cv_json_draft,
-            cv_json_final=cv_json_final,
-            status=ApplicationStatus.DRAFT
+        from datetime import datetime
+
+        prune_draft_on_final = self._to_bool_setting(
+            os.getenv("CVMATCH_PRUNE_DRAFT_ON_SUCCESS"),
+            True,
         )
-        
+        has_final_cv = isinstance(cv_json_final, dict) and bool(cv_json_final)
+        stored_cv_json_draft = (
+            None if (prune_draft_on_final and has_final_cv) else cv_json_draft
+        )
+
+        target_application_id = (
+            application_id
+            if isinstance(application_id, int)
+            else (self.application_id if isinstance(self.application_id, int) else None)
+        )
+        offer_analysis_payload: Dict[str, Any] = {}
+        if isinstance(self.offer_data, dict):
+            base_analysis = self.offer_data.get("analysis")
+            if isinstance(base_analysis, dict):
+                offer_analysis_payload = dict(base_analysis)
+        if isinstance(generation_audit, dict) and generation_audit:
+            offer_analysis_payload["generation_audit"] = dict(generation_audit)
+        if isinstance(alignment_audit, dict) and alignment_audit:
+            offer_analysis_payload["alignment_audit"] = dict(alignment_audit)
+        if isinstance(cover_letter_review, dict) and cover_letter_review:
+            offer_analysis_payload["cover_letter_review"] = dict(cover_letter_review)
+
         with get_session() as session:
+            application = (
+                session.get(JobApplication, target_application_id)
+                if target_application_id
+                else None
+            )
+
+            if application is None:
+                if isinstance(self.offer_data, dict):
+                    self.offer_data["analysis"] = dict(offer_analysis_payload)
+                application = JobApplication(
+                    profile_id=self.profile_data.id,
+                    job_title=self.offer_data['job_title'],
+                    company=self.offer_data['company'],
+                    offer_text=self.offer_data['text'],
+                    offer_analysis=offer_analysis_payload,
+                    template_used=self.template,
+                    model_version_used=self.profile_data.model_version,
+                    generated_cv_markdown=cv_markdown,
+                    generated_cv_html=cv_html,
+                    generated_cover_letter=cover_letter,
+                    profile_json=profile_json,
+                    critic_json=critic_json,
+                    cv_json_draft=stored_cv_json_draft,
+                    cv_json_final=cv_json_final,
+                    status=ApplicationStatus.DRAFT
+                )
+            else:
+                application.profile_id = self.profile_data.id
+                application.job_title = self.offer_data['job_title']
+                application.company = self.offer_data['company']
+                application.offer_text = self.offer_data['text']
+                existing_analysis = (
+                    dict(application.offer_analysis)
+                    if isinstance(application.offer_analysis, dict)
+                    else {}
+                )
+                existing_analysis.update(offer_analysis_payload)
+                application.offer_analysis = existing_analysis
+                if isinstance(self.offer_data, dict):
+                    self.offer_data["analysis"] = dict(existing_analysis)
+                application.template_used = self.template
+                application.model_version_used = self.profile_data.model_version
+                application.generated_cv_markdown = cv_markdown
+                application.generated_cv_html = cv_html
+                if not preserve_cover_letter:
+                    application.generated_cover_letter = cover_letter
+                elif not application.generated_cover_letter and cover_letter:
+                    application.generated_cover_letter = cover_letter
+                application.profile_json = profile_json
+                application.critic_json = critic_json
+                application.cv_json_draft = stored_cv_json_draft
+                application.cv_json_final = cv_json_final
+                application.updated_at = datetime.now()
+
             session.add(application)
             session.commit()
             session.refresh(application)
@@ -5989,7 +4047,6 @@ class CoverLetterGenerationWorker(QThread):
     Note: Utilise ProfileWorkerData au lieu de UserProfile pour éviter
     les erreurs SQLAlchemy DetachedInstanceError dans les threads background.
     """
-
     progress_updated = Signal(str)
     generation_finished = Signal(dict)
     error_occurred = Signal(str)
@@ -6000,12 +4057,20 @@ class CoverLetterGenerationWorker(QThread):
         offer_data: dict,
         template: str,
         application_id: Optional[int] = None,
+        user_instruction: str = "",
+        previous_generation_audit: Optional[Dict[str, Any]] = None,
     ):
         super().__init__()
         self.profile_data = profile_data
         self.offer_data = offer_data
         self.template = template
-        self.application_id = application_id
+        self.application_id = application_id if isinstance(application_id, int) else None
+        self.user_instruction = str(user_instruction or "").strip()
+        self.previous_generation_audit = (
+            dict(previous_generation_audit)
+            if isinstance(previous_generation_audit, dict)
+            else {}
+        )
         self.qwen_manager = QwenManager(self.profile_data.model_version)
 
     def run(self):
@@ -6021,7 +4086,7 @@ class CoverLetterGenerationWorker(QThread):
             if note:
                 progress_callback(note)
                 self.qwen_manager.last_model_resolution_note = None
- 
+
             # Étape 1: Chargement du modèle
             model_name = getattr(self.qwen_manager, 'current_model_id', 'IA')
             progress_callback(f"🤖 Initialisation du modèle {model_name}...")
@@ -6035,9 +4100,17 @@ class CoverLetterGenerationWorker(QThread):
             progress_callback("💌 Génération de la lettre de motivation...")
             cover_letter = self.qwen_manager.generate_cover_letter(prompt, progress_callback)
 
+            generation_audit, cover_letter_review = self._build_cover_letter_generation_audit(
+                cover_letter
+            )
+
             # Étape 4: Sauvegarde
             progress_callback("💾 Sauvegarde de la lettre...")
-            application = self.save_cover_letter(cover_letter)
+            application = self.save_cover_letter(
+                cover_letter,
+                generation_audit=generation_audit,
+                cover_letter_review=cover_letter_review,
+            )
 
             # Étape 5: Nettoyage mémoire
             progress_callback("🧹 Nettoyage mémoire...")
@@ -6050,7 +4123,16 @@ class CoverLetterGenerationWorker(QThread):
                 "template": self.template,
                 "model_version": self.profile_data.model_version,
                 "model_used": getattr(self.qwen_manager, 'current_model_id', 'unknown'),
-                "gpu_used": gpu_manager.gpu_info["available"]
+                "gpu_used": gpu_manager.gpu_info["available"],
+                "generation_audit": generation_audit,
+                "cover_letter_review": cover_letter_review,
+                "alignment_audit": (
+                    generation_audit.get("breakdown", {}).get("cv")
+                    if isinstance(generation_audit, dict)
+                    and isinstance(generation_audit.get("breakdown"), dict)
+                    and isinstance(generation_audit.get("breakdown", {}).get("cv"), dict)
+                    else {}
+                ),
             }
 
             progress_callback("✅ Lettre générée avec succès !")
@@ -6132,7 +4214,6 @@ Madame, Monsieur,
 Je vous prie d'agreer, Madame, Monsieur, l'expression de mes salutations distinguees.
 
 {self.profile_data.name or placeholder}"""
-
         return f"""
 LANGUE: {language_code}
 STYLE (template): {self.template} ({style_hint})
@@ -6145,7 +4226,7 @@ OFFRE CIBLE:
 {_trim_text(offer_text, 2000 if isinstance(offer_keywords, dict) else 3000)}
 
 OFFER_KEYWORDS_JSON (si disponible):
-{_trim_text(json.dumps(offer_keywords, indent=2, ensure_ascii=True), 1200) if isinstance(offer_keywords, dict) else "N/A"}
+{_trim_text(json.dumps(offer_keywords, indent=2, ensure_ascii=False), 1200) if isinstance(offer_keywords, dict) else "N/A"}
 
 DONNEES CANDIDAT (Profil detaille + CV de reference + lettre type si fournie):
 {profile_block}
@@ -6160,8 +4241,119 @@ STRUCTURE:
 {letter_skeleton}
 """.strip()
 
-    def save_cover_letter(self, cover_letter: str) -> JobApplication:
+    def _resolve_letter_language_code(self) -> str:
+        analysis = self.offer_data.get("analysis") if isinstance(self.offer_data, dict) else None
+        analysis_language = analysis.get("language") if isinstance(analysis, dict) else None
+        if isinstance(analysis_language, str) and analysis_language.strip():
+            return _normalize_language(analysis_language)
+        preferred = getattr(self.profile_data, "preferred_language", None)
+        return _normalize_language(preferred)
+
+    def _build_cover_letter_generation_audit(
+        self,
+        cover_letter: str,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        language_code = self._resolve_letter_language_code()
+        previous = (
+            dict(self.previous_generation_audit)
+            if isinstance(self.previous_generation_audit, dict)
+            else {}
+        )
+        previous_letter = {}
+        if isinstance(previous.get("breakdown"), dict):
+            previous_letter = previous.get("breakdown", {}).get("letter") or {}
+
+        try:
+            letter_score = int(float(previous_letter.get("relevance_score") or 80))
+        except Exception:
+            letter_score = 80
+        letter_score = max(0, min(100, letter_score))
+
+        structure_ok = True
+        try:
+            from ..utils.cover_letter_rules import is_cover_letter_structure_coherent
+            structure_ok = bool(
+                is_cover_letter_structure_coherent(cover_letter or "", language_code=language_code)
+            )
+        except Exception:
+            structure_ok = True
+
+        try:
+            from ..utils.cover_letter_pipeline import build_generation_audit_for_letter
+            generation_audit = build_generation_audit_for_letter(
+                letter_score=letter_score,
+                structure_ok=structure_ok,
+                language_code=language_code,
+                previous_audit=previous,
+            )
+        except Exception:
+            generation_audit = {
+                "cv_score": float(previous.get("cv_score") or 0.0),
+                "letter_score": float(letter_score),
+                "global_score": float(letter_score),
+                "sufficient": bool(structure_ok),
+                "breakdown": {
+                    "cv": {},
+                    "letter": {
+                        "relevance_score": int(letter_score),
+                        "structure_ok": bool(structure_ok),
+                        "language": language_code,
+                    },
+                },
+            }
+
+        breakdown = generation_audit.get("breakdown") if isinstance(generation_audit, dict) else {}
+        letter_block = breakdown.get("letter") if isinstance(breakdown, dict) else {}
+        cover_letter_review = (
+            dict(letter_block)
+            if isinstance(letter_block, dict)
+            else {
+                "relevance_score": int(letter_score),
+                "structure_ok": bool(structure_ok),
+                "language": language_code,
+            }
+        )
+        return generation_audit, cover_letter_review
+
+    def _build_offer_analysis_with_audit(
+        self,
+        *,
+        generation_audit: Optional[Dict[str, Any]] = None,
+        cover_letter_review: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {}
+        if isinstance(self.offer_data, dict):
+            base = self.offer_data.get("analysis")
+            if isinstance(base, dict):
+                payload = dict(base)
+
+        if isinstance(generation_audit, dict) and generation_audit:
+            payload["generation_audit"] = dict(generation_audit)
+            breakdown = generation_audit.get("breakdown")
+            if isinstance(breakdown, dict):
+                cv_block = breakdown.get("cv")
+                if isinstance(cv_block, dict):
+                    payload.setdefault("alignment_audit", dict(cv_block))
+
+        if isinstance(cover_letter_review, dict) and cover_letter_review:
+            payload["cover_letter_review"] = dict(cover_letter_review)
+
+        if isinstance(self.offer_data, dict):
+            self.offer_data["analysis"] = dict(payload)
+        return payload
+
+    def save_cover_letter(
+        self,
+        cover_letter: str,
+        *,
+        generation_audit: Optional[Dict[str, Any]] = None,
+        cover_letter_review: Optional[Dict[str, Any]] = None,
+    ) -> JobApplication:
         """Sauvegarde la lettre de motivation en base."""
+        offer_analysis_payload = self._build_offer_analysis_with_audit(
+            generation_audit=generation_audit,
+            cover_letter_review=cover_letter_review,
+        )
         if self.application_id:
             try:
                 from datetime import datetime
@@ -6170,6 +4362,15 @@ STRUCTURE:
                     existing = session.get(JobApplication, self.application_id)
                     if existing is not None:
                         existing.generated_cover_letter = cover_letter
+                        existing_analysis = (
+                            dict(existing.offer_analysis)
+                            if isinstance(existing.offer_analysis, dict)
+                            else {}
+                        )
+                        existing_analysis.update(offer_analysis_payload)
+                        existing.offer_analysis = existing_analysis
+                        if isinstance(self.offer_data, dict):
+                            self.offer_data["analysis"] = dict(existing_analysis)
                         existing.updated_at = datetime.now()
                         session.add(existing)
                         session.commit()
@@ -6183,7 +4384,7 @@ STRUCTURE:
             job_title=self.offer_data['job_title'],
             company=self.offer_data['company'],
             offer_text=self.offer_data['text'],
-            offer_analysis=self.offer_data.get('analysis', {}),
+            offer_analysis=offer_analysis_payload,
             template_used=self.template,
             model_version_used=self.profile_data.model_version,
             generated_cover_letter=cover_letter,
@@ -6204,7 +4405,6 @@ class FineTuningWorker(QThread):
     Note: Utilise ProfileWorkerData au lieu de UserProfile pour éviter
     les erreurs SQLAlchemy DetachedInstanceError dans les threads background.
     """
-
     progress_updated = Signal(str, int)  # message, pourcentage
     finished = Signal(str)  # chemin du modèle
     error_occurred = Signal(str)
@@ -6251,3 +4451,4 @@ class FineTuningWorker(QThread):
         except Exception as e:
             logger.error(f"Erreur fine-tuning : {e}")
             self.error_occurred.emit(str(e))
+

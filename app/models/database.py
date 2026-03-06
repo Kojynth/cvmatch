@@ -37,6 +37,7 @@ def create_db_and_tables():
     try:
         SQLModel.metadata.create_all(engine)
         _ensure_job_application_columns()
+        _ensure_user_profile_columns()
         # PATCH-PII: Chemin anonymisé
         logger.info("Base de données créée : %s", safe_database_path_for_log(str(DATABASE_PATH)))
     except Exception as e:
@@ -67,6 +68,26 @@ def _ensure_job_application_columns() -> None:
                     )
     except Exception as exc:
         logger.warning(f"Schema migration skipped: {exc}")
+
+
+def _ensure_user_profile_columns() -> None:
+    """Lightweight migration for new userprofile columns."""
+    try:
+        from sqlmodel import text
+
+        with engine.connect() as connection:
+            rows = connection.execute(text("PRAGMA table_info(userprofile)")).fetchall()
+            existing = {row[1] for row in rows}
+            if "profile_photo_path" not in existing:
+                connection.execute(
+                    text("ALTER TABLE userprofile ADD COLUMN profile_photo_path TEXT")
+                )
+            if "location" not in existing:
+                connection.execute(
+                    text("ALTER TABLE userprofile ADD COLUMN location TEXT")
+                )
+    except Exception as exc:
+        logger.warning(f"User profile schema migration skipped: {exc}")
 
 
 def get_session() -> Session:

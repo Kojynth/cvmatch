@@ -34,9 +34,13 @@ def build_lmfe_generation_kwargs(tokenizer: Any, schema: Dict[str, Any]) -> Dict
         from lmformatenforcer import JsonSchemaParser
         from lmformatenforcer.integrations import transformers as lmfe_transformers
     except Exception as exc:
+        detail = str(exc or "").strip()
+        if len(detail) > 240:
+            detail = detail[:240] + "..."
         raise JsonStrictError(
             "LM Format Enforcer not available for transformers integration. "
-            "Install/upgrade with: pip install -U lm-format-enforcer"
+            "Install/upgrade with: pip install -U lm-format-enforcer. "
+            f"Import error: {detail}"
         ) from exc
 
     parser = JsonSchemaParser(schema)
@@ -216,6 +220,25 @@ def _coerce_critic_payload(payload: Any) -> Optional[Dict[str, Any]]:
     if changed:
         logger.warning("Strict JSON critic payload coerced to required fields.")
     return payload
+
+
+def _should_abort_generator_retries_on_missing_required(
+    *, role: str, payload: Any, validation_error: str
+) -> bool:
+    if role != "generator":
+        return False
+    if not isinstance(payload, dict) or payload:
+        return False
+    text = str(validation_error or "").lower()
+    required_markers = (
+        "validation errors for cvjson",
+        "target_job_title",
+        "target_company",
+        "contact",
+        "summary",
+        "field required",
+    )
+    return all(marker in text for marker in required_markers)
 
 
 def generate_json_with_schema(
@@ -420,6 +443,15 @@ def generate_json_with_schema(
                 attempt,
                 last_error,
             )
+            if _should_abort_generator_retries_on_missing_required(
+                role=role, payload=payload, validation_error=last_error
+            ):
+                logger.warning(
+                    "Strict JSON aborting retries early: role=%s attempt=%s reason=missing_required_from_empty_payload",
+                    role,
+                    attempt,
+                )
+                break
             continue
 
     elapsed = time.time() - start_ts

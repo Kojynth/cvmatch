@@ -18,12 +18,15 @@ from PySide6.QtWidgets import (
     QMessageBox, QFrame, QSplitter, QApplication, QToolTip,
     QTabWidget, QStackedWidget
 )
-from PySide6.QtCore import Qt, QThread, Signal, QTimer
+from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl
 from PySide6.QtGui import QFont, QPixmap, QPainter, QIcon
 from PySide6.QtWebEngineWidgets import QWebEngineView
+from PySide6.QtWebEngineCore import QWebEngineProfile
 from loguru import logger
 
 from ..controllers.export_manager import ExportManager
+from ..utils.generation_audit import build_generation_audit as build_generation_audit_payload
+from ..widgets.audit_header_widget import AuditHeaderWidget
 
 
 FALLBACK_TEMPLATE_ACCENTS = {
@@ -315,6 +318,7 @@ class PDFExportThread(QThread):
 
 class TemplatePreviewWindow(QMainWindow):
     """Fenêtre de prévisualisation des templates avec export PDF."""
+    regenerate_requested = Signal(dict)
     
     # Définition des templates disponibles
     TEMPLATES = {
@@ -348,6 +352,8 @@ class TemplatePreviewWindow(QMainWindow):
     def __init__(self, cv_data: Dict[str, Any], parent=None):
         super().__init__(parent)
         self.cv_data = cv_data
+        self._generation_audit_cache: Dict[str, Any] = {}
+        self._generation_audit_context_key = self._compute_audit_context_key(cv_data)
         self.export_manager = ExportManager()
         requested_template = None
         if isinstance(cv_data, dict):
@@ -385,12 +391,17 @@ class TemplatePreviewWindow(QMainWindow):
         self._pdf_export_method = None
         self._pdf_web_view = None
         self._last_export_kind = None
+        self._generation_audit_cache = self._resolve_generation_audit()
         
         self.setWindowTitle("Prévisualisation et Export CV")
         self.setGeometry(100, 100, 1400, 900)
         
         # IMPORTANT: Cette fenêtre ne doit pas fermer l'application quand elle se ferme
         self.setAttribute(Qt.WA_QuitOnClose, False)
+        # Ensure WebEngine resources are released when the preview is closed.
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+
+        self._configure_webengine_profile()
         
         # Style de la fenêtre
         self.setStyleSheet("""
@@ -406,6 +417,147 @@ class TemplatePreviewWindow(QMainWindow):
         
         self.setup_ui()
         self.load_template_preview()
+
+    def _configure_webengine_profile(self) -> None:
+        """Reduce WebEngine memory footprint for local CV/letter preview use."""
+        cache_mode = str(os.getenv("CVMATCH_WEB_PREVIEW_CACHE", "off") or "off").strip().lower()
+        try:
+            profile = QWebEngineProfile.defaultProfile()
+        except Exception:
+            return
+
+        try:
+            if cache_mode in {"off", "0", "false", "none", "nocache"}:
+                profile.setHttpCacheType(QWebEngineProfile.NoCache)
+                profile.setPersistentCookiesPolicy(QWebEngineProfile.NoPersistentCookies)
+            elif cache_mode in {"memory", "ram"}:
+                profile.setHttpCacheType(QWebEngineProfile.MemoryHttpCache)
+                profile.setPersistentCookiesPolicy(QWebEngineProfile.NoPersistentCookies)
+
+            try:
+                cache_mb = max(0, int(os.getenv("CVMATCH_WEB_PREVIEW_CACHE_MB", "8")))
+                profile.setHttpCacheMaximumSize(cache_mb * 1024 * 1024)
+            except Exception:
+                pass
+        except Exception as exc:
+            logger.debug(f"WebEngine profile tuning skipped: {exc}")
+
+    def _dispose_web_view(self, attr_name: str) -> None:
+        web_view = getattr(self, attr_name, None)
+        if web_view is None:
+            return
+
+        try:
+            web_view.stop()
+        except Exception:
+            pass
+
+        try:
+            web_view.setHtml("<html><body></body></html>", baseUrl=QUrl("about:blank"))
+        except Exception:
+            pass
+
+        try:
+            page = web_view.page()
+            if page is not None:
+                try:
+                    profile = page.profile()
+                    if profile is not None and hasattr(profile, "clearHttpCache"):
+                        profile.clearHttpCache()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        try:
+            web_view.deleteLater()
+        except Exception:
+            pass
+
+        setattr(self, attr_name, None)
+
+    def _release_preview_resources(self) -> None:
+        self._dispose_web_view("cv_web_view")
+        self._dispose_web_view("letter_web_view")
+        self._dispose_web_view("_pdf_web_view")
+        self.last_rendered_html = ""
+        self.last_letter_rendered_html = ""
+        self._pending_pdf_html = None
+        self._generation_audit_cache = {}
+        self.cv_data = {}
+
+    def _compute_audit_context_key(self, payload: Dict[str, Any] | None) -> str:
+        data = payload if isinstance(payload, dict) else {}
+        application_id = data.get("application_id")
+        if application_id not in (None, ""):
+            return f"app:{application_id}"
+        parts = [
+            str(data.get("job_title") or ""),
+            str(data.get("company") or ""),
+            str(data.get("name") or ""),
+            str(data.get("template") or data.get("template_used") or ""),
+            str(data.get("raw_content") or "")[:300],
+            str(data.get("cover_letter") or "")[:300],
+        ]
+        return "raw:" + "|".join(parts)
+
+    def _has_explicit_generation_audit_payload(self, payload: Dict[str, Any] | None) -> bool:
+        data = payload if isinstance(payload, dict) else {}
+        if isinstance(data.get("generation_audit"), dict) and bool(data.get("generation_audit")):
+            return True
+        if isinstance(data.get("alignment_audit"), dict) or isinstance(data.get("cover_letter_review"), dict):
+            return True
+        offer_analysis = data.get("offer_analysis")
+        if isinstance(offer_analysis, dict):
+            nested = offer_analysis.get("generation_audit")
+            if isinstance(nested, dict) and bool(nested):
+                return True
+        return False
+
+    def _resolve_generation_audit(self) -> Dict[str, Any]:
+        if not isinstance(self.cv_data, dict):
+            return dict(self._generation_audit_cache or {})
+
+        direct = self.cv_data.get("generation_audit")
+        if isinstance(direct, dict) and direct:
+            self._generation_audit_cache = dict(direct)
+            return dict(self._generation_audit_cache)
+
+        alignment_audit = self.cv_data.get("alignment_audit")
+        cover_letter_review = self.cv_data.get("cover_letter_review")
+        if isinstance(alignment_audit, dict) or isinstance(cover_letter_review, dict):
+            computed = build_generation_audit_payload(
+                alignment_audit=alignment_audit if isinstance(alignment_audit, dict) else {},
+                cover_letter_review=cover_letter_review if isinstance(cover_letter_review, dict) else {},
+            )
+            self._generation_audit_cache = dict(computed)
+            return dict(self._generation_audit_cache)
+
+        offer_analysis = self.cv_data.get("offer_analysis")
+        if isinstance(offer_analysis, dict):
+            nested = offer_analysis.get("generation_audit")
+            if isinstance(nested, dict):
+                    self._generation_audit_cache = dict(nested)
+                    return dict(self._generation_audit_cache)
+
+        return dict(self._generation_audit_cache or {})
+
+    def set_cv_data(self, cv_data: Dict[str, Any]) -> None:
+        incoming = dict(cv_data) if isinstance(cv_data, dict) else {}
+        new_context_key = self._compute_audit_context_key(incoming)
+        context_changed = (
+            bool(self._generation_audit_context_key)
+            and bool(new_context_key)
+            and (new_context_key != self._generation_audit_context_key)
+        )
+
+        # Prevent score leakage across different CV generations.
+        if context_changed and not self._has_explicit_generation_audit_payload(incoming):
+            self._generation_audit_cache = {}
+
+        self.cv_data = incoming
+        self._generation_audit_context_key = new_context_key
+        self._generation_audit_cache = self._resolve_generation_audit()
     
     def setup_ui(self):
         """Configure l'interface utilisateur."""
@@ -636,7 +788,11 @@ class TemplatePreviewWindow(QMainWindow):
         template_layout.addWidget(self.template_selector_stack)
 
         main_layout.addWidget(template_frame)
-        
+
+        # Bandeau d'audit & alignement (masqué jusqu'à la première génération)
+        self.audit_header = AuditHeaderWidget()
+        main_layout.addWidget(self.audit_header)
+
         # Splitter pour prévisualisation et actions
         splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter = splitter
@@ -703,17 +859,18 @@ class TemplatePreviewWindow(QMainWindow):
         
         # Panel d'actions
         actions_frame = QFrame()
+        actions_frame.setObjectName("actions_frame")
         actions_frame.setFrameStyle(QFrame.Shape.StyledPanel)
         actions_frame.setStyleSheet("""
-            QFrame {
+            QFrame#actions_frame {
                 background-color: #f8f9fa;
                 border: 1px solid #dee2e6;
                 border-radius: 8px;
                 padding: 20px;
             }
         """)
-        actions_frame.setMaximumWidth(400)
-        actions_frame.setMinimumWidth(350)
+        actions_frame.setMaximumWidth(300)
+        actions_frame.setMinimumWidth(240)
         
         actions_layout = QVBoxLayout(actions_frame)
         
@@ -766,7 +923,6 @@ class TemplatePreviewWindow(QMainWindow):
             }
             QPushButton:disabled {
                 background-color: #6c757d;
-                cursor: not-allowed;
             }
         """)
         self.export_button.clicked.connect(self.export_pdf)
@@ -792,7 +948,71 @@ class TemplatePreviewWindow(QMainWindow):
         """)
         modify_css_button.clicked.connect(self.show_css_tooltip)
         actions_layout.addWidget(modify_css_button)
-        
+        actions_layout.addStretch(1)
+
+        regen_prompt_frame = QFrame()
+        regen_prompt_frame.setObjectName("regen_prompt_frame")
+        regen_prompt_frame.setStyleSheet("""
+            QFrame#regen_prompt_frame {
+                background-color: #f1f8ff;
+                border: 1px solid #8ec5ff;
+                border-radius: 6px;
+                padding: 6px;
+            }
+        """)
+        regen_prompt_layout = QVBoxLayout(regen_prompt_frame)
+        regen_prompt_layout.setContentsMargins(8, 8, 8, 8)
+        regen_prompt_layout.setSpacing(6)
+
+        instruction_label = QLabel("Instruction de régénération :")
+        instruction_label.setStyleSheet("color: #1f4e79; font-size: 12px; font-weight: bold;")
+        regen_prompt_layout.addWidget(instruction_label)
+
+        self.regen_instruction_edit = QTextEdit()
+        self.regen_instruction_edit.setPlaceholderText(
+            "Exemple: modifier uniquement le résumé pour l'orienter vers un domaine d'activité de l'offre avec les mots-clés de l'offre."
+        )
+        self.regen_instruction_edit.setMaximumHeight(150)
+        self.regen_instruction_edit.setStyleSheet(
+            """
+            QTextEdit {
+                background-color: #ffffff;
+                border: 2px solid #3399ff;
+                border-radius: 5px;
+                padding: 8px;
+                color: #1f2937;
+            }
+            QTextEdit:focus {
+                border: 2px solid #0d6efd;
+                background-color: #fafdff;
+            }
+            """
+        )
+        regen_prompt_layout.addWidget(self.regen_instruction_edit)
+        actions_layout.addWidget(regen_prompt_frame)
+
+        self.regenerate_button = QPushButton("Regénérer le CV")
+        self.regenerate_button.setStyleSheet("""
+            QPushButton {
+                background-color: #0d6efd;
+                color: white;
+                border: none;
+                padding: 10px 14px;
+                border-radius: 6px;
+                font-weight: bold;
+                font-size: 13px;
+                margin-top: 8px;
+            }
+            QPushButton:hover {
+                background-color: #0b5ed7;
+            }
+            QPushButton:disabled {
+                background-color: #6c757d;
+            }
+        """)
+        self.regenerate_button.clicked.connect(self.request_regeneration)
+        actions_layout.addWidget(self.regenerate_button)
+
         # Spacer
         actions_layout.addStretch()
         
@@ -847,6 +1067,7 @@ class TemplatePreviewWindow(QMainWindow):
         self.update_letter_template_info()
     
         self.on_preview_tab_changed(self.preview_tabs.currentIndex())
+        self._update_audit_panel()
 
         # Final sanitization of the constructed UI
         sanitize_widget_tree(self)
@@ -903,7 +1124,7 @@ class TemplatePreviewWindow(QMainWindow):
             try:
                 updated = history_widget.get_cv_data_for_application(application_id)
                 if isinstance(updated, dict):
-                    self.cv_data = updated
+                    self.set_cv_data(updated)
                     self.load_template_preview()
                     self.status_label.setText("Previsualisation mise a jour.")
             except Exception as exc:
@@ -972,6 +1193,33 @@ class TemplatePreviewWindow(QMainWindow):
         self.export_button.setEnabled(enabled)
         self.export_button.setText(label)
 
+    def _update_audit_panel(self) -> None:
+        if hasattr(self, "audit_header"):
+            self.audit_header.update_audit(self.cv_data if isinstance(self.cv_data, dict) else {})
+
+    def _build_regeneration_payload(self) -> Dict[str, Any]:
+        active = self._active_preview_kind()
+        target = "letter" if active == "letter" else "cv"
+        instruction = ""
+        if hasattr(self, "regen_instruction_edit") and self.regen_instruction_edit is not None:
+            instruction = self.regen_instruction_edit.toPlainText().strip()
+        return {
+            "target": target,
+            "application_id": self.cv_data.get("application_id"),
+            "instruction": instruction,
+            "cv_data": dict(self.cv_data) if isinstance(self.cv_data, dict) else {},
+            "template": self.current_template,
+            "letter_template": self.current_letter_template,
+        }
+
+    def request_regeneration(self) -> None:
+        payload = self._build_regeneration_payload()
+        self.status_label.setText("Regeneration demandee...")
+        try:
+            self.regenerate_requested.emit(payload)
+        except Exception as exc:
+            logger.warning(f"Regeneration emit failed: {exc}")
+
     def on_preview_tab_changed(self, index: int) -> None:
         if hasattr(self, "template_selector_stack"):
             self.template_selector_stack.setCurrentIndex(
@@ -979,8 +1227,15 @@ class TemplatePreviewWindow(QMainWindow):
             )
         if index == getattr(self, "letter_tab_index", 1):
             self.load_letter_preview()
+            if hasattr(self, "regenerate_button"):
+                self.regenerate_button.setText("Regénérer la lettre")
+        else:
+            if hasattr(self, "regenerate_button"):
+                self.regenerate_button.setText("Regénérer le CV")
         if hasattr(self, "export_button"):
             self._update_export_state()
+        if hasattr(self, "audit_header"):
+            self._update_audit_panel()
 
     def update_cv_template_info(self):
         """Met a jour l'information du template CV selectionne."""
@@ -1005,7 +1260,7 @@ class TemplatePreviewWindow(QMainWindow):
             self.update_cv_template_info()
             self.load_cv_preview()
             self.status_label.setText(
-                f"Template CV '{self.TEMPLATES[current_data]['name']}' previsualise - Validez pour exporter"
+                f"Template CV '{self.TEMPLATES[current_data]['name']}' Prévisualisation - Validez pour exporter"
             )
             self._update_export_state()
 
@@ -1936,6 +2191,8 @@ class TemplatePreviewWindow(QMainWindow):
             if self.export_thread and self.export_thread.isRunning():
                 self.export_thread.terminate()
                 self.export_thread.wait()
+
+            self._release_preview_resources()
             
             # LOG: Cette fenêtre se ferme, mais ce n'est PAS une fermeture de l'app principale
             logger.info("Fermeture de la fenetre de previsualisation (fenetre secondaire)")
@@ -1945,6 +2202,7 @@ class TemplatePreviewWindow(QMainWindow):
             
             # S'assurer que cette fenêtre ne déclenche pas la fermeture de l'app
             self.setAttribute(Qt.WA_QuitOnClose, False)
+            self.deleteLater()
             
         except Exception as e:
             logger.error(f"Erreur lors de la fermeture de la fenetre de previsualisation: {e}")

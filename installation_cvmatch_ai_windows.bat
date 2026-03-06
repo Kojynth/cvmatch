@@ -102,8 +102,8 @@ if not exist "%REQ_AI_FILE%" goto :req_ai_missing
 set "REQ_AI_LOCK=%PROJECT_ROOT%requirements_ai_windows.lock"
 if /I "%REQ_AI_FILE%"=="%PROJECT_ROOT%requirements_windows.txt" set "REQ_AI_LOCK=%PROJECT_ROOT%requirements_windows.lock"
 
-set "LLM_MODEL_ID=Qwen/Qwen2.5-0.5B-Instruct"
-set "LLM_PROFILE_ID=qwen2-0.5b"
+set "LLM_MODEL_ID=Qwen/Qwen2.5-7B-Instruct"
+set "LLM_PROFILE_ID=qwen2-7b"
 if not "%CVMATCH_LLM_MODEL_ID%"=="" set "LLM_MODEL_ID=%CVMATCH_LLM_MODEL_ID%"
 if not "%CVMATCH_LLM_PROFILE_ID%"=="" set "LLM_PROFILE_ID=%CVMATCH_LLM_PROFILE_ID%"
 
@@ -124,6 +124,10 @@ echo === CVMatch AI Model Installer === >> "%INSTALL_LOG%"
 echo Mode: %AI_MODE% >> "%INSTALL_LOG%"
 echo Cache: %CACHE_DIR% >> "%INSTALL_LOG%"
 echo Python: %PYTHON_CMD% %PYTHON_ARGS% >> "%INSTALL_LOG%"
+echo [POLICY] LLM download allowlist: Qwen/*, mistralai/*
+echo [POLICY] LLM download allowlist: Qwen/*, mistralai/* >> "%INSTALL_LOG%"
+echo [POLICY] Non-approved LLM ids are skipped (or blocked if forced at runtime).
+echo [POLICY] Non-approved LLM ids are skipped (or blocked if forced at runtime). >> "%INSTALL_LOG%"
 
 "%PYTHON_CMD%" %PYTHON_ARGS% -c "import google.protobuf, sentencepiece" >nul 2>&1
 if errorlevel 1 goto :deps_install
@@ -132,7 +136,7 @@ goto :deps_done
 :deps_install
 echo Installing missing Python dependencies: protobuf, sentencepiece...
 echo Installing missing Python dependencies: protobuf, sentencepiece... >> "%INSTALL_LOG%"
-"%PYTHON_CMD%" %PYTHON_ARGS% -m pip install --upgrade protobuf sentencepiece >> "%INSTALL_LOG%" 2>&1
+call :RUN_WITH_SPINNER "Install protobuf+sentencepiece" "20" "%PYTHON_CMD%" %PYTHON_ARGS% -u -m pip install --disable-pip-version-check --progress-bar off -v --upgrade protobuf sentencepiece
 if errorlevel 1 goto :deps_failed
 goto :deps_done
 
@@ -194,7 +198,7 @@ if exist "%REQ_AI_LOCK%" (
     echo [WARN] Using unpinned requirements file. >> "%INSTALL_LOG%"
     echo [WARN] Consider creating requirements_ai_windows.lock with hashes.
 )
-"%PYTHON_CMD%" %PYTHON_ARGS% -m pip install %REQ_AI_HASH_ARGS% -r "%REQ_AI_TARGET%" >> "%INSTALL_LOG%" 2>&1
+call :RUN_WITH_SPINNER "Install AI Python deps" "30" "%PYTHON_CMD%" %PYTHON_ARGS% -u -m pip install --disable-pip-version-check --progress-bar off -v %REQ_AI_HASH_ARGS% -r "%REQ_AI_TARGET%"
 if errorlevel 1 goto :ai_deps_failed
 goto :ai_deps_done
 
@@ -207,7 +211,7 @@ mkdir "%LLAMA_DIR%" >nul 2>&1
 :llama_dir_ready
 echo Installing llama.cpp - llama-server into "%LLAMA_DIR%"...
 echo Installing llama.cpp - llama-server into "%LLAMA_DIR%"... >> "%INSTALL_LOG%"
-"%PYTHON_CMD%" %PYTHON_ARGS% "%PROJECT_ROOT%scripts\install_llama_cpp.py" --dest-dir "%LLAMA_DIR%" >> "%INSTALL_LOG%" 2>&1
+call :RUN_WITH_SPINNER "Install llama.cpp" "30" "%PYTHON_CMD%" %PYTHON_ARGS% "%PROJECT_ROOT%scripts\install_llama_cpp.py" --dest-dir "%LLAMA_DIR%"
 if errorlevel 1 goto :llama_warn
 goto :llama_done
 
@@ -221,17 +225,18 @@ echo        Tip: set CVMATCH_LLAMA_CPP_BINARY and CVMATCH_LLAMA_CPP_MODEL_PATH i
 
 echo Downloading AI models...
 echo Downloading AI models... >> "%INSTALL_LOG%"
+echo [POLICY] Applying LLM allowlist: Qwen/*, mistralai/* >> "%INSTALL_LOG%"
 if defined INSTALL_LLM goto :download_llm
 goto :download_base
 
 :download_llm
 echo LLM model: %LLM_MODEL_ID%
 echo LLM model: %LLM_MODEL_ID% >> "%INSTALL_LOG%"
-"%PYTHON_CMD%" %PYTHON_ARGS% "%PROJECT_ROOT%scripts\download_ai_models.py" --cache-dir "%CACHE_DIR%" --mode "%AI_MODE%" --include-llm --llm-model "%LLM_MODEL_ID%" >> "%INSTALL_LOG%" 2>&1
+call :RUN_WITH_SPINNER "Download AI models (LLM)" "30" "%PYTHON_CMD%" %PYTHON_ARGS% "%PROJECT_ROOT%scripts\download_ai_models.py" --cache-dir "%CACHE_DIR%" --mode "%AI_MODE%" --include-llm --llm-model "%LLM_MODEL_ID%"
 goto :download_done
 
 :download_base
-"%PYTHON_CMD%" %PYTHON_ARGS% "%PROJECT_ROOT%scripts\download_ai_models.py" --cache-dir "%CACHE_DIR%" --mode "%AI_MODE%" >> "%INSTALL_LOG%" 2>&1
+call :RUN_WITH_SPINNER "Download AI models (base)" "30" "%PYTHON_CMD%" %PYTHON_ARGS% "%PROJECT_ROOT%scripts\download_ai_models.py" --cache-dir "%CACHE_DIR%" --mode "%AI_MODE%"
 
 :download_done
 if errorlevel 401 goto :unauthorized
@@ -243,7 +248,7 @@ goto :after_set_model
 :set_model
 echo Setting default LLM profile: %LLM_PROFILE_ID%
 echo Setting default LLM profile: %LLM_PROFILE_ID% >> "%INSTALL_LOG%"
-"%PYTHON_CMD%" %PYTHON_ARGS% "%PROJECT_ROOT%scripts\set_default_model.py" --model-id "%LLM_PROFILE_ID%" >> "%INSTALL_LOG%" 2>&1
+call :RUN_WITH_SPINNER "Set default LLM profile" "15" "%PYTHON_CMD%" %PYTHON_ARGS% "%PROJECT_ROOT%scripts\set_default_model.py" --model-id "%LLM_PROFILE_ID%"
 if errorlevel 1 goto :set_model_warn
 goto :after_set_model
 
@@ -353,6 +358,56 @@ if not defined NO_PAUSE pause
 endlocal
 exit /b 1
 
+:RUN_WITH_SPINNER
+setlocal EnableExtensions EnableDelayedExpansion
+set "SP_NAME=%~1"
+set "SP_SOFT_TIMEOUT=%~2"
+set "SP_EXE=%~3"
+if "%SP_SOFT_TIMEOUT%"=="" set "SP_SOFT_TIMEOUT=20"
+set "SP_CMD="
+:RUN_WITH_SPINNER_COLLECT_ARGS
+if "%~4"=="" goto RUN_WITH_SPINNER_ARGS_DONE
+if defined SP_CMD (
+    set "SP_CMD=!SP_CMD! %4"
+) else (
+    set "SP_CMD=%4"
+)
+shift
+goto RUN_WITH_SPINNER_COLLECT_ARGS
+:RUN_WITH_SPINNER_ARGS_DONE
+
+if not exist "scripts\run_check_with_spinner.ps1" (
+    echo [WARN] Spinner script missing, running without animation: %SP_NAME%
+    echo [WARN] Spinner script missing, running without animation: %SP_NAME% >> "%INSTALL_LOG%"
+    "%SP_EXE%" !SP_CMD! >> "%INSTALL_LOG%" 2>&1
+    set "SP_RC=%ERRORLEVEL%"
+    endlocal & exit /b %SP_RC%
+)
+
+set "SP_OUT=%TEMP%\cvmatch_ai_spinner_%RANDOM%_%RANDOM%.out"
+set "SP_ERR=%TEMP%\cvmatch_ai_spinner_%RANDOM%_%RANDOM%.err"
+set "CVMATCH_CHECK_PYTHON=%SP_EXE%"
+set "CVMATCH_CHECK_CMD=!SP_CMD!"
+set "CVMATCH_CHECK_NAME=%SP_NAME%"
+set "CVMATCH_CHECK_WD=%PROJECT_ROOT%"
+set "CVMATCH_CHECK_OUT=%SP_OUT%"
+set "CVMATCH_CHECK_ERR=%SP_ERR%"
+set "CVMATCH_CHECK_SOFT_TIMEOUT=%SP_SOFT_TIMEOUT%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\run_check_with_spinner.ps1"
+set "SP_RC=%ERRORLEVEL%"
+set "CVMATCH_CHECK_PYTHON="
+set "CVMATCH_CHECK_CMD="
+set "CVMATCH_CHECK_NAME="
+set "CVMATCH_CHECK_WD="
+set "CVMATCH_CHECK_OUT="
+set "CVMATCH_CHECK_ERR="
+set "CVMATCH_CHECK_SOFT_TIMEOUT="
+if exist "%SP_OUT%" type "%SP_OUT%" >> "%INSTALL_LOG%"
+if exist "%SP_ERR%" type "%SP_ERR%" >> "%INSTALL_LOG%"
+if exist "%SP_OUT%" del "%SP_OUT%" >nul 2>&1
+if exist "%SP_ERR%" del "%SP_ERR%" >nul 2>&1
+endlocal & exit /b %SP_RC%
+
 :TRY_CUDA_TORCH
 for %%I in (%TORCH_CUDA_INDEXES%) do (
     echo Attempting PyTorch CUDA via %%I...
@@ -372,7 +427,7 @@ exit /b 1
 :INSTALL_TORCH
 set "TORCH_INDEX_URL=%~1"
 if "%TORCH_INDEX_URL%"=="" set "TORCH_INDEX_URL=%TORCH_CPU_INDEX%"
-"%PYTHON_CMD%" %PYTHON_ARGS% -m pip install --upgrade --force-reinstall torch torchvision torchaudio --index-url %TORCH_INDEX_URL% >> "%INSTALL_LOG%" 2>&1
+call :RUN_WITH_SPINNER "Install PyTorch (%TORCH_INDEX_URL%)" "30" "%PYTHON_CMD%" %PYTHON_ARGS% -u -m pip install --disable-pip-version-check --progress-bar off -v --upgrade --force-reinstall torch torchvision torchaudio --index-url %TORCH_INDEX_URL%
 exit /b %ERRORLEVEL%
 
 :unauthorized

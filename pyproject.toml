@@ -179,7 +179,8 @@ testpaths = ["tests"]
 qt_api = "pyside6"
 python_files = ["test_*.py", "*_test.py"]
 markers = [
-    "gui: PySide6-driven GUI regression tests"
+    "gui: PySide6-driven GUI regression tests",
+    "integration: integration tests that may spawn subprocesses or use real I/O",
 ]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

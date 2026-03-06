@@ -264,7 +264,10 @@ class CompactModelSelector(QWidget):
         self.info_label.setStyleSheet("color: #cccccc; padding: 2px 0; font-size: 10px;")
         
         # Recommandation
-        if model_info["is_recommended"]:
+        if model_info.get("model_status") == "vram_insufficient":
+            self.recommendation_label.setText("Alerte: pas assez de VRAM, on continue en mode survie.")
+            self.recommendation_label.setStyleSheet("color: #dc2626; font-style: italic; font-size: 9px;")
+        elif model_info["is_recommended"]:
             self.recommendation_label.setText("✅ Recommandé pour votre configuration")
             self.recommendation_label.setStyleSheet("color: #00aa00; font-style: italic; font-size: 9px;")
         else:
@@ -299,10 +302,17 @@ class CompactModelSelector(QWidget):
 
             model_info = model_manager.get_model_info(model_id)
             display_name = getattr(model_info, 'display_name', None) or model_id
-            tooltip_msg = (
-                f"Warning: {validation.get('error')}\n\n"
-                f"Attempting to use {display_name} anyway."
-            )
+            status = model_manager.get_model_display_info(model_id).get("model_status")
+            if status == "vram_insufficient":
+                tooltip_msg = (
+                    "Alerte: pas assez de VRAM.\n"
+                    "On continue en mode survie avec un profil plus leger."
+                )
+            else:
+                tooltip_msg = (
+                    f"Warning: {validation.get('error')}\n\n"
+                    f"Attempting to use {display_name} anyway."
+                )
             QToolTip.showText(QCursor.pos(), tooltip_msg, self, self.rect(), 5000)
 
         self.current_model = model_id
