@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List
+from typing import Dict, List
 
 from pydantic import BaseModel, Field
 
@@ -20,3 +20,5 @@ class OfferKeywordsJSON(BaseModel):
     responsibilities: List[str] = Field(default_factory=list)
     education: List[str] = Field(default_factory=list)
     certifications: List[str] = Field(default_factory=list)
+    lexical_field: List[str] = Field(default_factory=list)
+    keyword_families: Dict[str, List[str]] = Field(default_factory=dict)

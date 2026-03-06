@@ -185,8 +185,9 @@ powershell -Command "%COLOR_INFO% '[3/5] Verification dependances...'"
 rem Test rapide des packages critiques
 echo Test des dependances critiques... >> "%SESSION_LOG%"
 powershell -Command "%COLOR_INFO% 'Test des dependances critiques...'"
-"%VENV_PYTHON%" -c "import PySide6, loguru, sqlmodel, pandas, numpy, requests, dateutil, pydantic, pypdf, docx, bs4, fitz, PIL, jinja2, psutil, selenium" >nul 2>&1
-if errorlevel 1 goto DEPS_MISSING
+call :CHECK_CRITICAL_DEPS
+set "DEPS_CHECK_RESULT=%ERRORLEVEL%"
+if not "%DEPS_CHECK_RESULT%"=="0" goto DEPS_MISSING
 echo [SUCCESS] Toutes les dependances sont presentes >> "%SESSION_LOG%"
 powershell -Command "%COLOR_SUCCESS% '[SUCCESS] Toutes les dependances sont presentes'"
 goto DEPS_DONE
@@ -232,25 +233,33 @@ goto DEPS_DONE
 rem Verification CUDA PyTorch (optionnel)
 echo [CHECK] Verification CUDA PyTorch... >> "%SESSION_LOG%"
 powershell -Command "%COLOR_INFO% '[CHECK] Verification CUDA PyTorch...'"
-"%VENV_PYTHON%" -c "import torch" >nul 2>&1
-if errorlevel 1 goto TORCH_MISSING
-"%VENV_PYTHON%" -c "import torch, sys; print('torch', torch.__version__, 'cuda_available', torch.cuda.is_available(), 'cuda', torch.version.cuda); sys.exit(0 if torch.cuda.is_available() else 2)" >> "%SESSION_LOG%" 2>&1
+call :CHECK_CUDA_RUNTIME
 set "CUDA_CHECK_RESULT=%ERRORLEVEL%"
-if "%CUDA_CHECK_RESULT%"=="0" (
-    echo [SUCCESS] CUDA detectee par PyTorch >> "%SESSION_LOG%"
-    powershell -Command "%COLOR_SUCCESS% 'CUDA detectee par PyTorch'"
-) else if "%CUDA_CHECK_RESULT%"=="2" (
-    echo [WARN] CUDA non detectee par PyTorch - mode CPU. >> "%SESSION_LOG%"
-    powershell -Command "%COLOR_WARNING% 'CUDA non detectee par PyTorch - mode CPU.'"
-) else (
-    echo [WARN] Verification CUDA PyTorch echouee - torch indisponible? >> "%SESSION_LOG%"
-    powershell -Command "%COLOR_WARNING% 'Verification CUDA PyTorch echouee - torch indisponible?'"
-)
+if "%CUDA_CHECK_RESULT%"=="0" goto TORCH_OK
+if "%CUDA_CHECK_RESULT%"=="2" goto TORCH_CPU
+if "%CUDA_CHECK_RESULT%"=="3" goto TORCH_MISSING
+goto TORCH_FAILED
+
+:TORCH_OK
+echo [SUCCESS] CUDA detectee par PyTorch >> "%SESSION_LOG%"
+powershell -Command "%COLOR_SUCCESS% 'CUDA detectee par PyTorch'"
+goto TORCH_CHECK_DONE
+
+:TORCH_CPU
+echo [WARN] CUDA non detectee par PyTorch - mode CPU. >> "%SESSION_LOG%"
+powershell -Command "%COLOR_WARNING% 'CUDA non detectee par PyTorch - mode CPU.'"
+goto TORCH_CHECK_DONE
+
+:TORCH_FAILED
+echo [WARN] Verification CUDA PyTorch echouee - torch indisponible? >> "%SESSION_LOG%"
+powershell -Command "%COLOR_WARNING% 'Verification CUDA PyTorch echouee - torch indisponible?'"
 goto TORCH_CHECK_DONE
 
 :TORCH_MISSING
-echo [INFO] PyTorch non installe - verification CUDA ignoree. >> "%SESSION_LOG%"
-powershell -Command "%COLOR_INFO% 'PyTorch non installe - verification CUDA ignoree.'"
+echo [WARN] PyTorch non installe dans cet environnement. >> "%SESSION_LOG%"
+echo [INFO] Pour activer l'IA locale (LLM), lancez: installation_cvmatch_ai_windows.bat >> "%SESSION_LOG%"
+powershell -Command "%COLOR_WARNING% 'PyTorch non installe dans cet environnement.'"
+powershell -Command "%COLOR_INFO% 'Pour activer l''IA locale (LLM), lancez: installation_cvmatch_ai_windows.bat'"
 
 :TORCH_CHECK_DONE
 
@@ -259,9 +268,9 @@ echo [CHECK] Verification modeles IA... >> "%SESSION_LOG%"
 powershell -Command "%COLOR_INFO% '[CHECK] Verification modeles IA...'"
 set "AI_MODE=%CVMATCH_AI_MODE%"
 if "%AI_MODE%"=="" set "AI_MODE=lite"
-set "AI_CHECK_ARGS=--mode %AI_MODE% --include-llm"
-if /I "%CVMATCH_SKIP_LLM%"=="1" set "AI_CHECK_ARGS=--mode %AI_MODE%"
-"%VENV_PYTHON%" scripts\check_ai_models.py %AI_CHECK_ARGS% >nul 2>&1
+set "AI_INCLUDE_LLM=1"
+if /I "%CVMATCH_SKIP_LLM%"=="1" set "AI_INCLUDE_LLM=0"
+call :CHECK_AI_MODELS
 set "AI_CHECK_RESULT=%ERRORLEVEL%"
 if "%AI_CHECK_RESULT%"=="2" (
     if /I "%CVMATCH_SKIP_LLM%"=="1" goto ai_fallback_done
@@ -307,10 +316,33 @@ if "%AI_CHECK_RESULT%"=="0" (
         powershell -Command "%COLOR_INFO% 'Installation modeles IA ignoree.'"
     )
     set "SKIP_AI_INSTALL="
+) else if "%AI_CHECK_RESULT%"=="3" (
+    echo [WARN] Runtime IA incomplet: torch/transformers/huggingface_hub manquants. >> "%SESSION_LOG%"
+    powershell -Command "%COLOR_WARNING% 'Runtime IA incomplet: torch/transformers/huggingface_hub manquants.'"
+    set "RUN_AI_INSTALL="
+    set /p "RUN_AI_INSTALL=Installer les dependances IA maintenant ? ^(O/n^): "
+    set "SKIP_AI_INSTALL="
+    if /i "!RUN_AI_INSTALL!"=="n" set "SKIP_AI_INSTALL=1"
+    if /i "!RUN_AI_INSTALL!"=="non" set "SKIP_AI_INSTALL=1"
+    if not defined SKIP_AI_INSTALL (
+        if exist "installation_cvmatch_ai_windows.bat" (
+            call installation_cvmatch_ai_windows.bat
+        ) else (
+            echo [WARN] installation_cvmatch_ai_windows.bat introuvable >> "%SESSION_LOG%"
+            powershell -Command "%COLOR_WARNING% 'installation_cvmatch_ai_windows.bat introuvable'"
+        )
+    ) else (
+        echo [INFO] Installation dependances IA ignoree. >> "%SESSION_LOG%"
+        powershell -Command "%COLOR_INFO% 'Installation dependances IA ignoree.'"
+    )
+    set "SKIP_AI_INSTALL="
 ) else (
     echo [WARN] Verification modeles IA echouee. >> "%SESSION_LOG%"
     powershell -Command "%COLOR_WARNING% 'Verification modeles IA echouee.'"
 )
+goto AI_CHECK_DONE
+
+:AI_CHECK_DONE
 
 rem ================================================================
 rem ETAPE 4: Tests de sante pre-lancement
@@ -403,6 +435,83 @@ exit /b %EXIT_CODE%
 :TEST_VENV
 "%VENV_PYTHON%" -c "import sys" >> "%SESSION_LOG%" 2>&1
 exit /b %ERRORLEVEL%
+
+:CHECK_CRITICAL_DEPS
+set "DEP_OUT=%TEMP%\cvmatch_depcheck_%RANDOM%_%RANDOM%.out"
+set "DEP_ERR=%TEMP%\cvmatch_depcheck_%RANDOM%_%RANDOM%.err"
+set "CVMATCH_CHECK_PYTHON=%VENV_PYTHON%"
+set "CVMATCH_CHECK_CMD=scripts\check_critical_deps.py"
+set "CVMATCH_CHECK_NAME=Dependances critiques"
+set "CVMATCH_CHECK_WD=%PROJECT_ROOT%"
+set "CVMATCH_CHECK_OUT=%DEP_OUT%"
+set "CVMATCH_CHECK_ERR=%DEP_ERR%"
+set "CVMATCH_CHECK_SOFT_TIMEOUT=20"
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\run_check_with_spinner.ps1"
+set "DEP_RC=%ERRORLEVEL%"
+set "CVMATCH_CHECK_PYTHON="
+set "CVMATCH_CHECK_CMD="
+set "CVMATCH_CHECK_NAME="
+set "CVMATCH_CHECK_WD="
+set "CVMATCH_CHECK_OUT="
+set "CVMATCH_CHECK_ERR="
+set "CVMATCH_CHECK_SOFT_TIMEOUT="
+if exist "%DEP_OUT%" type "%DEP_OUT%" >> "%SESSION_LOG%"
+if exist "%DEP_ERR%" type "%DEP_ERR%" >> "%SESSION_LOG%"
+if exist "%DEP_OUT%" del "%DEP_OUT%" >nul 2>&1
+if exist "%DEP_ERR%" del "%DEP_ERR%" >nul 2>&1
+exit /b %DEP_RC%
+
+:CHECK_CUDA_RUNTIME
+set "CUDA_OUT=%TEMP%\cvmatch_cuda_%RANDOM%_%RANDOM%.out"
+set "CUDA_ERR=%TEMP%\cvmatch_cuda_%RANDOM%_%RANDOM%.err"
+set "CVMATCH_CHECK_PYTHON=%VENV_PYTHON%"
+set "CVMATCH_CHECK_CMD=scripts\check_cuda_runtime.py"
+set "CVMATCH_CHECK_NAME=CUDA PyTorch"
+set "CVMATCH_CHECK_WD=%PROJECT_ROOT%"
+set "CVMATCH_CHECK_OUT=%CUDA_OUT%"
+set "CVMATCH_CHECK_ERR=%CUDA_ERR%"
+set "CVMATCH_CHECK_SOFT_TIMEOUT=12"
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\run_check_with_spinner.ps1"
+set "CUDA_RC=%ERRORLEVEL%"
+set "CVMATCH_CHECK_PYTHON="
+set "CVMATCH_CHECK_CMD="
+set "CVMATCH_CHECK_NAME="
+set "CVMATCH_CHECK_WD="
+set "CVMATCH_CHECK_OUT="
+set "CVMATCH_CHECK_ERR="
+set "CVMATCH_CHECK_SOFT_TIMEOUT="
+if exist "%CUDA_OUT%" type "%CUDA_OUT%" >> "%SESSION_LOG%"
+if exist "%CUDA_ERR%" type "%CUDA_ERR%" >> "%SESSION_LOG%"
+if exist "%CUDA_OUT%" del "%CUDA_OUT%" >nul 2>&1
+if exist "%CUDA_ERR%" del "%CUDA_ERR%" >nul 2>&1
+exit /b %CUDA_RC%
+
+:CHECK_AI_MODELS
+set "AI_OUT=%TEMP%\cvmatch_ai_%RANDOM%_%RANDOM%.out"
+set "AI_ERR=%TEMP%\cvmatch_ai_%RANDOM%_%RANDOM%.err"
+set "AI_ARGS=scripts\check_ai_models.py --mode %AI_MODE%"
+if "%AI_INCLUDE_LLM%"=="1" set "AI_ARGS=%AI_ARGS% --include-llm"
+set "CVMATCH_CHECK_PYTHON=%VENV_PYTHON%"
+set "CVMATCH_CHECK_CMD=%AI_ARGS%"
+set "CVMATCH_CHECK_NAME=Modeles IA"
+set "CVMATCH_CHECK_WD=%PROJECT_ROOT%"
+set "CVMATCH_CHECK_OUT=%AI_OUT%"
+set "CVMATCH_CHECK_ERR=%AI_ERR%"
+set "CVMATCH_CHECK_SOFT_TIMEOUT=15"
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\run_check_with_spinner.ps1"
+set "AI_RC=%ERRORLEVEL%"
+set "CVMATCH_CHECK_PYTHON="
+set "CVMATCH_CHECK_CMD="
+set "CVMATCH_CHECK_NAME="
+set "CVMATCH_CHECK_WD="
+set "CVMATCH_CHECK_OUT="
+set "CVMATCH_CHECK_ERR="
+set "CVMATCH_CHECK_SOFT_TIMEOUT="
+if exist "%AI_OUT%" type "%AI_OUT%" >> "%SESSION_LOG%"
+if exist "%AI_ERR%" type "%AI_ERR%" >> "%SESSION_LOG%"
+if exist "%AI_OUT%" del "%AI_OUT%" >nul 2>&1
+if exist "%AI_ERR%" del "%AI_ERR%" >nul 2>&1
+exit /b %AI_RC%
 
 :RUN_DIAGNOSTIC
 echo.

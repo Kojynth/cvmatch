@@ -35,6 +35,90 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+drain_stream_lines() {
+    local path="$1"
+    local prefix="$2"
+    local seen_var="$3"
+    local seen="${!seen_var:-0}"
+
+    if [[ ! -f "$path" ]]; then
+        return 0
+    fi
+
+    local count
+    count="$(wc -l < "$path" 2>/dev/null | tr -d '[:space:]')"
+    if [[ -z "$count" ]]; then
+        count=0
+    fi
+
+    if (( count <= seen )); then
+        return 0
+    fi
+
+    echo ""
+    local line_num
+    local line
+    for ((line_num = seen + 1; line_num <= count; line_num++)); do
+        line="$(sed -n "${line_num}p" "$path")"
+        if [[ -n "${line//[[:space:]]/}" ]]; then
+            echo "[$prefix] $line"
+        fi
+    done
+
+    printf -v "$seen_var" '%s' "$count"
+}
+
+run_check_with_spinner() {
+    local display_name="$1"
+    local stdout_path="$2"
+    local stderr_path="$3"
+    local soft_timeout_sec="$4"
+    shift 4
+    local cmd=( "$@" )
+
+    : > "$stdout_path"
+    : > "$stderr_path"
+
+    "${cmd[@]}" >"$stdout_path" 2>"$stderr_path" &
+    local pid=$!
+    local start_ts
+    start_ts="$(date +%s)"
+    local spinner='|/-\'
+    local idx=0
+    local soft_notified=0
+    local out_seen=0
+    local err_seen=0
+
+    while kill -0 "$pid" 2>/dev/null; do
+        drain_stream_lines "$stdout_path" "$display_name" out_seen
+        drain_stream_lines "$stderr_path" "${display_name}/ERR" err_seen
+
+        local elapsed=$(( $(date +%s) - start_ts ))
+        local glyph="${spinner:idx%4:1}"
+        idx=$((idx + 1))
+        printf '\r[WAIT] %s %s %ss ' "$display_name" "$glyph" "$elapsed"
+        sleep 0.2
+
+        if (( soft_notified == 0 && elapsed >= soft_timeout_sec )); then
+            echo ""
+            echo "[INFO] ${display_name}: verification toujours en cours (${elapsed}s), on continue..."
+            soft_notified=1
+        fi
+    done
+
+    set +e
+    wait "$pid"
+    local rc=$?
+    set -e
+
+    drain_stream_lines "$stdout_path" "$display_name" out_seen
+    drain_stream_lines "$stderr_path" "${display_name}/ERR" err_seen
+
+    local total=$(( $(date +%s) - start_ts ))
+    printf '\r[DONE] %s en %ss.                        \n' "$display_name" "$total"
+    return "$rc"
+}
+
 detect_python() {
     local candidate
     for candidate in python3.13 python3.12 python3.11 python3.10 python3.9 python3 python; do
@@ -196,7 +280,12 @@ log_info "[4/6] Vérification et installation dépendances..."
 # Test rapide des packages critiques
 echo "Test des dépendances critiques..."
 echo "Test des dependances critiques..." >> "$SESSION_LOG"
-if ! "$VENV_PYTHON" -c "import PySide6, torch, transformers, loguru, pypdf, sqlmodel, docx, psutil, lmformatenforcer; print('Toutes les dependances sont presentes')" &>/dev/null; then
+DEPS_OUT="$(mktemp)"
+DEPS_ERR="$(mktemp)"
+if ! run_check_with_spinner "Dependances critiques" "$DEPS_OUT" "$DEPS_ERR" 20 "$VENV_PYTHON" scripts/check_critical_deps.py; then
+    cat "$DEPS_OUT" >> "$SESSION_LOG" 2>/dev/null || true
+    cat "$DEPS_ERR" >> "$SESSION_LOG" 2>/dev/null || true
+    rm -f "$DEPS_OUT" "$DEPS_ERR"
     echo
     echo "==============================================="
     echo "  INSTALLATION AUTOMATIQUE DES DÉPENDANCES"
@@ -247,6 +336,9 @@ PY
         exit 1
     fi
 else
+    cat "$DEPS_OUT" >> "$SESSION_LOG" 2>/dev/null || true
+    cat "$DEPS_ERR" >> "$SESSION_LOG" 2>/dev/null || true
+    rm -f "$DEPS_OUT" "$DEPS_ERR"
     echo "[SUCCESS] Toutes les dependances sont presentes" >> "$SESSION_LOG"
     log_success "Toutes les dépendances sont présentes"
 fi
@@ -254,14 +346,28 @@ fi
 # Verification CUDA PyTorch
 echo "[CHECK] Verification CUDA PyTorch..." >> "$SESSION_LOG"
 log_info "[CHECK] Verification CUDA PyTorch..."
-if "$VENV_PYTHON" -c "import torch, sys; print('torch', torch.__version__, 'cuda_available', torch.cuda.is_available(), 'cuda', torch.version.cuda); sys.exit(0 if torch.cuda.is_available() else 2)"; then
+CUDA_OUT="$(mktemp)"
+CUDA_ERR="$(mktemp)"
+if run_check_with_spinner "CUDA PyTorch" "$CUDA_OUT" "$CUDA_ERR" 12 "$VENV_PYTHON" scripts/check_cuda_runtime.py; then
+    CUDA_STATUS=0
+else
+    CUDA_STATUS=$?
+fi
+cat "$CUDA_OUT" >> "$SESSION_LOG" 2>/dev/null || true
+cat "$CUDA_ERR" >> "$SESSION_LOG" 2>/dev/null || true
+rm -f "$CUDA_OUT" "$CUDA_ERR"
+if [ "$CUDA_STATUS" -eq 0 ]; then
     echo "[SUCCESS] CUDA detected by PyTorch" >> "$SESSION_LOG"
     log_success "CUDA detected by PyTorch"
 else
-    CUDA_STATUS=$?
     if [ "$CUDA_STATUS" -eq 2 ]; then
         echo "[WARN] CUDA not detected by PyTorch (CPU mode)." >> "$SESSION_LOG"
         log_warning "CUDA not detected by PyTorch (CPU mode)."
+    elif [ "$CUDA_STATUS" -eq 3 ]; then
+        echo "[WARN] PyTorch non installe dans cet environnement." >> "$SESSION_LOG"
+        echo "[INFO] Pour activer l'IA locale (LLM), lancez: installation_cvmatch_ai_linux.sh" >> "$SESSION_LOG"
+        log_warning "PyTorch non installe dans cet environnement."
+        log_info "Pour activer l'IA locale (LLM), lancez: installation_cvmatch_ai_linux.sh"
     else
         echo "[WARN] PyTorch CUDA check failed." >> "$SESSION_LOG"
         log_warning "PyTorch CUDA check failed."
@@ -279,7 +385,10 @@ fi
 
 AI_OK=0
 AI_HAVE_LLM=1
-if "$VENV_PYTHON" scripts/check_ai_models.py "${AI_CHECK_ARGS[@]}" >/dev/null 2>&1; then
+AI_STATUS=0
+AI_OUT="$(mktemp)"
+AI_ERR="$(mktemp)"
+if run_check_with_spinner "Modeles IA" "$AI_OUT" "$AI_ERR" 15 "$VENV_PYTHON" scripts/check_ai_models.py "${AI_CHECK_ARGS[@]}"; then
     AI_OK=1
 else
     AI_STATUS=$?
@@ -300,6 +409,9 @@ else
         fi
     fi
 fi
+cat "$AI_OUT" >> "$SESSION_LOG" 2>/dev/null || true
+cat "$AI_ERR" >> "$SESSION_LOG" 2>/dev/null || true
+rm -f "$AI_OUT" "$AI_ERR"
 
 if [ "$AI_OK" -eq 1 ]; then
     if [ "$AI_HAVE_LLM" -eq 1 ]; then
@@ -310,7 +422,26 @@ if [ "$AI_OK" -eq 1 ]; then
         log_warning "Modeles IA de base detectes (mode: $AI_MODE) - LLM manquant."
     fi
 else
-    if [ "${AI_STATUS:-1}" -eq 2 ]; then
+    if [ "${AI_STATUS:-1}" -eq 3 ]; then
+        echo "[WARN] Runtime IA incomplet (torch/transformers/huggingface_hub manquants)." >> "$SESSION_LOG"
+        log_warning "Runtime IA incomplet (torch/transformers/huggingface_hub manquants)."
+        read -r -p "Installer les dependances IA maintenant ? (O/n): " RUN_AI_INSTALL
+        if [ -z "$RUN_AI_INSTALL" ] || [[ "$RUN_AI_INSTALL" =~ ^[OoYy]$ ]]; then
+            if [ -f "installation_cvmatch_ai_linux.sh" ]; then
+                if [ -x "installation_cvmatch_ai_linux.sh" ]; then
+                    ./installation_cvmatch_ai_linux.sh || log_warning "Installation dependances IA echouee."
+                else
+                    bash installation_cvmatch_ai_linux.sh || log_warning "Installation dependances IA echouee."
+                fi
+            else
+                echo "[WARN] installation_cvmatch_ai_linux.sh introuvable." >> "$SESSION_LOG"
+                log_warning "installation_cvmatch_ai_linux.sh introuvable."
+            fi
+        else
+            echo "[INFO] Installation dependances IA ignoree." >> "$SESSION_LOG"
+            log_info "Installation dependances IA ignoree."
+        fi
+    elif [ "${AI_STATUS:-1}" -eq 2 ]; then
         echo "[WARN] Modeles IA manquants. Installation optionnelle." >> "$SESSION_LOG"
         log_warning "Modeles IA manquants. Installation optionnelle."
         read -r -p "Installer les modeles IA maintenant ? (O/n): " RUN_AI_INSTALL

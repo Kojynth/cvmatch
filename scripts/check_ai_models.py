@@ -21,8 +21,6 @@ LITE_MODELS = [
 
 DEFAULT_LLM_MODELS = [
     "Qwen/Qwen2.5-7B-Instruct",
-    "mistralai/Mistral-7B-Instruct-v0.3",
-    "Qwen/Qwen2.5-0.5B-Instruct",
 ]
 
 MODE_CHOICES = ("full", "lite", "llm-only", "base-only")
@@ -82,6 +80,17 @@ def _resolve_llm_models(args: argparse.Namespace) -> List[str]:
     return list(DEFAULT_LLM_MODELS)
 
 
+def _check_llm_runtime_dependencies() -> List[str]:
+    missing: List[str] = []
+    deps = ("torch", "transformers", "huggingface_hub")
+    for dep in deps:
+        try:
+            __import__(dep)
+        except Exception:
+            missing.append(dep)
+    return missing
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check required AI model caches.")
     parser.add_argument(
@@ -93,7 +102,7 @@ def main() -> int:
     parser.add_argument(
         "--include-llm",
         action="store_true",
-        help="Require a lightweight LLM cache for structured extraction.",
+        help="Require an LLM cache for structured extraction.",
     )
     parser.add_argument(
         "--llm-model",
@@ -129,6 +138,13 @@ def main() -> int:
             missing.append(model_id)
 
     if include_llm:
+        runtime_missing = _check_llm_runtime_dependencies()
+        if runtime_missing:
+            print("RUNTIME_MISSING")
+            for dep in runtime_missing:
+                print(dep)
+            return 3
+
         llm_found = False
         for model_id in llm_models:
             model_dir = f"models--{model_id.replace('/', '--')}"

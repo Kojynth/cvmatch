@@ -44,6 +44,101 @@ detect_python() {
     return 1
 }
 
+drain_stream_lines() {
+    local path="$1"
+    local prefix="$2"
+    local seen_var="$3"
+    local seen="${!seen_var:-0}"
+
+    if [[ ! -f "$path" ]]; then
+        return 0
+    fi
+
+    local count
+    count="$(wc -l < "$path" 2>/dev/null | tr -d '[:space:]')"
+    if [[ -z "$count" ]]; then
+        count=0
+    fi
+
+    if (( count <= seen )); then
+        return 0
+    fi
+
+    echo ""
+    local line_num
+    local line
+    for ((line_num = seen + 1; line_num <= count; line_num++)); do
+        line="$(sed -n "${line_num}p" "$path")"
+        if [[ -n "${line//[[:space:]]/}" ]]; then
+            echo "[$prefix] $line"
+        fi
+    done
+
+    printf -v "$seen_var" '%s' "$count"
+}
+
+run_with_spinner() {
+    local display_name="$1"
+    local soft_timeout_sec="$2"
+    shift 2
+    local cmd=( "$@" )
+
+    local stdout_path
+    local stderr_path
+    stdout_path="$(mktemp)"
+    stderr_path="$(mktemp)"
+    : > "$stdout_path"
+    : > "$stderr_path"
+
+    "${cmd[@]}" >"$stdout_path" 2>"$stderr_path" &
+    local pid=$!
+    local start_ts
+    start_ts="$(date +%s)"
+    local spinner='|/-\'
+    local idx=0
+    local soft_notified=0
+    local heartbeat_sec=15
+    local next_heartbeat=0
+    local out_seen=0
+    local err_seen=0
+
+    while kill -0 "$pid" 2>/dev/null; do
+        drain_stream_lines "$stdout_path" "$display_name" out_seen
+        drain_stream_lines "$stderr_path" "${display_name}/ERR" err_seen
+
+        local elapsed=$(( $(date +%s) - start_ts ))
+        local glyph="${spinner:idx%4:1}"
+        idx=$((idx + 1))
+        printf '\r[WAIT] %s %s %ss ' "$display_name" "$glyph" "$elapsed"
+        sleep 0.2
+
+        if (( soft_notified == 0 && elapsed >= soft_timeout_sec )); then
+            echo ""
+            echo "[INFO] ${display_name}: still running (${elapsed}s), continuing..."
+            soft_notified=1
+            next_heartbeat=$((elapsed + heartbeat_sec))
+        elif (( soft_notified == 1 && elapsed >= next_heartbeat )); then
+            echo ""
+            echo "[INFO] ${display_name}: still running (${elapsed}s), continuing..."
+            next_heartbeat=$((elapsed + heartbeat_sec))
+        fi
+    done
+
+    set +e
+    wait "$pid"
+    local rc=$?
+    set -e
+
+    drain_stream_lines "$stdout_path" "$display_name" out_seen
+    drain_stream_lines "$stderr_path" "${display_name}/ERR" err_seen
+
+    local total=$(( $(date +%s) - start_ts ))
+    printf '\r[DONE] %s in %ss.                        \n' "$display_name" "$total"
+
+    rm -f "$stdout_path" "$stderr_path"
+    return "$rc"
+}
+
 # VÃ©rification Python
 PYTHON_BIN=""
 if [[ -n "${CVMATCH_PYTHON:-}" ]]; then
@@ -96,7 +191,7 @@ if [[ -d "$VENV_DIR" ]]; then
     fi
     rm -rf "$VENV_DIR"
 fi
-"$PYTHON_BIN" -m venv "$VENV_DIR"
+run_with_spinner "Create virtualenv" 180 "$PYTHON_BIN" -m venv "$VENV_DIR"
 
 # Activation environnement
 source "$VENV_DIR/bin/activate" || {
@@ -106,7 +201,8 @@ source "$VENV_DIR/bin/activate" || {
 
 # Mise a jour pip/setuptools/wheel (evite erreurs de build)
 echo "Mise a jour pip/setuptools/wheel..."
-"$VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel
+run_with_spinner "Upgrade pip/setuptools/wheel" 240 \
+    "$VENV_DIR/bin/python" -m pip install --progress-bar off -v --upgrade pip setuptools wheel
 
 # Détection GPU pour PyTorch
 TORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
@@ -117,10 +213,13 @@ if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
 fi
 
 echo "Installation PyTorch ($TORCH_VARIANT)..."
-"$VENV_DIR/bin/python" -m pip install --upgrade --force-reinstall torch torchvision torchaudio --index-url "$TORCH_INDEX_URL"
+run_with_spinner "Install PyTorch ($TORCH_VARIANT)" 900 \
+    "$VENV_DIR/bin/python" -m pip install --progress-bar off -v --upgrade --force-reinstall torch torchvision torchaudio --index-url "$TORCH_INDEX_URL"
 
-"$VENV_DIR/bin/python" -m pip install --upgrade huggingface_hub transformers protobuf sentencepiece
-"$VENV_DIR/bin/python" -m pip install --upgrade lm-format-enforcer
+run_with_spinner "Install HF/Transformers deps" 300 \
+    "$VENV_DIR/bin/python" -m pip install --progress-bar off -v --upgrade huggingface_hub transformers protobuf sentencepiece
+run_with_spinner "Install lm-format-enforcer" 120 \
+    "$VENV_DIR/bin/python" -m pip install --progress-bar off -v --upgrade lm-format-enforcer
 
 # Installation dépendances
 echo "Installation dépendances..."
@@ -154,14 +253,16 @@ if ! command -v nvcc >/dev/null 2>&1; then
     grep -v -E "^(flash-attn|vllm|xformers|torch-tensorrt|onnxruntime-gpu|auto-gptq|exllamav2)[[:space:]]*([<=>].*)?$" "$REQ_TARGET" > "$TMP_REQ"
     REQ_TO_USE="$TMP_REQ"
 fi
-"$VENV_DIR/bin/pip" install --no-build-isolation "${PIP_ARGS[@]}" -r "$REQ_TO_USE"
+run_with_spinner "Install Linux requirements" 1800 \
+    "$VENV_DIR/bin/pip" install --progress-bar off -v --no-build-isolation "${PIP_ARGS[@]}" -r "$REQ_TO_USE"
 
 echo "Verification LM Format Enforcer..."
 if "$VENV_DIR/bin/python" -c "import lmformatenforcer; print('lmformatenforcer OK')"; then
     :
 else
     echo "[WARN] lmformatenforcer non detecte apres install requirements - nouvelle tentative."
-    "$VENV_DIR/bin/python" -m pip install --upgrade lm-format-enforcer
+    run_with_spinner "Reinstall lm-format-enforcer" 120 \
+        "$VENV_DIR/bin/python" -m pip install --progress-bar off -v --upgrade lm-format-enforcer
 fi
 
 echo
@@ -183,11 +284,27 @@ AI_CHECK_ARGS=(--include-llm)
 if [ -n "${CVMATCH_AI_MODE:-}" ]; then
     AI_CHECK_ARGS+=(--mode "$CVMATCH_AI_MODE")
 fi
-if "$VENV_DIR/bin/python" scripts/check_ai_models.py "${AI_CHECK_ARGS[@]}"; then
+if run_with_spinner "Check AI models" 120 "$VENV_DIR/bin/python" scripts/check_ai_models.py "${AI_CHECK_ARGS[@]}"; then
     echo "Modeles IA detectes."
 else
     AI_STATUS=$?
-    if [ "$AI_STATUS" -eq 2 ]; then
+    if [ "$AI_STATUS" -eq 3 ]; then
+        echo "Runtime IA incomplet (torch/transformers/huggingface_hub manquants)."
+        read -r -p "Installer les dependances IA maintenant ? (O/n): " INSTALL_AI_RUNTIME
+        if [ -z "$INSTALL_AI_RUNTIME" ] || [[ "$INSTALL_AI_RUNTIME" =~ ^[OoYy]$ ]]; then
+            if [ -f "./installation_cvmatch_ai_linux.sh" ]; then
+                if [ -x "./installation_cvmatch_ai_linux.sh" ]; then
+                    ./installation_cvmatch_ai_linux.sh || echo "[WARN] Installation dependances IA echouee."
+                else
+                    bash ./installation_cvmatch_ai_linux.sh || echo "[WARN] Installation dependances IA echouee."
+                fi
+            else
+                echo "[WARN] installation_cvmatch_ai_linux.sh introuvable."
+            fi
+        else
+            echo "Installation dependances IA ignoree."
+        fi
+    elif [ "$AI_STATUS" -eq 2 ]; then
         echo "Modeles IA manquants. Installation optionnelle."
         read -r -p "Installer les modeles IA maintenant ? (O/n): " INSTALL_AI
         if [ -z "$INSTALL_AI" ] || [[ "$INSTALL_AI" =~ ^[OoYy]$ ]]; then

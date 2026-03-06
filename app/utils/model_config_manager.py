@@ -79,12 +79,11 @@ class ModelConfigManager:
 
                     loaded_model_id = data.get('model_id', model_manager.recommended_model)
 
-                    # Revalidation: vérifier que le modèle est compatible avec le hardware actuel
-                    allowed_ids = model_manager.get_dropdown_model_ids()
-                    if loaded_model_id not in model_manager.available_models or loaded_model_id not in allowed_ids:
+                    # Revalidation: vérifier que le modèle est compatible avec le hardware actuel.
+                    # Ne pas imposer la liste dropdown ici: certains profils (ex: 0.5B)
+                    # peuvent être masqués dans l'UI mais valides pour le runtime.
+                    if loaded_model_id not in model_manager.available_models:
                         recommended = model_manager.recommended_model
-                        if recommended not in allowed_ids and allowed_ids:
-                            recommended = allowed_ids[0]
                         logger.warning(
                             f"Modèle persisté '{loaded_model_id}' incompatible avec hardware actuel, "
                             f"basculement vers '{recommended}'"
@@ -217,8 +216,19 @@ class ModelConfigManager:
     
     def update_model(self, model_id: str) -> bool:
         """Met à jour le modèle sélectionné."""
+        model_id = str(model_id or "").strip()
+        if not model_id:
+            logger.error("Modèle vide")
+            return False
+
         allowed_ids = model_manager.get_dropdown_model_ids()
-        if model_id not in allowed_ids and allowed_ids:
+        available_ids = set(getattr(model_manager, "available_models", []) or [])
+        in_dropdown = model_id in allowed_ids
+        in_available = model_id in available_ids
+
+        if not in_dropdown and in_available:
+            logger.info("Modele %s hors dropdown mais compatible: autorise.", model_id)
+        elif not in_dropdown and allowed_ids:
             logger.warning(f"Modele non autorise: {model_id} -> {allowed_ids[0]}")
             model_id = allowed_ids[0]
         model_info = model_manager.get_model_info(model_id)

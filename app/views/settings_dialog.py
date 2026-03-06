@@ -5,6 +5,7 @@ Settings Dialog
 Interface de configuration des paramètres utilisateur.
 """
 
+import os
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -452,6 +453,14 @@ class AIModelTab(QWidget):
         gen_layout.addWidget(QLabel("Profil VRAM:"))
         gen_layout.addWidget(self.vram_mode_combo)
 
+        self.runtime_policy_label = QLabel()
+        self.runtime_policy_label.setWordWrap(True)
+        self.runtime_policy_label.setStyleSheet(
+            "color: #1f2937; background: #f3f4f6; border: 1px solid #d1d5db; "
+            "border-radius: 6px; padding: 6px; font-size: 10px;"
+        )
+        gen_layout.addWidget(self.runtime_policy_label)
+
         self.chunked_generation_group = QButtonGroup(self)
         self.chunked_generation_auto = QRadioButton("Auto (recommande)")
         self.chunked_generation_on = QRadioButton("Force ON")
@@ -707,6 +716,7 @@ class AIModelTab(QWidget):
             self._set_unload_between_stages(custom.get("unload_between_stages"))
             self._set_subprocess_stages(custom.get("subprocess_stages"))
             self._set_skip_critic_low_vram(custom.get("skip_critic_in_low_vram"))
+            self._refresh_runtime_policy()
 
             # Désactiver les optimisations non disponibles sur Windows
             import platform
@@ -725,6 +735,7 @@ class AIModelTab(QWidget):
 
         except ImportError as e:
             logger.warning(f"Configuration technique non disponible: {e}")
+            self._refresh_runtime_policy()
 
     def _set_memory_limits(self, gpu_percent: int, cpu_percent: int) -> None:
         """Met a jour les controles max_memory sans declencher de sauvegarde."""
@@ -804,6 +815,95 @@ class AIModelTab(QWidget):
         finally:
             self._updating_subprocess_stages = False
 
+    def _compute_runtime_policy(self) -> tuple[str, str]:
+        try:
+            from ..utils.model_manager import model_manager
+        except Exception:
+            return ("Unknown", "Detection hardware indisponible.")
+
+        gpu_info = getattr(model_manager, "gpu_info", {}) or {}
+        total_vram = 0.0
+        try:
+            total_vram = float(
+                gpu_info.get("vram_gb")
+                or gpu_info.get("total_memory_gb")
+                or 0.0
+            )
+        except Exception:
+            total_vram = 0.0
+
+        ram_available_gb = 0.0
+        swap_available_gb = 0.0
+        commit_available_gb = 0.0
+        lowram_level = "normal"
+        try:
+            import psutil
+
+            ram_available_gb = float(psutil.virtual_memory().available) / (1024**3)
+            try:
+                swap_available_gb = float(psutil.swap_memory().free) / (1024**3)
+            except Exception:
+                swap_available_gb = 0.0
+
+            if os.name == "nt":
+                try:
+                    import ctypes
+
+                    class MEMORYSTATUSEX(ctypes.Structure):
+                        _fields_ = [
+                            ("dwLength", ctypes.c_ulong),
+                            ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong),
+                            ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong),
+                            ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong),
+                            ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                        ]
+
+                    status = MEMORYSTATUSEX()
+                    status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+                    if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                        commit_available_gb = float(status.ullAvailPageFile) / (1024**3)
+                except Exception:
+                    commit_available_gb = 0.0
+
+                if (commit_available_gb > 0 and commit_available_gb < 2.0) or ram_available_gb < 1.5:
+                    lowram_level = "critical"
+                elif (commit_available_gb > 0 and commit_available_gb <= 6.0) or ram_available_gb < 6.0:
+                    lowram_level = "tight"
+            else:
+                effective_gb = ram_available_gb + swap_available_gb
+                if effective_gb < 2.0 or ram_available_gb < 1.5:
+                    lowram_level = "critical"
+                elif effective_gb <= 6.0 or ram_available_gb < 6.0:
+                    lowram_level = "tight"
+        except Exception:
+            pass
+
+        if lowram_level in {"tight", "critical"}:
+            return (
+                "LowRAM",
+                (
+                    "Mode LowRAM detecte: generation maintenue avec priorite qualite (execution potentiellement lente) "
+                    f"(RAM={ram_available_gb:.1f}GB, commit={commit_available_gb:.1f}GB)."
+                ),
+            )
+        if total_vram > 0 and total_vram <= 8.0:
+            return ("LowVRAM", f"Profil automatique GPU faible VRAM ({total_vram:.1f}GB).")
+        if total_vram > 8.0 and total_vram <= 12.0:
+            return ("MedVRAM", f"Profil automatique VRAM moyenne ({total_vram:.1f}GB).")
+        if total_vram > 12.0:
+            return ("HighVRAM", f"Profil automatique VRAM confortable ({total_vram:.1f}GB).")
+        return ("CPU/Unknown", f"Profil automatique sans GPU (RAM={ram_available_gb:.1f}GB).")
+
+    def _refresh_runtime_policy(self) -> None:
+        label, details = self._compute_runtime_policy()
+        self.runtime_policy_label.setText(
+            f"Profil automatique detecte: {label}\n{details}"
+        )
+
     def on_memory_limits_changed(self) -> None:
         """Sauvegarde les allocations max_memory configurees."""
         if self._updating_memory_limits:
@@ -853,6 +953,7 @@ class AIModelTab(QWidget):
             )
         except Exception as e:
             logger.error(f"Erreur mise a jour vram_mode: {e}")
+        self._refresh_runtime_policy()
 
     def on_skip_critic_low_vram_changed(self, _state=None) -> None:
         """Sauvegarde l'option de desactivation critic en low VRAM."""
@@ -949,6 +1050,8 @@ class AIModelTab(QWidget):
                 status_icons = {
                     "recommended": "🏆",
                     "available": "✅",
+                    "vram_insufficient": "⚠️",
+                    "ram_insufficient": "⚠️",
                     "gpu_required": "🔒",
                     "cpu_fallback": "💻",
                     "incompatible": "❌",
@@ -1000,6 +1103,11 @@ class AIModelTab(QWidget):
                 # Ajouter des conseils selon le statut
                 if model_info["model_status"] == "recommended":
                     info_text += "<br><br>💡 <b style='color: #2d5f3f'>RECOMMANDÉ pour votre configuration</b>"
+                elif model_info["model_status"] == "vram_insufficient":
+                    info_text += (
+                        "<br><br>⚠️ <b style='color: #dc2626'>Pas assez de VRAM, "
+                        "ce modele risque d'échouer au chargement.</b>"
+                    )
                 elif model_info["model_status"] == "gpu_required":
                     info_text += "<br><br>⚠️ <b style='color: #dc2626'>Nécessite CUDA/GPU pour fonctionner</b>"
                 elif model_info["model_status"] == "cpu_fallback":
@@ -1148,6 +1256,7 @@ class AIModelTab(QWidget):
                 self._set_unload_between_stages(custom.get("unload_between_stages"))
                 self._set_subprocess_stages(custom.get("subprocess_stages"))
                 self._set_skip_critic_low_vram(custom.get("skip_critic_in_low_vram"))
+                self._refresh_runtime_policy()
             except Exception as e:
                 logger.warning(f"Erreur synchro max_memory: {e}")
 

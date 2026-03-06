@@ -158,10 +158,10 @@ class SectionStructureAnalyzer:
             if hasattr(section, "bbox") and section.bbox:
                 bboxes.append(
                     (
-                        section.bbox.x,
-                        section.bbox.y,
-                        section.bbox.width,
-                        section.bbox.height,
+                        section.bbox.x0,
+                        section.bbox.y0,
+                        section.bbox.x1 - section.bbox.x0,  # width
+                        section.bbox.y1 - section.bbox.y0,  # height
                     )
                 )
 
@@ -494,11 +494,22 @@ class SectionStructureAnalyzer:
 
     def _is_valid_section(self, section: CVSection) -> bool:
         """Check if section is valid and should be kept."""
-        if not hasattr(section, "text") or not section.text:
+        # CVSection uses 'content' (List[Dict]) not 'text'
+        # Fall back to 'text' for backwards compatibility with legacy objects
+        if hasattr(section, "text") and section.text:
+            text_repr = section.text
+        elif hasattr(section, "content") and section.content:
+            # Concatenate text from content blocks for length check
+            text_repr = " ".join(
+                str(block.get("text", "")) for block in section.content if isinstance(block, dict)
+            )
+        elif hasattr(section, "title") and section.title:
+            text_repr = section.title
+        else:
             return False
 
         # Minimum text length
-        if len(section.text.strip()) < 10:
+        if len(text_repr.strip()) < 3:
             return False
 
         # Don't remove quarantined sections (they're still valid, just quarantined)
@@ -528,11 +539,12 @@ class SectionStructureAnalyzer:
 
     def _bboxes_overlap(self, bbox1: BoundingBox, bbox2: BoundingBox) -> bool:
         """Check if two bounding boxes overlap."""
+        # BoundingBox uses x0,y0 (top-left) and x1,y1 (bottom-right)
         return not (
-            bbox1.x + bbox1.width < bbox2.x
-            or bbox2.x + bbox2.width < bbox1.x
-            or bbox1.y + bbox1.height < bbox2.y
-            or bbox2.y + bbox2.height < bbox1.y
+            bbox1.x1 < bbox2.x0
+            or bbox2.x1 < bbox1.x0
+            or bbox1.y1 < bbox2.y0
+            or bbox2.y1 < bbox1.y0
         )
 
     def _assign_column(self, x_pos: float, columns: List[Tuple[float, float]]) -> int:

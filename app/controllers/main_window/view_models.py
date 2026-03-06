@@ -68,6 +68,7 @@ class JobApplicationSummary:
     final_cv_html: Optional[str] = None
     final_cover_letter: Optional[str] = None
     cv_json_final: Optional[Dict[str, Any]] = None
+    offer_analysis: Optional[Dict[str, Any]] = None
     match_score: Optional[float] = None
 
 

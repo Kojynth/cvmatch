@@ -6,7 +6,7 @@ import argparse
 import os
 import sys
 import time
-from typing import List
+from typing import List, Tuple
 
 if os.name == "nt":
     # Avoid symlink privilege errors on Windows by forcing file copies.
@@ -26,8 +26,9 @@ LITE_MODELS = [
 ]
 
 DEFAULT_LLM_MODELS = [
-    "Qwen/Qwen2.5-0.5B-Instruct",
+    "Qwen/Qwen2.5-7B-Instruct",
 ]
+ALLOWED_LLM_PREFIXES = ("qwen/", "mistralai/")
 
 MODE_CHOICES = ("full", "lite", "llm-only", "base-only")
 
@@ -75,6 +76,22 @@ def _dedupe_models(models: List[str]) -> List[str]:
     return result
 
 
+def _is_allowed_llm_model(model_id: str) -> bool:
+    lowered = str(model_id or "").strip().lower()
+    return any(lowered.startswith(prefix) for prefix in ALLOWED_LLM_PREFIXES)
+
+
+def _filter_llm_models(models: List[str]) -> Tuple[List[str], List[str]]:
+    allowed: List[str] = []
+    blocked: List[str] = []
+    for model in _dedupe_models(models):
+        if _is_allowed_llm_model(model):
+            allowed.append(model)
+        else:
+            blocked.append(model)
+    return allowed, blocked
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Download the AI models required by CVMatch.")
     default_cache = _resolve_default_cache()
@@ -92,7 +109,7 @@ def main() -> int:
     parser.add_argument(
         "--include-llm",
         action="store_true",
-        help="Download a lightweight LLM for structured extraction.",
+        help="Download the default LLM for structured extraction.",
     )
     parser.add_argument(
         "--llm-model",
@@ -156,6 +173,18 @@ def main() -> int:
             llm_models = args.llm_models
         else:
             llm_models = DEFAULT_LLM_MODELS
+        llm_models, blocked_llm = _filter_llm_models(llm_models)
+        for blocked in blocked_llm:
+            print(
+                f"WARN: Skipping non-approved LLM model '{blocked}' (allowed: Qwen/*, mistralai/*).",
+                file=sys.stderr,
+            )
+        if not llm_models:
+            llm_models = list(DEFAULT_LLM_MODELS)
+            print(
+                "WARN: No approved LLM model requested, falling back to Qwen/Qwen2.5-7B-Instruct.",
+                file=sys.stderr,
+            )
 
     if llm_models:
         print("Including LLM models:")

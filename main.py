@@ -22,7 +22,7 @@ import os
 import warnings
 from pathlib import Path
 from PySide6.QtWidgets import QApplication, QMessageBox
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, qInstallMessageHandler
 from PySide6.QtGui import QIcon
 try:
     from app.logging.safe_logger import get_safe_logger
@@ -569,6 +569,110 @@ def run_development_syntax_validation():
         return True
 
 
+def _parse_env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+def _get_system_ram_gb() -> float:
+    try:
+        import psutil  # type: ignore
+
+        return float(psutil.virtual_memory().total) / (1024 ** 3)
+    except Exception:
+        return 0.0
+
+
+_QT_NOISE_FILTER_INSTALLED = False
+
+
+def install_qt_noise_filter() -> None:
+    """Filter noisy non-actionable Qt warnings from stderr."""
+    global _QT_NOISE_FILTER_INSTALLED
+    if _QT_NOISE_FILTER_INSTALLED:
+        return
+
+    def _qt_message_handler(_mode, _context, message):
+        text = str(message or "").strip()
+        lowered = text.lower()
+        if "unknown property cursor" in lowered:
+            return
+        if not text:
+            return
+        try:
+            print(text, file=sys.stderr)
+        except Exception:
+            pass
+
+    try:
+        qInstallMessageHandler(_qt_message_handler)
+        _QT_NOISE_FILTER_INSTALLED = True
+    except Exception:
+        pass
+
+
+def configure_ui_rendering_policy() -> None:
+    """
+    Configure UI rendering to reduce idle VRAM usage and keep more GPU memory
+    available for model loading/generation.
+    """
+    mode = str(os.getenv("CVMATCH_UI_GPU_MODE", "auto") or "auto").strip().lower()
+    if mode not in {"auto", "hardware", "software"}:
+        mode = "auto"
+
+    if mode == "hardware":
+        logger.info("UI rendering policy: hardware (CVMATCH_UI_GPU_MODE=hardware)")
+        return
+
+    force_software = mode == "software"
+    if mode == "auto":
+        vram_mode = str(os.getenv("CVMATCH_VRAM_MODE", "") or "").strip().lower()
+        low_vram_hint = vram_mode in {"low", "med", "low_vram", "med_vram", "lowvram", "medvram"}
+        total_ram_gb = _get_system_ram_gb()
+        low_ram_hint = total_ram_gb > 0 and total_ram_gb <= 16.5
+        force_software = (
+            _parse_env_bool("CVMATCH_UI_SOFTWARE_RENDER", False)
+            or low_vram_hint
+            or low_ram_hint
+        )
+
+    if not force_software:
+        logger.info("UI rendering policy: hardware (auto)")
+        return
+
+    existing_flags = str(os.getenv("QTWEBENGINE_CHROMIUM_FLAGS", "") or "").strip()
+    required_flags = [
+        "--disable-gpu",
+        "--disable-gpu-compositing",
+        "--disable-gpu-rasterization",
+        "--disable-accelerated-2d-canvas",
+        "--disable-features=VizDisplayCompositor",
+        "--log-level=3",
+    ]
+
+    combined_flags = existing_flags
+    for flag in required_flags:
+        if flag not in combined_flags:
+            combined_flags = f"{combined_flags} {flag}".strip()
+
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = combined_flags
+    os.environ.setdefault("QT_OPENGL", "software")
+    os.environ.setdefault("QT_QUICK_BACKEND", "software")
+
+    try:
+        QApplication.setAttribute(Qt.AA_UseSoftwareOpenGL, True)
+    except Exception:
+        pass
+
+    logger.info(
+        "UI rendering policy: software (mode=%s, flags=%s)",
+        mode,
+        combined_flags,
+    )
+
+
 def main():
     """Point d'entrée principal."""
     try:
@@ -580,6 +684,10 @@ def main():
 
         # Vérification simple du démarrage
         print(f"[INFO] Demarrage CVMatch (PID: {os.getpid()})")
+
+        # Réduire l'empreinte VRAM de l'UI pour maximiser la mémoire disponible au LLM.
+        configure_ui_rendering_policy()
+        install_qt_noise_filter()
 
         # Créer l'application
         app = CVMatchApp(sys.argv)

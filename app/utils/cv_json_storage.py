@@ -31,5 +31,5 @@ def save_cv_json_draft(
     filename = f"cv_json_draft_{safe_profile}_{safe_job}_{safe_company}_{timestamp}.json"
     path = folder / filename
     with path.open("w", encoding="utf-8") as handle:
-        json.dump(cv_json, handle, indent=2, ensure_ascii=True)
+        json.dump(cv_json, handle, indent=2, ensure_ascii=False)
     return str(path)

@@ -74,15 +74,33 @@ echo Using Python: %PYTHON_EXE% %PYTHON_ARGS% >> "%INSTALL_LOG%"
 "%PYTHON_EXE%" %PYTHON_ARGS% --version >> "%INSTALL_LOG%" 2>&1
 
 rem Creation environnement virtuel
-echo Creation environnement virtuel...
-echo Creation environnement virtuel... >> "%INSTALL_LOG%"
 set "VENV_DIR=%PROJECT_ROOT%cvmatch_env"
+set "REUSE_VENV="
 if exist "%VENV_DIR%" (
     if /I not "%VENV_DIR%"=="%PROJECT_ROOT%cvmatch_env" goto :unsafe_venv
-    rmdir /s /q "%VENV_DIR%"
+    if /I "%CVMATCH_FORCE_RECREATE_VENV%"=="1" (
+        echo [INFO] Reinitialisation forcee du venv demandee.
+        echo [INFO] Reinitialisation forcee du venv demandee. >> "%INSTALL_LOG%"
+        rmdir /s /q "%VENV_DIR%"
+    ) else (
+        if exist "%VENV_DIR%\Scripts\python.exe" if exist "%VENV_DIR%\Scripts\pip.exe" (
+            set "REUSE_VENV=1"
+        ) else (
+            echo [WARN] Venv incomplet detecte, recreation...
+            echo [WARN] Venv incomplet detecte, recreation... >> "%INSTALL_LOG%"
+            rmdir /s /q "%VENV_DIR%"
+        )
+    )
 )
-"%PYTHON_EXE%" %PYTHON_ARGS% -m venv "%VENV_DIR%" >> "%INSTALL_LOG%" 2>&1
-if errorlevel 1 goto :venv_failed
+if defined REUSE_VENV (
+    echo Reutilisation environnement virtuel existant: "%VENV_DIR%"
+    echo Reutilisation environnement virtuel existant: "%VENV_DIR%" >> "%INSTALL_LOG%"
+) else (
+    echo Creation environnement virtuel...
+    echo Creation environnement virtuel... >> "%INSTALL_LOG%"
+    call :RUN_WITH_SPINNER "Create virtualenv" "30" "%PYTHON_EXE%" %PYTHON_ARGS% -m venv "%VENV_DIR%"
+    if errorlevel 1 goto :venv_failed
+)
 
 rem Activation environnement
 call "%VENV_DIR%\Scripts\activate.bat"
@@ -105,7 +123,7 @@ if exist "%REQ_LOCK%" (
 )
 echo Installation dependances minimales...
 echo Installation dependances minimales... >> "%INSTALL_LOG%"
-"%VENV_DIR%\Scripts\pip.exe" install %REQ_HASH_ARGS% -r "%REQ_TO_USE%" >> "%INSTALL_LOG%" 2>&1
+call :RUN_WITH_SPINNER "Install minimal dependencies" "30" "%VENV_DIR%\Scripts\python.exe" -u -m pip install --disable-pip-version-check --progress-bar off -v %REQ_HASH_ARGS% -r "%REQ_TO_USE%"
 if errorlevel 1 goto :pip_failed
 
 echo Installation minimale terminee.
@@ -151,6 +169,56 @@ if errorlevel 1 (
 set "PYTHON_EXE=%CANDIDATE%"
 set "PYTHON_ARGS="
 exit /b 0
+
+:RUN_WITH_SPINNER
+setlocal EnableExtensions EnableDelayedExpansion
+set "SP_NAME=%~1"
+set "SP_SOFT_TIMEOUT=%~2"
+set "SP_EXE=%~3"
+if "%SP_SOFT_TIMEOUT%"=="" set "SP_SOFT_TIMEOUT=20"
+set "SP_CMD="
+:RUN_WITH_SPINNER_COLLECT_ARGS
+if "%~4"=="" goto RUN_WITH_SPINNER_ARGS_DONE
+if defined SP_CMD (
+    set "SP_CMD=!SP_CMD! %4"
+) else (
+    set "SP_CMD=%4"
+)
+shift
+goto RUN_WITH_SPINNER_COLLECT_ARGS
+:RUN_WITH_SPINNER_ARGS_DONE
+
+if not exist "scripts\run_check_with_spinner.ps1" (
+    echo [WARN] Spinner script missing, running without animation: %SP_NAME%
+    echo [WARN] Spinner script missing, running without animation: %SP_NAME% >> "%INSTALL_LOG%"
+    "%SP_EXE%" !SP_CMD! >> "%INSTALL_LOG%" 2>&1
+    set "SP_RC=%ERRORLEVEL%"
+    endlocal & exit /b %SP_RC%
+)
+
+set "SP_OUT=%TEMP%\cvmatch_installer_spinner_%RANDOM%_%RANDOM%.out"
+set "SP_ERR=%TEMP%\cvmatch_installer_spinner_%RANDOM%_%RANDOM%.err"
+set "CVMATCH_CHECK_PYTHON=%SP_EXE%"
+set "CVMATCH_CHECK_CMD=!SP_CMD!"
+set "CVMATCH_CHECK_NAME=%SP_NAME%"
+set "CVMATCH_CHECK_WD=%PROJECT_ROOT%"
+set "CVMATCH_CHECK_OUT=%SP_OUT%"
+set "CVMATCH_CHECK_ERR=%SP_ERR%"
+set "CVMATCH_CHECK_SOFT_TIMEOUT=%SP_SOFT_TIMEOUT%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\run_check_with_spinner.ps1"
+set "SP_RC=%ERRORLEVEL%"
+set "CVMATCH_CHECK_PYTHON="
+set "CVMATCH_CHECK_CMD="
+set "CVMATCH_CHECK_NAME="
+set "CVMATCH_CHECK_WD="
+set "CVMATCH_CHECK_OUT="
+set "CVMATCH_CHECK_ERR="
+set "CVMATCH_CHECK_SOFT_TIMEOUT="
+if exist "%SP_OUT%" type "%SP_OUT%" >> "%INSTALL_LOG%"
+if exist "%SP_ERR%" type "%SP_ERR%" >> "%INSTALL_LOG%"
+if exist "%SP_OUT%" del "%SP_OUT%" >nul 2>&1
+if exist "%SP_ERR%" del "%SP_ERR%" >nul 2>&1
+endlocal & exit /b %SP_RC%
 
 :unsafe_project_root
 echo ERREUR: Repertoire projet non securise (racine du disque).

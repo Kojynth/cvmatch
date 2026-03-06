@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional
 
 from ...models.database import get_session
 from ...models.job_application import ApplicationStatus, JobApplication
 from ...models.user_profile import UserProfile
-from ...workers.llm_worker import CVGenerationWorker, CoverLetterGenerationWorker
 from ...workers.worker_data import ProfileWorkerData
 from .base import Coordinator, SimpleCoordinator
+
+if TYPE_CHECKING:
+    from ...workers.llm_worker import CVGenerationWorker, CoverLetterGenerationWorker
 
 
 class JobApplicationCoordinator(SimpleCoordinator, Coordinator):
@@ -64,19 +66,34 @@ class JobApplicationCoordinator(SimpleCoordinator, Coordinator):
                 return ProfileWorkerData.from_profile(profile)
             return ProfileWorkerData.from_profile(refreshed)
 
-    def create_cv_worker(self, *, offer_data: Dict[str, Any], template: str) -> CVGenerationWorker:
+    def create_cv_worker(
+        self,
+        *,
+        offer_data: Dict[str, Any],
+        template: str,
+        application_id: Optional[int] = None,
+        user_instruction: str = "",
+        cv_only_regen: bool = False,
+        previous_generation_audit: Optional[Dict[str, Any]] = None,
+    ) -> CVGenerationWorker:
         """Instantiate a CV generation worker and track it.
 
         Note: Extrait les données du profil AVANT de passer au worker
         pour éviter les erreurs SQLAlchemy DetachedInstanceError.
         """
+        from ...workers.llm_worker import CVGenerationWorker
+
         # Extraire les données du profil dans le thread principal (session active)
         profile_data = self._build_profile_data()
 
         worker = CVGenerationWorker(
             profile_data=profile_data,
             offer_data=offer_data,
-            template=template
+            template=template,
+            application_id=application_id,
+            user_instruction=user_instruction,
+            cv_only_regen=cv_only_regen,
+            previous_generation_audit=previous_generation_audit,
         )
         self._active_workers.append(worker)
         return worker
@@ -87,12 +104,16 @@ class JobApplicationCoordinator(SimpleCoordinator, Coordinator):
         offer_data: Dict[str, Any],
         template: str,
         application_id: Optional[int] = None,
+        user_instruction: str = "",
+        previous_generation_audit: Optional[Dict[str, Any]] = None,
     ) -> CoverLetterGenerationWorker:
         """Instantiate a cover letter worker and track it.
 
         Note: Extrait les données du profil AVANT de passer au worker
         pour éviter les erreurs SQLAlchemy DetachedInstanceError.
         """
+        from ...workers.llm_worker import CoverLetterGenerationWorker
+
         # Extraire les données du profil dans le thread principal (session active)
         profile_data = self._build_profile_data()
 
@@ -101,6 +122,8 @@ class JobApplicationCoordinator(SimpleCoordinator, Coordinator):
             offer_data=offer_data,
             template=template,
             application_id=application_id,
+            user_instruction=user_instruction,
+            previous_generation_audit=previous_generation_audit,
         )
         self._active_workers.append(worker)
         return worker

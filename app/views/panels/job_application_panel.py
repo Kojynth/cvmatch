@@ -32,11 +32,26 @@ from ..generation_loading_dialog import GenerationLoadingDialog
 
 logger = get_safe_logger(__name__, cfg=DEFAULT_PII_CONFIG)
 
-try:  # pragma: no cover - optional dependency in some environments
-    from ..template_preview_window import TemplatePreviewWindow
-except ImportError:  # pragma: no cover
-    TemplatePreviewWindow = None  # type: ignore[assignment]
-    logger.warning("Template Preview Window non disponible")
+TemplatePreviewWindow = None  # type: ignore[assignment]
+_TEMPLATE_PREVIEW_IMPORT_ERROR: Exception | None = None
+
+
+def _load_template_preview_window_class():
+    """Lazy-load preview window to avoid QtWebEngine startup overhead."""
+    global TemplatePreviewWindow, _TEMPLATE_PREVIEW_IMPORT_ERROR
+    if TemplatePreviewWindow is not None:
+        return TemplatePreviewWindow
+    if _TEMPLATE_PREVIEW_IMPORT_ERROR is not None:
+        return None
+    try:  # pragma: no cover - optional dependency in some environments
+        from ..template_preview_window import TemplatePreviewWindow as _TemplatePreviewWindow
+
+        TemplatePreviewWindow = _TemplatePreviewWindow
+        return TemplatePreviewWindow
+    except Exception as exc:  # pragma: no cover
+        _TEMPLATE_PREVIEW_IMPORT_ERROR = exc
+        logger.warning(f"Template Preview Window non disponible: {exc}")
+        return None
 
 __all__ = ["JobApplicationPanel"]
 
@@ -62,24 +77,24 @@ class JobApplicationPanel(QWidget):
         layout = QVBoxLayout()
 
         # Titre
-        title = QLabel(f"{get_display_text('📋')} Nouvelle candidature")
+        title = QLabel(f"{get_display_text('📄')} Nouvelle candidature")
         title.setFont(QFont("Arial", 16, QFont.Bold))
         layout.addWidget(title)
 
-        # RecrÃ©er les widgets ici pour Ã©viter l'import circulaire
+        # Recréer les widgets ici pour éviter l'import circulaire
         # Widget d'offre d'emploi
         self.offer_widget = self.create_offer_widget()
         layout.addWidget(self.offer_widget)
 
-        # Widget de gÃ©nÃ©ration
+        # Widget de génération
         self.generation_widget = self.create_generation_widget()
         layout.addWidget(self.generation_widget)
 
-        # Les connexions sont gÃ©rÃ©es dans les mÃ©thodes de crÃ©ation
+        # Les connexions sont gérées dans les méthodes de création
 
         layout.addStretch()
         self.setLayout(layout)
-        # Utilise les couleurs par dÃ©faut du systÃ¨me (pas de setStyleSheet)
+        # Utilise les couleurs par défaut du système (pas de setStyleSheet)
 
     def apply_profile_snapshot(self, snapshot: ProfileSnapshot) -> None:
         """Update derived stats from a profile snapshot."""
@@ -92,11 +107,12 @@ class JobApplicationPanel(QWidget):
             if total_generated is not None
             else getattr(self.profile, "total_cvs_generated", 0)
         )
-        if hasattr(self, "stats_label") and self.stats_label is not None:
-            self.stats_label.setText(f"CV generes : {total_generated}")
+        widget = getattr(self, "generation_widget", None)
+        if widget is not None and hasattr(widget, "stats_label"):
+            widget.stats_label.setText(f"CV générés : {total_generated}")
 
     def create_offer_widget(self):
-        """CrÃ©e le widget d'offre d'emploi."""
+        """Crée le widget d'offre d'emploi."""
         widget = QFrame()
         widget.setFrameStyle(QFrame.Box | QFrame.Raised)
         layout = QVBoxLayout(widget)
@@ -122,7 +138,7 @@ class JobApplicationPanel(QWidget):
         buttons_layout.addStretch()
         layout.addLayout(buttons_layout)
 
-        # Zone de texte pour Ã©dition
+        # Zone de texte pour édition
         text_edit = TextOnlyEdit()
         text_edit.setPlaceholderText("Le texte de l'offre apparaîtra ici...")
         text_edit.setMaximumHeight(150)
@@ -141,14 +157,14 @@ class JobApplicationPanel(QWidget):
 
         layout.addLayout(info_layout)
 
-        # Stocker les rÃ©fÃ©rences
+        # Stocker les références
         widget.drop_area = drop_area
         widget.text_edit = text_edit
         widget.job_title_edit = job_title_edit
         widget.company_edit = company_edit
         widget.offer_data = None
 
-        # Pas besoin de signal ici, on utilise des mÃ©thodes directes
+        # Pas besoin de signal ici, on utilise des méthodes directes
 
         # Connexions
         drop_area.file_dropped.connect(lambda path: self.load_offer_file(widget, path))
@@ -306,6 +322,12 @@ class JobApplicationPanel(QWidget):
         if dialog is None:
             dialog = GenerationLoadingDialog(parent=self)
             widget.generation_dialog = dialog
+        try:
+            dialog.cancel_requested.disconnect()
+        except Exception:
+            pass
+        dialog.cancel_requested.connect(lambda: self._cancel_active_generation(widget))
+        dialog.set_cancel_enabled(True)
         dialog.set_status(initial_status)
         dialog.show()
         dialog.raise_()
@@ -328,8 +350,72 @@ class JobApplicationPanel(QWidget):
             pass
         widget.generation_dialog = None
 
+    def _cancel_active_generation(self, widget) -> None:
+        """Allow users to stop a running generation manually."""
+        worker = getattr(widget, "current_worker", None)
+        worker_kind = "cv"
+        if worker is None:
+            worker = getattr(widget, "current_letter_worker", None)
+            worker_kind = "letter"
+        if worker is None:
+            self._hide_generation_dialog(widget)
+            return
+
+        dialog = getattr(widget, "generation_dialog", None)
+        if dialog is not None:
+            dialog.set_status("Annulation demandee")
+            dialog.set_cancel_enabled(False, "Annulation en cours...")
+
+        for method_name in ("requestInterruption", "cancel", "stop"):
+            if hasattr(worker, method_name):
+                try:
+                    getattr(worker, method_name)()
+                except Exception:
+                    continue
+
+        try:
+            if hasattr(worker, "isRunning") and worker.isRunning():
+                worker.terminate()
+                worker.wait(2000)
+        except Exception as exc:
+            logger.warning(f"Annulation worker impossible ({worker_kind}): {exc}")
+
+        try:
+            if hasattr(worker, "qwen_manager") and hasattr(worker.qwen_manager, "cleanup_memory"):
+                worker.qwen_manager.cleanup_memory()
+        except Exception:
+            pass
+
+        try:
+            self.coordinator.release_worker(worker)
+        except Exception:
+            pass
+
+        if worker_kind == "cv":
+            widget.current_worker = None
+            widget.generate_btn.setEnabled(True)
+            widget.generate_btn.setText("GÃ©nÃ©rer le CV adaptÃ©")
+            if hasattr(widget, "generate_letter_btn") and getattr(widget, "current_letter_worker", None) is None:
+                widget.generate_letter_btn.setEnabled(True)
+                widget.generate_letter_btn.setText("GÃ©nÃ©rer la lettre de motivation")
+        else:
+            widget.current_letter_worker = None
+            widget.generate_letter_btn.setEnabled(True)
+            widget.generate_letter_btn.setText("GÃ©nÃ©rer la lettre de motivation")
+            if getattr(widget, "current_worker", None) is None:
+                widget.generate_btn.setEnabled(True)
+
+        widget.progress_label.hide()
+        widget._preview_regen_in_progress = False
+        self._hide_generation_dialog(widget)
+        show_info(
+            "GÃ©nÃ©ration arrÃªtÃ©e Ã  la demande de l'utilisateur.",
+            title="GÃ©nÃ©ration annulÃ©e",
+            parent=self,
+        )
+
     def browse_offer(self, widget):
-        """Ouvre un dialog pour sÃ©lectionner l'offre."""
+        """Ouvre un dialog pour sélectionner l'offre."""
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Sélectionner l'offre d'emploi",
@@ -448,7 +534,7 @@ class JobApplicationPanel(QWidget):
 
             widget.generate_letter_btn.setEnabled(True)
 
-            widget.generate_letter_btn.setText("Generer la lettre de motivation")
+            widget.generate_letter_btn.setText("Générer la lettre de motivation")
 
         analysis = offer_data.get("analysis", {}) if offer_data else {}
         if analysis.get("sector") == "tech":
@@ -462,7 +548,16 @@ class JobApplicationPanel(QWidget):
             )
         widget.current_template = widget.template_combo.currentText()
 
-    def start_generation(self, widget):
+    def start_generation(
+        self,
+        widget,
+        *,
+        user_instruction: str = "",
+        cv_only_regen: bool = False,
+        from_preview: bool = False,
+        keep_application_id: bool = False,
+        previous_generation_audit: Optional[Dict[str, Any]] = None,
+    ):
         """Launch CV generation through the background worker."""
         if hasattr(self, "offer_widget"):
             self.analyze_offer(self.offer_widget)
@@ -475,32 +570,46 @@ class JobApplicationPanel(QWidget):
             return
         if widget.current_worker is not None:
             show_info(
-                "Une generation est deja en cours.",
+                "Une génération est déjà en cours.",
                 title="Génération en cours",
                 parent=self,
             )
             return
 
-        # Reset cached outputs to avoid reopening stale previews on failure.
-        widget.generated_cv_data = None
-        widget.generated_cover_letter = None
-        widget.generated_result = None
-        widget.generated_application_id = None
-        preview = getattr(self, "template_preview_window", None)
-        if preview is not None:
-            try:
-                preview.close()
-            except Exception:
-                pass
-            self.template_preview_window = None
+        widget._preview_regen_in_progress = bool(from_preview)
+
+        if not cv_only_regen:
+            # Reset cached outputs to avoid reopening stale previews on failure.
+            widget.generated_cv_data = None
+            widget.generated_cover_letter = None
+            widget.generated_result = None
+            widget.generated_application_id = None
+            if not from_preview:
+                preview = getattr(self, "template_preview_window", None)
+                if preview is not None:
+                    try:
+                        preview.close()
+                    except Exception:
+                        pass
+                    self.template_preview_window = None
 
         template = widget.template_combo.currentText()
         widget.current_template = template
 
         offer_payload = dict(widget.offer_data)
+        target_application_id = (
+            getattr(widget, "generated_application_id", None)
+            if (keep_application_id or cv_only_regen)
+            else None
+        )
 
         worker = self.coordinator.create_cv_worker(
-            offer_data=offer_payload, template=template
+            offer_data=offer_payload,
+            template=template,
+            application_id=target_application_id,
+            user_instruction=user_instruction,
+            cv_only_regen=cv_only_regen,
+            previous_generation_audit=previous_generation_audit,
         )
         widget.current_worker = worker
 
@@ -524,10 +633,17 @@ class JobApplicationPanel(QWidget):
         widget.progress_label.setText("Initialisation de la génération...")
         widget.progress_label.show()
 
-        self._show_generation_dialog(widget, "Fichier en cours de génération…")
+        self._show_generation_dialog(widget, "Fichier en cours de génération...")
         worker.start()
 
-    def start_cover_letter_generation(self, widget):
+    def start_cover_letter_generation(
+        self,
+        widget,
+        *,
+        user_instruction: str = "",
+        from_preview: bool = False,
+        previous_generation_audit: Optional[Dict[str, Any]] = None,
+    ):
         """Launch cover-letter generation through the background worker."""
         if hasattr(self, "offer_widget"):
             self.analyze_offer(self.offer_widget)
@@ -547,12 +663,13 @@ class JobApplicationPanel(QWidget):
             return
         if getattr(widget, "current_letter_worker", None) is not None:
             show_info(
-                "Une génération de lettre est déjà en cours.",
+                "Une génération de lettre de motivation est déjà en cours.",
                 title="Génération en cours",
                 parent=self,
             )
             return
 
+        widget._preview_regen_in_progress = bool(from_preview)
         offer_payload = dict(widget.offer_data)
         template = (
             widget.template_combo.currentText()
@@ -565,6 +682,8 @@ class JobApplicationPanel(QWidget):
             offer_data=offer_payload,
             template=template,
             application_id=application_id,
+            user_instruction=user_instruction,
+            previous_generation_audit=previous_generation_audit,
         )
         widget.current_letter_worker = worker
 
@@ -579,23 +698,24 @@ class JobApplicationPanel(QWidget):
         )
 
         widget.generate_letter_btn.setEnabled(False)
-        widget.generate_letter_btn.setText("Génération lettre en cours...")
+        widget.generate_letter_btn.setText("Génération lettre de motivation en cours...")
         widget.generate_btn.setEnabled(False)
         widget.progress_label.setText("Initialisation de la lettre...")
         widget.progress_label.show()
 
-        self._show_generation_dialog(widget, "Fichier en cours de génération…")
+        self._show_generation_dialog(widget, "Fichier en cours de génération...")
         worker.start()
 
     def on_cover_letter_progress(self, widget, message):
         """Update UI during cover-letter generation."""
-        widget.progress_label.setText(message or "Génération de la lettre...")
+        widget.progress_label.setText(message or "Génération de la lettre de motivation...")
         widget.progress_label.show()
         if message:
             self._update_generation_dialog(widget, message)
 
     def on_cover_letter_finished(self, widget, result):
         """Handle successful cover-letter generation."""
+        from_preview = bool(getattr(widget, "_preview_regen_in_progress", False))
         self._hide_generation_dialog(widget)
         worker = getattr(widget, "current_letter_worker", None)
         if worker is not None:
@@ -618,6 +738,24 @@ class JobApplicationPanel(QWidget):
         widget.generated_cover_letter = letter_text
         if widget.generated_cv_data is not None:
             widget.generated_cv_data["cover_letter"] = letter_text
+            if isinstance((result or {}).get("generation_audit"), dict):
+                widget.generated_cv_data["generation_audit"] = result.get("generation_audit")
+            if isinstance((result or {}).get("cover_letter_review"), dict):
+                widget.generated_cv_data["cover_letter_review"] = result.get("cover_letter_review")
+            if isinstance((result or {}).get("alignment_audit"), dict):
+                widget.generated_cv_data["alignment_audit"] = result.get("alignment_audit")
+        if isinstance((result or {}).get("generation_audit"), dict):
+            if not isinstance(getattr(widget, "generated_result", None), dict):
+                widget.generated_result = {}
+            widget.generated_result["generation_audit"] = result.get("generation_audit")
+        if isinstance((result or {}).get("cover_letter_review"), dict):
+            if not isinstance(getattr(widget, "generated_result", None), dict):
+                widget.generated_result = {}
+            widget.generated_result["cover_letter_review"] = result.get("cover_letter_review")
+        if isinstance((result or {}).get("alignment_audit"), dict):
+            if not isinstance(getattr(widget, "generated_result", None), dict):
+                widget.generated_result = {}
+            widget.generated_result["alignment_audit"] = result.get("alignment_audit")
         if (result or {}).get("application_id"):
             widget.generated_application_id = result.get("application_id")
 
@@ -630,15 +768,32 @@ class JobApplicationPanel(QWidget):
 
         show_success(
             "La lettre de motivation personnalisée a été générée.",
-            title="Lettre générée",
+            title="Lettre de motivation générée",
             parent=self,
         )
         self.refresh_applications()
-        if letter_text.strip():
+        if from_preview:
+            preview = getattr(self, "template_preview_window", None)
+            if preview is not None and getattr(widget, "generated_cv_data", None):
+                try:
+                    if hasattr(preview, "set_cv_data"):
+                        preview.set_cv_data(dict(widget.generated_cv_data))
+                    else:
+                        preview.cv_data = dict(widget.generated_cv_data)
+                    preview.load_letter_preview()
+                    if hasattr(preview, "_update_audit_panel"):
+                        preview._update_audit_panel()
+                    preview.status_label.setText("Regeneration lettre terminee.")
+                    if hasattr(preview, "regenerate_button"):
+                        preview.regenerate_button.setEnabled(True)
+                except Exception as exc:
+                    logger.warning(f"Preview letter refresh failed: {exc}")
+        elif letter_text.strip():
             try:
                 self.preview_cover_letter()
             except Exception as exc:
                 logger.warning(f"Preview cover letter failed: {exc}")
+        widget._preview_regen_in_progress = False
 
     def on_cover_letter_error(self, widget, message):
         """Handle cover-letter generation failure."""
@@ -658,9 +813,13 @@ class JobApplicationPanel(QWidget):
         widget.progress_label.hide()
         show_error(
             message or "Une erreur est survenue.",
-            title="Génération échouée",
+            title="La Génération de la lettre de motivation a échouée",
             parent=self,
         )
+        preview = getattr(self, "template_preview_window", None)
+        if preview is not None and hasattr(preview, "regenerate_button"):
+            preview.regenerate_button.setEnabled(True)
+        widget._preview_regen_in_progress = False
 
     def on_generation_progress(self, widget, message):
         """Update progress information during generation."""
@@ -671,6 +830,7 @@ class JobApplicationPanel(QWidget):
 
     def on_generation_finished(self, widget, result):
         """Handle successful generation from the worker."""
+        from_preview = bool(getattr(widget, "_preview_regen_in_progress", False))
         self._hide_generation_dialog(widget)
         worker = widget.current_worker
         if worker is not None:
@@ -734,6 +894,24 @@ class JobApplicationPanel(QWidget):
         structured_data["template"] = result.get("template") or widget.current_template
         structured_data["application_id"] = result.get("application_id")
         structured_data["cover_letter"] = result.get("cover_letter") or widget.generated_cover_letter
+        if isinstance(result.get("generation_audit"), dict):
+            structured_data["generation_audit"] = result.get("generation_audit")
+        if isinstance(result.get("alignment_audit"), dict):
+            structured_data["alignment_audit"] = result.get("alignment_audit")
+        if isinstance(result.get("cover_letter_review"), dict):
+            structured_data["cover_letter_review"] = result.get("cover_letter_review")
+
+        # Inject profile photo as base64 for CV template rendering
+        try:
+            _photo_path = getattr(self.profile, "profile_photo_path", None)
+            if _photo_path:
+                from pathlib import Path as _Path
+                import base64 as _b64
+                _pf = _Path(_photo_path)
+                if _pf.is_file():
+                    structured_data["photo_base64"] = _b64.b64encode(_pf.read_bytes()).decode("ascii")
+        except Exception as _exc:
+            logger.debug(f"Photo injection skipped: {_exc}")
 
         widget.generated_cv_data = structured_data
         widget.generated_cover_letter = result.get("cover_letter")
@@ -751,11 +929,31 @@ class JobApplicationPanel(QWidget):
 
         self.refresh_applications()
         show_success(
-            "Le CV a ete genere et enregistre.",
+            "Le CV et la lettre de motivation on été générés et enregistrés.",
             title="Generation terminee",
             parent=self,
         )
-        self.open_template_preview(widget)
+        if from_preview:
+            preview = getattr(self, "template_preview_window", None)
+            if preview is not None:
+                try:
+                    if hasattr(preview, "set_cv_data"):
+                        preview.set_cv_data(dict(widget.generated_cv_data or {}))
+                    else:
+                        preview.cv_data = dict(widget.generated_cv_data or {})
+                    preview.load_template_preview()
+                    if hasattr(preview, "_update_audit_panel"):
+                        preview._update_audit_panel()
+                    preview.status_label.setText("Regeneration terminee.")
+                    if hasattr(preview, "regenerate_button"):
+                        preview.regenerate_button.setEnabled(True)
+                except Exception as exc:
+                    logger.warning(f"Preview refresh failed after regeneration: {exc}")
+            else:
+                self.open_template_preview(widget)
+        else:
+            self.open_template_preview(widget)
+        widget._preview_regen_in_progress = False
 
     def on_generation_error(self, widget, message):
         """Handle generation failure."""
@@ -786,17 +984,26 @@ class JobApplicationPanel(QWidget):
 
         show_error(
             message or "Une erreur est survenue.",
-            title="Génération échouée",
+            title="Échec de la génération",
             parent=self,
         )
+        preview = getattr(self, "template_preview_window", None)
+        if preview is not None and hasattr(preview, "regenerate_button"):
+            preview.regenerate_button.setEnabled(True)
+        widget._preview_regen_in_progress = False
+
+    def _on_preview_window_destroyed(self, *_args) -> None:
+        """Clear stale reference after preview window destruction."""
+        self.template_preview_window = None
 
     def open_template_preview(self, widget):
-        """Ouvre la fenÃªtre de prÃ©visualisation des templates."""
+        """Ouvre la fenêtre de prévisualisation des templates."""
         if not widget.generated_cv_data:
             show_warning("Veuillez d'abord générer un CV.", title="Erreur", parent=self)
             return
 
-        if not TemplatePreviewWindow:
+        preview_window_cls = _load_template_preview_window_class()
+        if not preview_window_cls:
             show_error(
                 "La fenêtre de prévisualisation n'est pas disponible.",
                 title="Erreur",
@@ -805,10 +1012,34 @@ class JobApplicationPanel(QWidget):
             return
 
         try:
-            # Ouvrir la fenÃªtre de prÃ©visualisation
-            self.template_preview_window = TemplatePreviewWindow(
-                widget.generated_cv_data, self
+            preview = getattr(self, "template_preview_window", None)
+
+            # Reuse an existing preview to avoid spawning multiple WebEngine windows.
+            if preview is not None:
+                try:
+                    if hasattr(preview, "set_cv_data"):
+                        preview.set_cv_data(dict(widget.generated_cv_data or {}))
+                    preview.load_template_preview()
+                    preview.showNormal()
+                    preview.raise_()
+                    preview.activateWindow()
+                    return
+                except Exception:
+                    try:
+                        preview.close()
+                    except Exception:
+                        pass
+                    self.template_preview_window = None
+
+            # Ouvrir la fenêtre de prévisualisation
+            self.template_preview_window = preview_window_cls(
+                dict(widget.generated_cv_data or {}), self
             )
+            if hasattr(self.template_preview_window, "regenerate_requested"):
+                self.template_preview_window.regenerate_requested.connect(
+                    lambda payload: self.on_preview_regenerate_requested(widget, payload)
+                )
+            self.template_preview_window.destroyed.connect(self._on_preview_window_destroyed)
             self.template_preview_window.show()
 
         except Exception as e:
@@ -818,6 +1049,43 @@ class JobApplicationPanel(QWidget):
                 title="Erreur",
                 parent=self,
             )
+
+    def on_preview_regenerate_requested(self, widget, payload):
+        """Handle tab-aware regeneration requests coming from preview window."""
+        data = payload if isinstance(payload, dict) else {}
+        target = str(data.get("target") or "cv").strip().lower()
+        instruction = str(data.get("instruction") or "").strip()
+        application_id = data.get("application_id")
+
+        if application_id:
+            widget.generated_application_id = application_id
+
+        previous_generation_audit = None
+        cv_data = data.get("cv_data")
+        if isinstance(cv_data, dict) and isinstance(cv_data.get("generation_audit"), dict):
+            previous_generation_audit = cv_data.get("generation_audit")
+        elif isinstance(getattr(widget, "generated_cv_data", None), dict):
+            prev = widget.generated_cv_data.get("generation_audit")
+            if isinstance(prev, dict):
+                previous_generation_audit = prev
+
+        if target == "letter":
+            self.start_cover_letter_generation(
+                widget,
+                user_instruction=instruction,
+                from_preview=True,
+                previous_generation_audit=previous_generation_audit,
+            )
+            return
+
+        self.start_generation(
+            widget,
+            user_instruction=instruction,
+            cv_only_regen=True,
+            from_preview=True,
+            keep_application_id=True,
+            previous_generation_audit=previous_generation_audit,
+        )
 
     def parse_markdown_to_data(self, markdown_text):
         """Fallback parser that turns markdown into a minimal structured payload."""
@@ -862,20 +1130,20 @@ class JobApplicationPanel(QWidget):
         return data
 
     def refresh_applications(self):
-        """RafraÃ®chit la liste des candidatures."""
+        """Rafraîchit la liste des candidatures."""
         try:
-            # émettre un signal pour rafraÃ®chir l'interface principale
+            # émettre un signal pour rafraîchir l'interface principale
             main_window = self.main_window or self.window()
             if main_window and hasattr(main_window, "refresh_history"):
                 main_window.refresh_history()
         except Exception as e:
-            logger.error(f"Erreur rafraÃ®chissement: {e}")
+            logger.error(f"Erreur rafraîchissement: {e}")
 
     def on_model_changed(self, model_id: str):
-        """GÃ¨re le changement de modÃ¨le IA."""
-        logger.info(f"ModÃ¨le sÃ©lectionnÃ©: {model_id}")
+        """Gère le changement de modèle IA."""
+        logger.info(f"Modèle sélectionné: {model_id}")
 
-        # Mettre à  jour le profil utilisateur si nÃ©cessaire
+        # Mettre à  jour le profil utilisateur si nÃƒ©cessaire
         try:
             from ...utils.model_manager import model_manager
 
@@ -883,6 +1151,6 @@ class JobApplicationPanel(QWidget):
             if model_info:
                 # Optionnel: sauvegarder le choix dans le profil
                 # self.profile.preferred_model = model_id
-                logger.info(f"ModÃ¨le configurÃ©: {model_info.display_name}")
+                logger.info(f"Modèle configuré: {model_info.display_name}")
         except Exception as e:
-            logger.error(f"Erreur changement modÃ¨le: {e}")
+            logger.error(f"Erreur changement modèle: {e}")

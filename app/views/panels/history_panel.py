@@ -32,10 +32,26 @@ from ...services.dialogs import show_error, show_info, show_success, show_warnin
 
 logger = get_safe_logger(__name__, cfg=DEFAULT_PII_CONFIG)
 
-try:  # pragma: no cover
-    from ..template_preview_window import TemplatePreviewWindow
-except ImportError:  # pragma: no cover
-    TemplatePreviewWindow = None  # type: ignore
+TemplatePreviewWindow = None  # type: ignore[assignment]
+_TEMPLATE_PREVIEW_IMPORT_ERROR: Exception | None = None
+
+
+def _load_template_preview_window_class():
+    """Lazy-load preview window to avoid QtWebEngine startup overhead."""
+    global TemplatePreviewWindow, _TEMPLATE_PREVIEW_IMPORT_ERROR
+    if TemplatePreviewWindow is not None:
+        return TemplatePreviewWindow
+    if _TEMPLATE_PREVIEW_IMPORT_ERROR is not None:
+        return None
+    try:  # pragma: no cover
+        from ..template_preview_window import TemplatePreviewWindow as _TemplatePreviewWindow
+
+        TemplatePreviewWindow = _TemplatePreviewWindow
+        return TemplatePreviewWindow
+    except Exception as exc:  # pragma: no cover
+        _TEMPLATE_PREVIEW_IMPORT_ERROR = exc
+        logger.warning(f"Template preview indisponible: {exc}")
+        return None
 
 __all__ = ["HistoryPanel"]
 
@@ -334,7 +350,8 @@ class HistoryPanel(QWidget):
                 return
             self.refresh_history()
 
-            if not TemplatePreviewWindow:
+            preview_window_cls = _load_template_preview_window_class()
+            if not preview_window_cls:
                 show_error(
                     "Fenetre de previsualisation indisponible.",
                     title="Erreur",
@@ -344,7 +361,7 @@ class HistoryPanel(QWidget):
 
             try:
                 cv_data = self._convert_summary_to_cv_data(updated)
-                preview = TemplatePreviewWindow(cv_data, self)
+                preview = preview_window_cls(cv_data, self)
                 preview.show()
                 dialog.close()
             except Exception as exc:
@@ -402,9 +419,10 @@ class HistoryPanel(QWidget):
 
         try:
             cv_data = self._convert_summary_to_cv_data(summary)
-            if not TemplatePreviewWindow:
+            preview_window_cls = _load_template_preview_window_class()
+            if not preview_window_cls:
                 raise RuntimeError("Fenetre de previsualisation indisponible")
-            preview = TemplatePreviewWindow(cv_data, self)
+            preview = preview_window_cls(cv_data, self)
             preview.show()
         except Exception as exc:
             logger.error("Export impossible: %s", exc)
@@ -513,6 +531,25 @@ class HistoryPanel(QWidget):
             "cover_letter": summary.final_cover_letter or summary.generated_cover_letter or "",
         }
 
+        offer_analysis = summary.offer_analysis if isinstance(summary.offer_analysis, dict) else {}
+        generation_audit = offer_analysis.get("generation_audit")
+        if isinstance(generation_audit, dict):
+            data["generation_audit"] = generation_audit
+        alignment_audit = offer_analysis.get("alignment_audit")
+        if not isinstance(alignment_audit, dict) and isinstance(generation_audit, dict):
+            breakdown = generation_audit.get("breakdown")
+            if isinstance(breakdown, dict) and isinstance(breakdown.get("cv"), dict):
+                alignment_audit = breakdown.get("cv")
+        if isinstance(alignment_audit, dict):
+            data["alignment_audit"] = alignment_audit
+        cover_letter_review = offer_analysis.get("cover_letter_review")
+        if not isinstance(cover_letter_review, dict) and isinstance(generation_audit, dict):
+            breakdown = generation_audit.get("breakdown")
+            if isinstance(breakdown, dict) and isinstance(breakdown.get("letter"), dict):
+                cover_letter_review = breakdown.get("letter")
+        if isinstance(cover_letter_review, dict):
+            data["cover_letter_review"] = cover_letter_review
+
         if summary.cv_json_final:
             try:
                 from ...utils.cv_json_renderer import cv_json_to_cv_data
@@ -527,5 +564,17 @@ class HistoryPanel(QWidget):
             data["raw_html"] = summary.final_cv_html
         elif cv_html and not summary.cv_json_final:
             data["raw_html"] = cv_html
+
+        # Injection photo de profil (base64) pour les templates CV
+        try:
+            _photo_path = getattr(self.profile, "profile_photo_path", None)
+            if _photo_path:
+                from pathlib import Path as _Path
+                import base64 as _b64
+                _pf = _Path(_photo_path)
+                if _pf.is_file():
+                    data["photo_base64"] = _b64.b64encode(_pf.read_bytes()).decode("ascii")
+        except Exception as _exc:
+            logger.debug("Photo injection skipped (history): %s", _exc)
 
         return data

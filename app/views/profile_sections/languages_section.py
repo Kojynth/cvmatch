@@ -171,13 +171,42 @@ class LanguagesSection(BaseSection):
         level_combo.currentTextChanged.connect(lambda text: self._update_field(lang_obj, 'level', text))
         header_layout.addWidget(QLabel("📊"))
         header_layout.addWidget(level_combo)
-        
+
         header_layout.addStretch()
         delete_btn = self.create_delete_button()
         delete_btn.clicked.connect(lambda: self.delete_language(lang_obj, widget))
         header_layout.addWidget(delete_btn)
         layout.addLayout(header_layout)
-        
+
+        # Organisme certifiant (TOEIC, TOEFL, Cambridge, DELF…)
+        cert_row = QHBoxLayout()
+        cert_icon = QLabel("🏅")
+        cert_icon.setFixedWidth(20)
+        cert_icon.setToolTip("Organisme certifiant")
+        cert_edit = QLineEdit(str(lang.get('certification', '')))
+        cert_edit.setPlaceholderText("Organisme certifiant (ex : TOEIC, TOEFL, Cambridge, DELF…)")
+        cert_edit.setStyleSheet("""
+            QLineEdit {
+                background-color: #3a3a3a;
+                border: 1px solid #555555;
+                border-radius: 4px;
+                padding: 6px 8px;
+                color: #ffffff;
+                font-size: 12px;
+            }
+            QLineEdit:focus {
+                border: 2px solid #4db8ff;
+                background-color: #404040;
+            }
+            QLineEdit:hover {
+                border-color: #777777;
+            }
+        """)
+        cert_edit.textChanged.connect(lambda text: self._update_field(lang_obj, 'certification', text))
+        cert_row.addWidget(cert_icon)
+        cert_row.addWidget(cert_edit)
+        layout.addLayout(cert_row)
+
         # Description/Notes (optionnel)
         desc_edit = QTextEdit()
         desc_edit.setPlainText(str(lang.get('description', '')))
@@ -223,7 +252,7 @@ class LanguagesSection(BaseSection):
     def add_new_language(self):
         if not hasattr(self.profile, 'extracted_languages') or not self.profile.extracted_languages:
             self.profile.extracted_languages = []
-        new_language = {'name': 'Nouvelle langue', 'level': '', 'description': '', 'source': 'Manuel'}
+        new_language = {'name': 'Nouvelle langue', 'level': '', 'certification': '', 'description': '', 'source': 'Manuel'}
         self.profile.extracted_languages.append(new_language)
         
         # Déclencher la détection de modifications

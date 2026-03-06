@@ -43,6 +43,7 @@ class SkillItem(BaseModel):
 class LanguageItem(BaseModel):
     language: str = ""
     proficiency: str = ""
+    certification: str = ""
 
 
 class ProjectItem(BaseModel):
