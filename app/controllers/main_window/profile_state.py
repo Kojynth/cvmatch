@@ -215,6 +215,9 @@ class ProfileStateCoordinator(SimpleCoordinator, Coordinator):
         assign("preferred_language", form_data.preferred_language)
         if form_data.learning_enabled is not None:
             assign("learning_enabled", bool(form_data.learning_enabled))
+        assign("location", form_data.location)
+        if form_data.profile_photo_path is not None:
+            assign("profile_photo_path", form_data.profile_photo_path)
 
     def _snapshot(self, profile: UserProfile) -> Dict[str, object]:
         """Take a shallow snapshot of profile attributes."""

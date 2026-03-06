@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
@@ -423,12 +423,110 @@ class HistoryPanel(QWidget):
             if not preview_window_cls:
                 raise RuntimeError("Fenetre de previsualisation indisponible")
             preview = preview_window_cls(cv_data, self)
+            if hasattr(preview, "regenerate_requested"):
+                preview.regenerate_requested.connect(
+                    lambda payload, app_id=summary.id, preview_window=preview: self._on_history_preview_regenerate_requested(
+                        payload=payload,
+                        application_id=app_id,
+                        preview_window=preview_window,
+                    )
+                )
             preview.show()
         except Exception as exc:
             logger.error("Export impossible: %s", exc)
             show_error(
                 f"Impossible d'exporter la candidature:\n{exc}",
                 title="Erreur",
+                parent=self,
+            )
+
+    def _build_offer_payload_from_summary(self, summary: JobApplicationSummary) -> Dict[str, Any]:
+        analysis = summary.offer_analysis if isinstance(summary.offer_analysis, dict) else {}
+        return {
+            "text": str(summary.offer_text or ""),
+            "job_title": str(summary.job_title or ""),
+            "company": str(summary.company or ""),
+            "analysis": dict(analysis),
+        }
+
+    def _resolve_job_application_panel(self):
+        candidates = [self.parent(), self.window()]
+        for candidate in candidates:
+            if candidate is not None and hasattr(candidate, "job_application_panel"):
+                return getattr(candidate, "job_application_panel")
+        return None
+
+    def _on_history_preview_regenerate_requested(
+        self,
+        *,
+        payload: Any,
+        application_id: int,
+        preview_window: Any,
+    ) -> None:
+        summary = self._get_summary_by_id(application_id)
+        if summary is None:
+            show_error(
+                "Impossible de retrouver la candidature a regenerer.",
+                title="Regeneration indisponible",
+                parent=self,
+            )
+            return
+
+        job_panel = self._resolve_job_application_panel()
+        if job_panel is None:
+            show_error(
+                "Le module de generation n'est pas disponible dans cette vue.",
+                title="Regeneration indisponible",
+                parent=self,
+            )
+            return
+
+        regen_payload = dict(payload) if isinstance(payload, dict) else {}
+        regen_payload["application_id"] = application_id
+
+        cv_data_payload = regen_payload.get("cv_data")
+        if not isinstance(cv_data_payload, dict):
+            cv_data_payload = self._convert_summary_to_cv_data(summary)
+        else:
+            cv_data_payload = dict(cv_data_payload)
+        cv_data_payload.setdefault("application_id", application_id)
+        cv_data_payload.setdefault("offer_text", summary.offer_text or "")
+        if isinstance(summary.offer_analysis, dict) and summary.offer_analysis:
+            cv_data_payload.setdefault("offer_analysis", dict(summary.offer_analysis))
+        regen_payload["cv_data"] = cv_data_payload
+
+        offer_payload = self._build_offer_payload_from_summary(summary)
+        regen_payload["offer_data"] = offer_payload
+        if summary.template_used:
+            regen_payload.setdefault("template", summary.template_used)
+
+        generation_widget = getattr(job_panel, "generation_widget", None)
+        if generation_widget is None:
+            show_error(
+                "Widget de generation indisponible.",
+                title="Regeneration indisponible",
+                parent=self,
+            )
+            return
+
+        generation_widget.generated_application_id = application_id
+        generation_widget.offer_data = dict(offer_payload)
+        setattr(job_panel, "template_preview_window", preview_window)
+
+        main_window = self.window()
+        try:
+            if main_window is not None and hasattr(main_window, "change_section"):
+                main_window.change_section("job_application")
+        except Exception:
+            pass
+
+        try:
+            job_panel.on_preview_regenerate_requested(generation_widget, regen_payload)
+        except Exception as exc:
+            logger.error("Regeneration historique impossible: %s", exc)
+            show_error(
+                f"Impossible de lancer la regeneration:\n{exc}",
+                title="Regeneration indisponible",
                 parent=self,
             )
 
@@ -529,9 +627,12 @@ class HistoryPanel(QWidget):
             "application_id": summary.id,
             "raw_content": cv_markdown,
             "cover_letter": summary.final_cover_letter or summary.generated_cover_letter or "",
+            "offer_text": summary.offer_text or "",
         }
 
         offer_analysis = summary.offer_analysis if isinstance(summary.offer_analysis, dict) else {}
+        if offer_analysis:
+            data["offer_analysis"] = dict(offer_analysis)
         generation_audit = offer_analysis.get("generation_audit")
         if isinstance(generation_audit, dict):
             data["generation_audit"] = generation_audit
