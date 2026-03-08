@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, Dict, Optional
+
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication,
@@ -557,9 +559,13 @@ class JobApplicationPanel(QWidget):
         from_preview: bool = False,
         keep_application_id: bool = False,
         previous_generation_audit: Optional[Dict[str, Any]] = None,
+        offer_data_override: Optional[Dict[str, Any]] = None,
+        application_id_override: Optional[int] = None,
     ):
         """Launch CV generation through the background worker."""
-        if hasattr(self, "offer_widget"):
+        if isinstance(offer_data_override, dict):
+            widget.offer_data = dict(offer_data_override)
+        elif hasattr(self, "offer_widget"):
             self.analyze_offer(self.offer_widget)
         if not widget.offer_data:
             show_warning(
@@ -597,11 +603,14 @@ class JobApplicationPanel(QWidget):
         widget.current_template = template
 
         offer_payload = dict(widget.offer_data)
-        target_application_id = (
-            getattr(widget, "generated_application_id", None)
-            if (keep_application_id or cv_only_regen)
-            else None
-        )
+        if isinstance(application_id_override, int):
+            target_application_id = application_id_override
+        else:
+            target_application_id = (
+                getattr(widget, "generated_application_id", None)
+                if (keep_application_id or cv_only_regen)
+                else None
+            )
 
         worker = self.coordinator.create_cv_worker(
             offer_data=offer_payload,
@@ -643,9 +652,13 @@ class JobApplicationPanel(QWidget):
         user_instruction: str = "",
         from_preview: bool = False,
         previous_generation_audit: Optional[Dict[str, Any]] = None,
+        offer_data_override: Optional[Dict[str, Any]] = None,
+        application_id_override: Optional[int] = None,
     ):
         """Launch cover-letter generation through the background worker."""
-        if hasattr(self, "offer_widget"):
+        if isinstance(offer_data_override, dict):
+            widget.offer_data = dict(offer_data_override)
+        elif hasattr(self, "offer_widget"):
             self.analyze_offer(self.offer_widget)
         if not getattr(widget, "offer_data", None):
             show_warning(
@@ -677,7 +690,10 @@ class JobApplicationPanel(QWidget):
             else "modern"
         )
 
-        application_id = getattr(widget, "generated_application_id", None)
+        if isinstance(application_id_override, int):
+            application_id = application_id_override
+        else:
+            application_id = getattr(widget, "generated_application_id", None)
         worker = self.coordinator.create_cover_letter_worker(
             offer_data=offer_payload,
             template=template,
@@ -1050,18 +1066,96 @@ class JobApplicationPanel(QWidget):
                 parent=self,
             )
 
+    @staticmethod
+    def _coerce_application_id(value: Any) -> Optional[int]:
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.isdigit():
+                try:
+                    return int(stripped)
+                except Exception:
+                    return None
+        return None
+
+    def _load_offer_payload_from_application(
+        self,
+        application_id: Optional[int],
+    ) -> Optional[Dict[str, Any]]:
+        app_id = self._coerce_application_id(application_id)
+        if not isinstance(app_id, int):
+            return None
+        try:
+            from ...models.database import get_session
+            from ...models.job_application import JobApplication
+
+            with get_session() as session:
+                app = session.get(JobApplication, app_id)
+                if app is None:
+                    return None
+                analysis = (
+                    dict(app.offer_analysis)
+                    if isinstance(app.offer_analysis, dict)
+                    else {}
+                )
+                return {
+                    "text": str(app.offer_text or ""),
+                    "job_title": str(app.job_title or ""),
+                    "company": str(app.company or ""),
+                    "analysis": analysis,
+                }
+        except Exception as exc:
+            logger.warning(
+                "Impossible de charger le contexte offre pour application_id=%s: %s",
+                application_id,
+                exc,
+            )
+            return None
+
     def on_preview_regenerate_requested(self, widget, payload):
         """Handle tab-aware regeneration requests coming from preview window."""
         data = payload if isinstance(payload, dict) else {}
         target = str(data.get("target") or "cv").strip().lower()
         instruction = str(data.get("instruction") or "").strip()
-        application_id = data.get("application_id")
+        application_id = self._coerce_application_id(data.get("application_id"))
 
-        if application_id:
+        requested_template = str(data.get("template") or "").strip()
+        if requested_template and hasattr(widget, "template_combo"):
+            combo = getattr(widget, "template_combo", None)
+            if combo is not None:
+                idx = combo.findText(requested_template)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+                    widget.current_template = combo.currentText()
+
+        cv_data = data.get("cv_data")
+        offer_payload_override = (
+            dict(data.get("offer_data"))
+            if isinstance(data.get("offer_data"), dict)
+            else None
+        )
+        if not isinstance(offer_payload_override, dict):
+            offer_payload_override = self._load_offer_payload_from_application(application_id)
+        if not isinstance(offer_payload_override, dict) and isinstance(cv_data, dict):
+            offer_text = str(cv_data.get("offer_text") or "").strip()
+            job_title = str(cv_data.get("job_title") or "").strip()
+            company = str(cv_data.get("company") or "").strip()
+            analysis = cv_data.get("offer_analysis")
+            if offer_text and job_title and company:
+                offer_payload_override = {
+                    "text": offer_text,
+                    "job_title": job_title,
+                    "company": company,
+                    "analysis": dict(analysis) if isinstance(analysis, dict) else {},
+                }
+
+        if isinstance(application_id, int):
             widget.generated_application_id = application_id
+        if isinstance(offer_payload_override, dict):
+            widget.offer_data = dict(offer_payload_override)
 
         previous_generation_audit = None
-        cv_data = data.get("cv_data")
         if isinstance(cv_data, dict) and isinstance(cv_data.get("generation_audit"), dict):
             previous_generation_audit = cv_data.get("generation_audit")
         elif isinstance(getattr(widget, "generated_cv_data", None), dict):
@@ -1075,6 +1169,8 @@ class JobApplicationPanel(QWidget):
                 user_instruction=instruction,
                 from_preview=True,
                 previous_generation_audit=previous_generation_audit,
+                offer_data_override=offer_payload_override,
+                application_id_override=application_id,
             )
             return
 
@@ -1085,6 +1181,8 @@ class JobApplicationPanel(QWidget):
             from_preview=True,
             keep_application_id=True,
             previous_generation_audit=previous_generation_audit,
+            offer_data_override=offer_payload_override,
+            application_id_override=application_id,
         )
 
     def parse_markdown_to_data(self, markdown_text):
