@@ -1,4 +1,4 @@
-"""
+﻿"""
 LLM Worker
 ==========
 
@@ -53,7 +53,7 @@ except ImportError:
     class MockModelOptimizer:
         def check_hf_xet_status(self): return {"optimizations_active": False}
         def optimize_model_download(self, model_name, progress_callback=None, force_download=False): 
-            if progress_callback: progress_callback("📥 Téléchargement standard...")
+            if progress_callback: progress_callback("💠 Téléchargement standard...")
             return model_name
     model_optimizer = MockModelOptimizer()
 
@@ -67,6 +67,10 @@ from ..utils.offer_keywords_quality import (
 )
 from ..utils.offer_keywords_llm_retry import run_offer_keywords_second_pass
 from ..utils.model_quality_routing import resolve_writer_quality_override
+from ..utils.cover_letter_style_policy import (
+    build_cover_letter_generation_payload,
+    COVER_LETTER_STYLE_ANALYSIS_KEY,
+)
 from ..utils.stage_attempts_config import (
     resolve_stage_attempts,
     resolve_stage_timeout_seconds,
@@ -161,6 +165,70 @@ def _dedup_preserve(items: Iterable[str]) -> List[str]:
         seen.add(key)
         output.append(text)
     return output
+
+
+def _hydrate_offer_analysis_from_application(
+    offer_data: Any,
+    application_id: Optional[int],
+) -> None:
+    if not isinstance(offer_data, dict) or not isinstance(application_id, int):
+        return
+    current = offer_data.get("analysis")
+    if isinstance(current, dict) and current.get(COVER_LETTER_STYLE_ANALYSIS_KEY):
+        return
+    try:
+        with get_session() as session:
+            app = session.get(JobApplication, application_id)
+            stored = (
+                dict(app.offer_analysis)
+                if app is not None and isinstance(app.offer_analysis, dict)
+                else {}
+            )
+        if not stored:
+            return
+        merged = dict(stored)
+        if isinstance(current, dict):
+            merged.update(current)
+        offer_data["analysis"] = merged
+    except Exception as exc:
+        logger.debug(
+            "Offer analysis hydration skipped for application %s: %s",
+            application_id,
+            exc,
+        )
+
+
+def _persist_cover_letter_style_in_offer_analysis(
+    offer_data: Any,
+    style_payload: Any,
+) -> None:
+    if not isinstance(offer_data, dict) or not isinstance(style_payload, dict):
+        return
+    style_profile = (
+        style_payload.get("style_profile")
+        if isinstance(style_payload.get("style_profile"), dict)
+        else {}
+    )
+    style_mode = str(style_payload.get("style_mode") or style_profile.get("mode") or "").strip()
+    if not style_mode:
+        return
+    analysis = offer_data.get("analysis")
+    if not isinstance(analysis, dict):
+        analysis = {}
+    analysis[COVER_LETTER_STYLE_ANALYSIS_KEY] = {
+        "mode": style_mode,
+        "label": str(style_profile.get("label") or ""),
+        "source": str(style_payload.get("style_source") or style_profile.get("source") or "auto"),
+        "freeze_applied": bool(style_payload.get("freeze_applied")),
+        "instruction_override": bool(style_payload.get("instruction_override")),
+        "template_hint": str(style_profile.get("template_hint") or ""),
+        "scores": (
+            dict(style_profile.get("scores"))
+            if isinstance(style_profile.get("scores"), dict)
+            else {}
+        ),
+    }
+    offer_data["analysis"] = analysis
 
 
 def _compact_profile_json_for_prompt(profile_json: Dict[str, Any]) -> Dict[str, Any]:
@@ -809,7 +877,7 @@ def _markdown_skeleton_for_template(template: Optional[str], language: Optional[
     )
 
 
-from .qwen_manager import QwenManager  # noqa: F401 — backward-compat re-export
+from .qwen_manager import QwenManager  # noqa: F401 â€” backward-compat re-export
 
 try:
     from ..utils.pipeline_orchestrator import build_default_pipeline, PipelineState
@@ -856,6 +924,7 @@ class CVGenerationWorker(QThread):
             if isinstance(previous_generation_audit, dict)
             else {}
         )
+        self._offer_analysis_hydrated: bool = False
         self._pipeline_profile_json: dict = {}
         self._pipeline_cv_json_draft: dict = {}
         self._pipeline_offer_keywords: dict = {}
@@ -3829,98 +3898,29 @@ OUTPUT RULES:
         return {}
 
     def build_cover_letter_prompt(self) -> str:
-        """Construit le prompt optimisé pour générer la lettre de motivation."""
-        analysis = self.offer_data.get("analysis", {}) if isinstance(self.offer_data, dict) else {}
-        keywords: List[str] = []
-        if isinstance(analysis, dict):
-            for key in ("keywords", "skills", "tech_keywords", "soft_keywords", "tools"):
-                value = analysis.get(key)
-                if isinstance(value, list):
-                    keywords.extend(str(item) for item in value)
-                elif isinstance(value, str):
-                    keywords.extend(part.strip() for part in value.split(",") if part.strip())
-        keywords = _dedup_preserve([item for item in keywords if item])
-        language = (
-            (analysis.get("language") if isinstance(analysis, dict) else None)
-            or getattr(self.profile_data, "preferred_language", None)
-            or "fr"
-        )
-        language_code = _normalize_language(language)
-        placeholder = "[TO COMPLETE]" if language_code == "en" else "[A COMPLETER]"
-
-        template_key = _normalize_template_name(self.template)
-        style_hint = {
-            "modern": "Ton moderne et direct, phrases courtes, tres specifique.",
-            "classic": "Ton formel et corporate, vocabulaire sobre.",
-            "tech": "Ton technique/pro: concret, oriente realisations et stack verifiable.",
-            "creative": "Ton dynamique, orientation projets/impact, mais professionnel.",
-        }.get(template_key, "Ton professionnel et specifique.")
-
-        job_title = self.offer_data.get("job_title") if isinstance(self.offer_data, dict) else None
-        company = self.offer_data.get("company") if isinstance(self.offer_data, dict) else None
-        offer_text = self.offer_data.get("text") if isinstance(self.offer_data, dict) else None
-        offer_keywords = analysis.get("offer_keywords_llm") if isinstance(analysis, dict) else None
-
+        """Build cover-letter prompt via style policy module."""
+        if not self._offer_analysis_hydrated:
+            _hydrate_offer_analysis_from_application(self.offer_data, self.application_id)
+            self._offer_analysis_hydrated = True
         profile_block = _format_profile_detailed_data(self.profile_data)
-
-        keywords_text = ", ".join(str(k) for k in keywords[:15] if str(k).strip())
-        if not keywords_text:
-            keywords_text = "None" if language_code == "en" else "Aucun"
-
-        if language_code == "en":
-            letter_skeleton = f"""Subject: Application - {job_title} ({company})
-
-Dear Hiring Manager,
-
-<Paragraph 1: hook + why this role/company (specific)>
-
-<Paragraph 2: 2-3 proof points (experience/projects) + verified skills + impact>
-
-<Paragraph 3: motivation + projection + interview availability>
-
-Sincerely,
-
-{self.profile_data.name or placeholder}"""
-        else:
-            letter_skeleton = f"""Objet: Candidature - {job_title} ({company})
-
-Madame, Monsieur,
-
-<Paragraphe 1: accroche + pourquoi ce poste/entreprise (specifique)>
-
-<Paragraphe 2: 2-3 preuves de fit (experiences/projets) + competences cles verifiables + impact>
-
-<Paragraphe 3: motivation + projection + disponibilite pour entretien>
-
-Je vous prie d'agreer, Madame, Monsieur, l'expression de mes salutations distinguees.
-
-{self.profile_data.name or placeholder}"""
-        return f"""
-LANGUE: {language_code}
-STYLE (template): {self.template} ({style_hint})
-
-OFFRE CIBLE:
-- Poste: {job_title}
-- Entreprise: {company}
-- Mots-cles detectes: {keywords_text}
-- Description (brut, tronquee si besoin):
-{_trim_text(offer_text, 2000 if isinstance(offer_keywords, dict) else 3000)}
-
-OFFER_KEYWORDS_JSON (si disponible):
-{_trim_text(json.dumps(offer_keywords, indent=2, ensure_ascii=False), 1200) if isinstance(offer_keywords, dict) else "N/A"}
-
-DONNEES CANDIDAT (Profil detaille + CV de reference + lettre type si fournie):
-{profile_block}
-
-SORTIE OBLIGATOIRE (texte uniquement, pas de Markdown):
-- Respecte STRICTEMENT la structure ci-dessous.
-- Utilise uniquement les faits presents dans les donnees candidat (sinon {placeholder}).
-- Mots-cles ATS: tu peux reprendre les termes de l'offre OU des synonymes/termes equivalents, tant que le fond reste vrai.
-- Longueur: maximum 1 page.
-
-STRUCTURE:
-{letter_skeleton}
-""".strip()
+        style_payload = build_cover_letter_generation_payload(
+            offer_data=self.offer_data if isinstance(self.offer_data, dict) else {},
+            template=self.template,
+            preferred_language=getattr(self.profile_data, "preferred_language", None),
+            profile_name=getattr(self.profile_data, "name", "") or "",
+            profile_block=profile_block,
+            user_instruction=self.user_instruction,
+            freeze_previous_style=bool(self.application_id),
+        )
+        _persist_cover_letter_style_in_offer_analysis(self.offer_data, style_payload)
+        logger.info(
+            "Cover letter style resolved: mode=%s source=%s freeze=%s override=%s",
+            style_payload.get("style_mode"),
+            style_payload.get("style_source"),
+            bool(style_payload.get("freeze_applied")),
+            bool(style_payload.get("instruction_override")),
+        )
+        return str(style_payload.get("prompt") or "")
 
     def save_application(
         self,
@@ -4026,7 +4026,7 @@ STRUCTURE:
             session.commit()
             session.refresh(application)
 
-        # Mettre à jour les stats du profil via SQL direct (évite DetachedInstanceError)
+        # Mettre Ã  jour les stats du profil via SQL direct (Ã©vite DetachedInstanceError)
         try:
             with get_session() as session:
                 from sqlmodel import text
@@ -4035,9 +4035,9 @@ STRUCTURE:
                     {"pid": self.profile_data.id}
                 )
                 session.commit()
-                logger.debug(f"Stats profil {self.profile_data.id} mises à jour")
+                logger.debug(f"Stats profil {self.profile_data.id} mises Ã  jour")
         except Exception as e:
-            logger.warning(f"Impossible de mettre à jour les stats du profil: {e}")
+            logger.warning(f"Impossible de mettre Ã  jour les stats du profil: {e}")
 
         return application
 
@@ -4071,6 +4071,7 @@ class CoverLetterGenerationWorker(QThread):
             if isinstance(previous_generation_audit, dict)
             else {}
         )
+        self._offer_analysis_hydrated = False
         self.qwen_manager = QwenManager(self.profile_data.model_version)
 
     def run(self):
@@ -4089,22 +4090,22 @@ class CoverLetterGenerationWorker(QThread):
 
             # Étape 1: Chargement du modèle
             model_name = getattr(self.qwen_manager, 'current_model_id', 'IA')
-            progress_callback(f"🤖 Initialisation du modèle {model_name}...")
+            progress_callback(f"💠 Initialisation du modèle {model_name}...")
             self.qwen_manager.load_model(progress_callback, allow_fallback=False)
 
-            # Étape 2: Construction du prompt
-            progress_callback("📝 Construction du prompt pour la lettre...")
+            # Ã‰tape 2: Construction du prompt
+            progress_callback("🔍 Construction du prompt pour la lettre...")
             prompt = self.build_letter_prompt()
 
-            # Étape 3: Génération de la lettre
-            progress_callback("💌 Génération de la lettre de motivation...")
+            # Ã‰tape 3: GÃ©nÃ©ration de la lettre
+            progress_callback("💬 Génération de la lettre de motivation...")
             cover_letter = self.qwen_manager.generate_cover_letter(prompt, progress_callback)
 
             generation_audit, cover_letter_review = self._build_cover_letter_generation_audit(
                 cover_letter
             )
 
-            # Étape 4: Sauvegarde
+            # Ã‰tape 4: Sauvegarde
             progress_callback("💾 Sauvegarde de la lettre...")
             application = self.save_cover_letter(
                 cover_letter,
@@ -4112,11 +4113,11 @@ class CoverLetterGenerationWorker(QThread):
                 cover_letter_review=cover_letter_review,
             )
 
-            # Étape 5: Nettoyage mémoire
+            # Ã‰tape 5: Nettoyage mÃ©moire
             progress_callback("🧹 Nettoyage mémoire...")
             self.qwen_manager.cleanup_memory()
 
-            # Résultat final
+            # RÃ©sultat final
             result = {
                 "application_id": application.id,
                 "cover_letter": cover_letter,
@@ -4148,98 +4149,29 @@ class CoverLetterGenerationWorker(QThread):
             self.error_occurred.emit(f"Erreur génération: {str(e)}")
 
     def build_letter_prompt(self) -> str:
-        """Construit le prompt optimisé pour la lettre de motivation."""
-        analysis = self.offer_data.get("analysis", {}) if isinstance(self.offer_data, dict) else {}
-        keywords: List[str] = []
-        if isinstance(analysis, dict):
-            for key in ("keywords", "skills", "tech_keywords", "soft_keywords", "tools"):
-                value = analysis.get(key)
-                if isinstance(value, list):
-                    keywords.extend(str(item) for item in value)
-                elif isinstance(value, str):
-                    keywords.extend(part.strip() for part in value.split(",") if part.strip())
-        keywords = _dedup_preserve([item for item in keywords if item])
-        language = (
-            (analysis.get("language") if isinstance(analysis, dict) else None)
-            or getattr(self.profile_data, "preferred_language", None)
-            or "fr"
-        )
-        language_code = _normalize_language(language)
-        placeholder = "[TO COMPLETE]" if language_code == "en" else "[A COMPLETER]"
-
-        template_key = _normalize_template_name(self.template)
-        style_hint = {
-            "modern": "Ton moderne et direct, phrases courtes, tres specifique.",
-            "classic": "Ton formel et corporate, vocabulaire sobre.",
-            "tech": "Ton technique/pro: concret, oriente realisations et stack verifiable.",
-            "creative": "Ton dynamique, orientation projets/impact, mais professionnel.",
-        }.get(template_key, "Ton professionnel et specifique.")
-
-        job_title = self.offer_data.get("job_title") if isinstance(self.offer_data, dict) else None
-        company = self.offer_data.get("company") if isinstance(self.offer_data, dict) else None
-        offer_text = self.offer_data.get("text") if isinstance(self.offer_data, dict) else None
-        offer_keywords = analysis.get("offer_keywords_llm") if isinstance(analysis, dict) else None
-
+        """Build cover-letter prompt via style policy module."""
+        if not self._offer_analysis_hydrated:
+            _hydrate_offer_analysis_from_application(self.offer_data, self.application_id)
+            self._offer_analysis_hydrated = True
         profile_block = _format_profile_detailed_data(self.profile_data)
-
-        keywords_text = ", ".join(str(k) for k in keywords[:15] if str(k).strip())
-        if not keywords_text:
-            keywords_text = "None" if language_code == "en" else "Aucun"
-
-        if language_code == "en":
-            letter_skeleton = f"""Subject: Application - {job_title} ({company})
-
-Dear Hiring Manager,
-
-<Paragraph 1: hook + why this role/company (specific)>
-
-<Paragraph 2: 2-3 proof points (experience/projects) + verified skills + impact>
-
-<Paragraph 3: motivation + projection + interview availability>
-
-Sincerely,
-
-{self.profile_data.name or placeholder}"""
-        else:
-            letter_skeleton = f"""Objet: Candidature - {job_title} ({company})
-
-Madame, Monsieur,
-
-<Paragraphe 1: accroche + pourquoi ce poste/entreprise (specifique)>
-
-<Paragraphe 2: 2-3 preuves de fit (experiences/projets) + competences cles verifiables + impact>
-
-<Paragraphe 3: motivation + projection + disponibilite pour entretien>
-
-Je vous prie d'agreer, Madame, Monsieur, l'expression de mes salutations distinguees.
-
-{self.profile_data.name or placeholder}"""
-        return f"""
-LANGUE: {language_code}
-STYLE (template): {self.template} ({style_hint})
-
-OFFRE CIBLE:
-- Poste: {job_title}
-- Entreprise: {company}
-- Mots-cles detectes: {keywords_text}
-- Description (brut, tronquee si besoin):
-{_trim_text(offer_text, 2000 if isinstance(offer_keywords, dict) else 3000)}
-
-OFFER_KEYWORDS_JSON (si disponible):
-{_trim_text(json.dumps(offer_keywords, indent=2, ensure_ascii=False), 1200) if isinstance(offer_keywords, dict) else "N/A"}
-
-DONNEES CANDIDAT (Profil detaille + CV de reference + lettre type si fournie):
-{profile_block}
-
-SORTIE OBLIGATOIRE (texte uniquement, pas de Markdown):
-- Respecte STRICTEMENT la structure ci-dessous.
-- Utilise uniquement les faits presents dans les donnees candidat (sinon {placeholder}).
-- Mots-cles ATS: tu peux reprendre les termes de l'offre OU des synonymes/termes equivalents, tant que le fond reste vrai.
-- Longueur: maximum 1 page.
-
-STRUCTURE:
-{letter_skeleton}
-""".strip()
+        style_payload = build_cover_letter_generation_payload(
+            offer_data=self.offer_data if isinstance(self.offer_data, dict) else {},
+            template=self.template,
+            preferred_language=getattr(self.profile_data, "preferred_language", None),
+            profile_name=getattr(self.profile_data, "name", "") or "",
+            profile_block=profile_block,
+            user_instruction=self.user_instruction,
+            freeze_previous_style=bool(self.application_id),
+        )
+        _persist_cover_letter_style_in_offer_analysis(self.offer_data, style_payload)
+        logger.info(
+            "Cover letter style resolved: mode=%s source=%s freeze=%s override=%s",
+            style_payload.get("style_mode"),
+            style_payload.get("style_source"),
+            bool(style_payload.get("freeze_applied")),
+            bool(style_payload.get("instruction_override")),
+        )
+        return str(style_payload.get("prompt") or "")
 
     def _resolve_letter_language_code(self) -> str:
         analysis = self.offer_data.get("analysis") if isinstance(self.offer_data, dict) else None
@@ -4416,13 +4348,13 @@ class FineTuningWorker(QThread):
     def run(self):
         """Lance le fine-tuning (placeholder pour version future)."""
         try:
-            self.progress_updated.emit("🧠 Préparation des données d'entraînement...", 10)
+            self.progress_updated.emit("💠 Préparation des données d'entraînement...", 10)
             time.sleep(2)
 
-            self.progress_updated.emit("⚙️ Configuration du modèle...", 30)
+            self.progress_updated.emit("🔍 Configuration du modèle...", 30)
             time.sleep(3)
 
-            self.progress_updated.emit("🔥 Fine-tuning en cours...", 50)
+            self.progress_updated.emit("🔄 Fine-tuning en cours...", 50)
             time.sleep(10)  # Simulation d'un long processus
 
             self.progress_updated.emit("💾 Sauvegarde du modèle personnalisé...", 90)
