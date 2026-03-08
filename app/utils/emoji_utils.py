@@ -57,18 +57,18 @@ class EmojiManager:
             "\U0001F4BE": "[Save]",  # 💾 Sauvegarder - more readable
             "\U0001F504": "[Refresh]",  # 🔄 Actualiser - more readable
             "\U0001F680": "[Launch]",  # 🚀 Lancer - more readable
-            "\U0001F4DD": "[📝]",  # 📝 Éditer
-            "\U0001F4C4": "[📄]",  # 📄 Document
-            "\U0001F4C5": "[📅]",  # 📅 Calendrier
-            "\u2B50": "[*]",  # ⭐ Star rating - readable asterisk
-            "\u270F\ufe0f": "[✏]",  # ✏️ Edit pencil
-            "\U0001F5D1\ufe0f": "[🗑]",  # 🗑️ Delete
-            "\U0001F48C": "[💌]",  # 💌 Letter
-            "\U0001F310": "[🌐]",  # 🌐 Web
-            "\U0001F4F1": "[📱]",  # 📱 Mobile
-            "\U0001F3AE": "[🎮]",  # 🎮 Gaming/GPU
-            "\U0001F4BB": "[💻]",  # 💻 Ordinateur
-            "\u2139\ufe0f": "[ℹ]",  # ℹ️ Information
+            "\U0001F4DD": "[Edit]",  # 📝 Éditer
+            "\U0001F4C4": "[Doc]",   # 📄 Document
+            "\U0001F4C5": "[Date]",  # 📅 Calendrier
+            "\u2B50": "[*]",         # ⭐ Star rating
+            "\u270F\ufe0f": "[Pen]",  # ✏️ Edit pencil
+            "\U0001F5D1\ufe0f": "[Del]",   # 🗑️ Delete
+            "\U0001F48C": "[Mail]",  # 💌 Letter
+            "\U0001F310": "[Web]",   # 🌐 Web
+            "\U0001F4F1": "[Mobile]",  # 📱 Mobile
+            "\U0001F3AE": "[GPU]",   # 🎮 Gaming/GPU
+            "\U0001F4BB": "[PC]",    # 💻 Ordinateur
+            "\u2139\ufe0f": "[Info]",  # ℹ️ Information
         }
     
     def configure_emoji_font(self) -> bool:

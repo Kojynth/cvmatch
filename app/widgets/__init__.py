@@ -12,6 +12,8 @@ from importlib import import_module
 _EXPORTS = {
     # Audit header
     "AuditHeaderWidget": ("app.widgets.audit_header_widget", "AuditHeaderWidget"),
+    # Avatar crop dialog
+    "AvatarCropDialog": ("app.widgets.avatar_crop_dialog", "AvatarCropDialog"),
     # Model selector
     "CompactModelSelector": ("app.widgets.model_selector", "CompactModelSelector"),
     # Phone widget
