@@ -220,19 +220,31 @@ class ModelManager:
             seen.add(norm)
             cache_roots.append(Path(resolved))
 
-        hub_cache = str(os.getenv("HUGGINGFACE_HUB_CACHE") or "").strip()
+        hub_cache = str(
+            os.getenv("HUGGINGFACE_HUB_CACHE")
+            or os.getenv("HF_HUB_CACHE")
+            or ""
+        ).strip()
         hf_home = str(os.getenv("HF_HOME") or "").strip()
+        custom_cache_configured = False
         if hub_cache:
             _add_cache_root(Path(hub_cache))
+            custom_cache_configured = True
         if hf_home:
             hf_home_path = Path(hf_home)
             if hf_home_path.name.lower() == "hub":
                 _add_cache_root(hf_home_path)
             else:
                 _add_cache_root(hf_home_path / "hub")
+            custom_cache_configured = True
 
-        _add_cache_root(Path.cwd() / ".hf_cache")
-        _add_cache_root(Path.home() / ".cache" / "huggingface" / "hub")
+        project_cache_root = Path.cwd() / ".hf_cache"
+        if not custom_cache_configured:
+            _add_cache_root(project_cache_root)
+            # Fallback to the default HF cache only when no explicit cache is configured
+            # and no project-local cache exists.
+            if not project_cache_root.exists():
+                _add_cache_root(Path.home() / ".cache" / "huggingface" / "hub")
 
         deleted: List[str] = []
         for cache_root in cache_roots:
