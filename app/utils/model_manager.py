@@ -204,29 +204,62 @@ class ModelManager:
         else:
             keep_key = f"models--{model_id.replace('/', '--')}"
 
-        hf_home = os.getenv("HF_HOME")
-        hub_cache = os.getenv("HUGGINGFACE_HUB_CACHE")
-        if hub_cache:
-            cache_root = Path(hub_cache)
-        elif hf_home:
-            cache_root = Path(hf_home) / "hub"
-        else:
-            cache_root = Path.home() / ".cache" / "huggingface" / "hub"
+        cache_roots: List[Path] = []
+        seen: set[str] = set()
 
-        if not cache_root.exists():
-            return []
+        def _add_cache_root(path_value: Optional[Path]) -> None:
+            if not path_value:
+                return
+            try:
+                resolved = str(path_value.resolve())
+            except Exception:
+                resolved = str(path_value)
+            norm = os.path.normcase(os.path.abspath(resolved))
+            if norm in seen:
+                return
+            seen.add(norm)
+            cache_roots.append(Path(resolved))
+
+        hub_cache = str(
+            os.getenv("HUGGINGFACE_HUB_CACHE")
+            or os.getenv("HF_HUB_CACHE")
+            or ""
+        ).strip()
+        hf_home = str(os.getenv("HF_HOME") or "").strip()
+        custom_cache_configured = False
+        if hub_cache:
+            _add_cache_root(Path(hub_cache))
+            custom_cache_configured = True
+        if hf_home:
+            hf_home_path = Path(hf_home)
+            if hf_home_path.name.lower() == "hub":
+                _add_cache_root(hf_home_path)
+            else:
+                _add_cache_root(hf_home_path / "hub")
+            custom_cache_configured = True
+
+        project_cache_root = Path.cwd() / ".hf_cache"
+        if not custom_cache_configured:
+            _add_cache_root(project_cache_root)
+            # Fallback to the default HF cache only when no explicit cache is configured
+            # and no project-local cache exists.
+            if not project_cache_root.exists():
+                _add_cache_root(Path.home() / ".cache" / "huggingface" / "hub")
 
         deleted: List[str] = []
-        for entry in cache_root.glob("models--*"):
-            if keep_key and entry.name == keep_key:
+        for cache_root in cache_roots:
+            if not cache_root.exists():
                 continue
-            if not entry.is_dir():
-                continue
-            try:
-                shutil.rmtree(entry)
-                deleted.append(entry.name)
-            except Exception as exc:
-                logger.warning("Cache delete failed for %s: %s", entry, exc)
+            for entry in cache_root.glob("models--*"):
+                if keep_key and entry.name == keep_key:
+                    continue
+                if not entry.is_dir():
+                    continue
+                try:
+                    shutil.rmtree(entry)
+                    deleted.append(str(entry))
+                except Exception as exc:
+                    logger.warning("Cache delete failed for %s: %s", entry, exc)
 
         return deleted
 

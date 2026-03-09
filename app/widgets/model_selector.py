@@ -6,7 +6,6 @@ Widget compact pour la sélection de modèles IA dans l'interface de nouvelle ca
 """
 
 from typing import Optional, Callable
-import os
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QComboBox, 
     QPushButton, QFrame, QToolTip
@@ -324,17 +323,6 @@ class CompactModelSelector(QWidget):
         self.update_model_info()
         self.model_changed.emit(model_id)
         logger.info(f"Modele selectionne: {model_id}")
-
-        # Nettoyer les caches de modeles non selectionnes
-        if os.getenv("CVMATCH_PRUNE_MODEL_CACHE") == "1":
-            try:
-                pruned = model_manager.prune_model_cache_except(model_id)
-                if pruned:
-                    logger.info(f"Cache modeles supprime: {len(pruned)} entrees")
-            except Exception as exc:
-                logger.warning(f"Nettoyage cache modeles ignore: {exc}")
-        else:
-            logger.debug("Cache modeles conserve (CVMATCH_PRUNE_MODEL_CACHE=1 pour activer).")
 
     def on_config_changed(self, event_type: str, *args):
         """Callback pour les changements de configuration (synchronisation)."""
