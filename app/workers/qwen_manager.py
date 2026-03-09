@@ -31,6 +31,11 @@ try:
     os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
     os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
     os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+    alloc_conf = str(os.getenv("PYTORCH_CUDA_ALLOC_CONF") or "").strip()
+    if not alloc_conf:
+        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    elif "expandable_segments" not in alloc_conf.lower():
+        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = f"{alloc_conf},expandable_segments:True"
 
     TRANSFORMERS_AVAILABLE = True
     TORCH_AVAILABLE = True
@@ -2294,6 +2299,47 @@ class QwenManager:
 
         return False
 
+    def _should_auto_enable_disk_offload_for_4bit(self) -> Tuple[bool, str]:
+        """Enable disk offload automatically for 4-bit loads under VRAM pressure."""
+        disable_auto = self._resolve_bool_setting(
+            (self.custom_parameters or {}).get("disable_auto_disk_offload_4bit"),
+            os.getenv("CVMATCH_DISABLE_AUTO_DISK_OFFLOAD_4BIT"),
+            False,
+        )
+        if disable_auto:
+            return False, "disabled_by_config"
+
+        details = (
+            dict(self._last_max_memory_map_details)
+            if isinstance(getattr(self, "_last_max_memory_map_details", None), dict)
+            else {}
+        )
+        clamp_reason = str(details.get("gpu_clamp_reason") or "").strip()
+        if clamp_reason:
+            return True, f"gpu_budget_clamped:{clamp_reason}"
+
+        free_vram_gb = float(self._get_free_vram_gb() or 0.0)
+        total_vram_gb = float(self._get_total_vram_gb() or 0.0)
+        ratio = (free_vram_gb / total_vram_gb) if total_vram_gb > 0 else 0.0
+        try:
+            free_threshold_gb = float(
+                os.getenv("CVMATCH_AUTO_DISK_OFFLOAD_4BIT_FREE_VRAM_GB", "8.5")
+            )
+        except Exception:
+            free_threshold_gb = 8.5
+        try:
+            ratio_threshold = float(
+                os.getenv("CVMATCH_AUTO_DISK_OFFLOAD_4BIT_FREE_RATIO", "0.72")
+            )
+        except Exception:
+            ratio_threshold = 0.72
+
+        if free_vram_gb > 0 and free_vram_gb <= max(1.0, free_threshold_gb):
+            return True, f"free_vram_below_threshold:{free_vram_gb:.2f}GB"
+        if total_vram_gb > 0 and ratio > 0 and ratio <= max(0.10, ratio_threshold):
+            return True, f"free_ratio_below_threshold:{ratio:.2f}"
+        return False, ""
+
     def _resolve_disk_offload_enabled(
         self,
         effective_custom: Dict[str, Any],
@@ -2316,7 +2362,17 @@ class QwenManager:
                 os.getenv("CVMATCH_FORCE_DISK_OFFLOAD"),
                 False,
             )
-            if not force_disk and disk_offload_enabled:
+            auto_disk, auto_reason = self._should_auto_enable_disk_offload_for_4bit()
+            if force_disk:
+                disk_offload_enabled = True
+                logger.info("4-bit mode: disk offload forced ON by config.")
+            elif auto_disk:
+                disk_offload_enabled = True
+                logger.warning(
+                    "4-bit mode: auto-enabling disk offload due VRAM pressure (%s).",
+                    auto_reason,
+                )
+            elif disk_offload_enabled:
                 logger.warning(
                     "4-bit mode: disk offload disabled by default to avoid meta tensor failures."
                 )
@@ -2414,10 +2470,11 @@ class QwenManager:
 
                     offload_folder_resolved = str(offload_dir)
 
+                    offload_state_default = False if using_4bit else True
                     offload_state_dict = self._resolve_bool_setting(
                         effective_custom.get("offload_state_dict"),
                         os.getenv("CVMATCH_OFFLOAD_STATE_DICT"),
-                        True,
+                        offload_state_default,
                     )
 
                     if self._is_survival_mode():
@@ -5260,4 +5317,3 @@ Genere la lettre finale (texte uniquement), en respectant la structure demandee.
             self.cleanup_memory()
         except Exception:
             pass
-

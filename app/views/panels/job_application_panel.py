@@ -582,6 +582,8 @@ class JobApplicationPanel(QWidget):
             )
             return
 
+        self._prune_model_cache_before_generation(widget)
+
         widget._preview_regen_in_progress = bool(from_preview)
 
         if not cv_only_regen:
@@ -645,6 +647,51 @@ class JobApplicationPanel(QWidget):
         self._show_generation_dialog(widget, "Fichier en cours de génération...")
         worker.start()
 
+    def _resolve_selected_model_id(self, widget) -> str:
+        model_id = ""
+        try:
+            from ...utils.model_config_manager import model_config_manager
+
+            model_id = str(
+                getattr(model_config_manager.get_current_config(), "model_id", "") or ""
+            ).strip()
+        except Exception:
+            model_id = ""
+
+        if not model_id:
+            selector = getattr(widget, "model_selector", None)
+            if selector is not None:
+                try:
+                    model_id = str(selector.get_current_model() or "").strip()
+                except Exception:
+                    model_id = ""
+
+        return model_id
+
+    def _prune_model_cache_before_generation(self, widget) -> None:
+        selected_model_id = self._resolve_selected_model_id(widget)
+        if not selected_model_id:
+            logger.warning("Cache prune skipped: selected model id is empty.")
+            return
+
+        try:
+            from ...utils.model_manager import model_manager
+
+            pruned = model_manager.prune_model_cache_except(selected_model_id)
+            if pruned:
+                logger.info(
+                    "Model cache pruned before generation: selected=%s removed=%s",
+                    selected_model_id,
+                    len(pruned),
+                )
+            else:
+                logger.info(
+                    "Model cache already clean before generation: selected=%s",
+                    selected_model_id,
+                )
+        except Exception as exc:
+            logger.warning("Model cache prune before generation ignored: %s", exc)
+
     def start_cover_letter_generation(
         self,
         widget,
@@ -681,6 +728,8 @@ class JobApplicationPanel(QWidget):
                 parent=self,
             )
             return
+
+        self._prune_model_cache_before_generation(widget)
 
         widget._preview_regen_in_progress = bool(from_preview)
         offer_payload = dict(widget.offer_data)
