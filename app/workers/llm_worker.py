@@ -2,7 +2,7 @@
 LLM Worker
 ==========
 
-Worker pour la gÃ©nÃ©ration de CV.
+Worker pour la génération de CV.
 """
 import json
 import re
@@ -53,7 +53,7 @@ except ImportError:
     class MockModelOptimizer:
         def check_hf_xet_status(self): return {"optimizations_active": False}
         def optimize_model_download(self, model_name, progress_callback=None, force_download=False): 
-            if progress_callback: progress_callback("ðŸ“¥ TÃ©lÃ©chargement standard...")
+            if progress_callback: progress_callback("💠 Téléchargement standard...")
             return model_name
     model_optimizer = MockModelOptimizer()
 
@@ -98,9 +98,9 @@ def _normalize_language(language: Optional[str]) -> str:
 
 def _estimate_model_size_gb(model_name: Optional[str], model_id: Optional[str] = None) -> float:
     """
-    Estime la "taille" du modÃ¨le (en pratique: ordre de grandeur) Ã  partir du nom/id.
+    Estime la "taille" du modèle (en pratique: ordre de grandeur) à partir du nom/id.
 
-    Note: cette valeur est utilisÃ©e comme signal heuristique pour `gpu_manager.recommend_quantization()`.
+    Note: cette valeur est utilisée comme signal heuristique pour `gpu_manager.recommend_quantization()`.
     """
     haystack = f"{model_id or ''} {model_name or ''}".lower()
     if "32b" in haystack:
@@ -131,7 +131,7 @@ def _trim_text(value: Any, max_chars: int) -> str:
         return ""
     if len(text) <= max_chars:
         return text
-    return text[: max_chars - 1].rstrip() + "â€¦"
+    return text[: max_chars - 1].rstrip() + "…"
 
 
 def _coerce_list(value: Any) -> List[Any]:
@@ -173,26 +173,23 @@ def _hydrate_offer_analysis_from_application(
 ) -> None:
     if not isinstance(offer_data, dict) or not isinstance(application_id, int):
         return
-    current_analysis = offer_data.get("analysis")
-    if (
-        isinstance(current_analysis, dict)
-        and current_analysis.get(COVER_LETTER_STYLE_ANALYSIS_KEY)
-    ):
+    current = offer_data.get("analysis")
+    if isinstance(current, dict) and current.get(COVER_LETTER_STYLE_ANALYSIS_KEY):
         return
     try:
         with get_session() as session:
-            application = session.get(JobApplication, application_id)
-            db_analysis = (
-                dict(application.offer_analysis)
-                if application is not None and isinstance(application.offer_analysis, dict)
+            app = session.get(JobApplication, application_id)
+            stored = (
+                dict(app.offer_analysis)
+                if app is not None and isinstance(app.offer_analysis, dict)
                 else {}
             )
-        if not db_analysis:
+        if not stored:
             return
-        merged_analysis = dict(db_analysis)
-        if isinstance(current_analysis, dict):
-            merged_analysis.update(current_analysis)
-        offer_data["analysis"] = merged_analysis
+        merged = dict(stored)
+        if isinstance(current, dict):
+            merged.update(current)
+        offer_data["analysis"] = merged
     except Exception as exc:
         logger.debug(
             "Offer analysis hydration skipped for application %s: %s",
@@ -212,20 +209,16 @@ def _persist_cover_letter_style_in_offer_analysis(
         if isinstance(style_payload.get("style_profile"), dict)
         else {}
     )
-    style_mode = str(
-        style_payload.get("style_mode") or style_profile.get("mode") or ""
-    ).strip()
+    style_mode = str(style_payload.get("style_mode") or style_profile.get("mode") or "").strip()
     if not style_mode:
         return
     analysis = offer_data.get("analysis")
     if not isinstance(analysis, dict):
         analysis = {}
-    style_record = {
+    analysis[COVER_LETTER_STYLE_ANALYSIS_KEY] = {
         "mode": style_mode,
         "label": str(style_profile.get("label") or ""),
-        "source": str(
-            style_payload.get("style_source") or style_profile.get("source") or "auto"
-        ),
+        "source": str(style_payload.get("style_source") or style_profile.get("source") or "auto"),
         "freeze_applied": bool(style_payload.get("freeze_applied")),
         "instruction_override": bool(style_payload.get("instruction_override")),
         "template_hint": str(style_profile.get("template_hint") or ""),
@@ -235,7 +228,6 @@ def _persist_cover_letter_style_in_offer_analysis(
             else {}
         ),
     }
-    analysis[COVER_LETTER_STYLE_ANALYSIS_KEY] = style_record
     offer_data["analysis"] = analysis
 
 
@@ -895,15 +887,15 @@ except ImportError:
 
 
 class CVGenerationWorker(QThread):
-    """Worker pour gÃ©nÃ©rer un CV en arriÃ¨re-plan.
+    """Worker pour générer un CV en arrière-plan.
 
-    Note: Utilise ProfileWorkerData au lieu de UserProfile pour Ã©viter
+    Note: Utilise ProfileWorkerData au lieu de UserProfile pour éviter
     les erreurs SQLAlchemy DetachedInstanceError dans les threads background.
     """
     progress_updated = Signal(str)
     generation_finished = Signal(dict)
     error_occurred = Signal(str)
-    # Signal pour incrÃ©menter les stats du profil (exÃ©cutÃ© dans le thread principal)
+    # Signal pour incrémenter les stats du profil (exécuté dans le thread principal)
     profile_stats_updated = Signal(int)  # profile_id
 
     def __init__(
@@ -920,7 +912,7 @@ class CVGenerationWorker(QThread):
         self.profile_data = profile_data
         self.offer_data = offer_data
         self.template = template
-        # Le QwenManager se configure automatiquement selon le modÃ¨le sÃ©lectionnÃ©
+        # Le QwenManager se configure automatiquement selon le modèle sélectionné
         self.qwen_manager = QwenManager(self.profile_data.model_version)
         self.application_id: Optional[int] = (
             application_id if isinstance(application_id, int) else None
@@ -3999,7 +3991,7 @@ OUTPUT RULES:
         return {}
 
     def build_cover_letter_prompt(self) -> str:
-        """Build cover letter prompt via style policy module."""
+        """Build cover-letter prompt via style policy module."""
         if not self._offer_analysis_hydrated:
             _hydrate_offer_analysis_from_application(self.offer_data, self.application_id)
             self._offer_analysis_hydrated = True
@@ -4143,9 +4135,9 @@ OUTPUT RULES:
         return application
 
 class CoverLetterGenerationWorker(QThread):
-    """Worker pour gÃ©nÃ©rer une lettre de motivation en arriÃ¨re-plan.
+    """Worker pour générer une lettre de motivation en arrière-plan.
 
-    Note: Utilise ProfileWorkerData au lieu de UserProfile pour Ã©viter
+    Note: Utilise ProfileWorkerData au lieu de UserProfile pour éviter
     les erreurs SQLAlchemy DetachedInstanceError dans les threads background.
     """
     progress_updated = Signal(str)
@@ -4176,30 +4168,30 @@ class CoverLetterGenerationWorker(QThread):
         self.qwen_manager = QwenManager(self.profile_data.model_version)
 
     def run(self):
-        """Lance la gÃ©nÃ©ration de lettre de motivation avec le modÃ¨le IA sÃ©lectionnÃ©."""
+        """Lance la génération de lettre de motivation avec le modèle IA sélectionné."""
         try:
-            # Callback pour les mises Ã  jour de progrÃ¨s
+            # Callback pour les mises à jour de progrès
             def progress_callback(message):
                 self.progress_updated.emit(message)
 
-            # Recharger la configuration du modÃ¨le en cas de changement
+            # Recharger la configuration du modèle en cas de changement
             self.qwen_manager._load_selected_model_config()
             note = getattr(self.qwen_manager, "last_model_resolution_note", None)
             if note:
                 progress_callback(note)
                 self.qwen_manager.last_model_resolution_note = None
 
-            # Ã‰tape 1: Chargement du modÃ¨le
+            # Étape 1: Chargement du modèle
             model_name = getattr(self.qwen_manager, 'current_model_id', 'IA')
-            progress_callback(f"ðŸ¤– Initialisation du modÃ¨le {model_name}...")
+            progress_callback(f"💠 Initialisation du modèle {model_name}...")
             self.qwen_manager.load_model(progress_callback, allow_fallback=False)
 
             # Ã‰tape 2: Construction du prompt
-            progress_callback("ðŸ“ Construction du prompt pour la lettre...")
+            progress_callback("🔍 Construction du prompt pour la lettre...")
             prompt = self.build_letter_prompt()
 
             # Ã‰tape 3: GÃ©nÃ©ration de la lettre
-            progress_callback("ðŸ’Œ GÃ©nÃ©ration de la lettre de motivation...")
+            progress_callback("💬 Génération de la lettre de motivation...")
             cover_letter = self.qwen_manager.generate_cover_letter(prompt, progress_callback)
 
             generation_audit, cover_letter_review = self._build_cover_letter_generation_audit(
@@ -4207,7 +4199,7 @@ class CoverLetterGenerationWorker(QThread):
             )
 
             # Ã‰tape 4: Sauvegarde
-            progress_callback("ðŸ’¾ Sauvegarde de la lettre...")
+            progress_callback("💾 Sauvegarde de la lettre...")
             application = self.save_cover_letter(
                 cover_letter,
                 generation_audit=generation_audit,
@@ -4215,7 +4207,7 @@ class CoverLetterGenerationWorker(QThread):
             )
 
             # Ã‰tape 5: Nettoyage mÃ©moire
-            progress_callback("ðŸ§¹ Nettoyage mÃ©moire...")
+            progress_callback("🧹 Nettoyage mémoire...")
             self.qwen_manager.cleanup_memory()
 
             # RÃ©sultat final
@@ -4237,20 +4229,20 @@ class CoverLetterGenerationWorker(QThread):
                 ),
             }
 
-            progress_callback("âœ… Lettre gÃ©nÃ©rÃ©e avec succÃ¨s !")
+            progress_callback("✅ Lettre générée avec succès !")
             self.generation_finished.emit(result)
 
         except Exception as e:
-            logger.error(f"Erreur gÃ©nÃ©ration lettre : {e}")
+            logger.error(f"Erreur génération lettre : {e}")
             # Nettoyage en cas d'erreur
             try:
                 self.qwen_manager.cleanup_memory()
             except:
                 pass
-            self.error_occurred.emit(f"Erreur gÃ©nÃ©ration: {str(e)}")
+            self.error_occurred.emit(f"Erreur génération: {str(e)}")
 
     def build_letter_prompt(self) -> str:
-        """Build cover letter prompt via style policy module."""
+        """Build cover-letter prompt via style policy module."""
         if not self._offer_analysis_hydrated:
             _hydrate_offer_analysis_from_application(self.offer_data, self.application_id)
             self._offer_analysis_hydrated = True
@@ -4435,11 +4427,11 @@ class CoverLetterGenerationWorker(QThread):
 class FineTuningWorker(QThread):
     """Worker pour le fine-tuning (version future).
 
-    Note: Utilise ProfileWorkerData au lieu de UserProfile pour Ã©viter
+    Note: Utilise ProfileWorkerData au lieu de UserProfile pour éviter
     les erreurs SQLAlchemy DetachedInstanceError dans les threads background.
     """
     progress_updated = Signal(str, int)  # message, pourcentage
-    finished = Signal(str)  # chemin du modÃ¨le
+    finished = Signal(str)  # chemin du modèle
     error_occurred = Signal(str)
 
     def __init__(self, profile_data: ProfileWorkerData):
@@ -4449,19 +4441,19 @@ class FineTuningWorker(QThread):
     def run(self):
         """Lance le fine-tuning (placeholder pour version future)."""
         try:
-            self.progress_updated.emit("ðŸ§  PrÃ©paration des donnÃ©es d'entraÃ®nement...", 10)
+            self.progress_updated.emit("💠 Préparation des données d'entraînement...", 10)
             time.sleep(2)
 
-            self.progress_updated.emit("âš™ï¸ Configuration du modÃ¨le...", 30)
+            self.progress_updated.emit("🔍 Configuration du modèle...", 30)
             time.sleep(3)
 
-            self.progress_updated.emit("ðŸ”¥ Fine-tuning en cours...", 50)
+            self.progress_updated.emit("🔄 Fine-tuning en cours...", 50)
             time.sleep(10)  # Simulation d'un long processus
 
-            self.progress_updated.emit("ðŸ’¾ Sauvegarde du modÃ¨le personnalisÃ©...", 90)
+            self.progress_updated.emit("💾 Sauvegarde du modèle personnalisé...", 90)
             time.sleep(2)
 
-            # Mise Ã  jour des mÃ©tadonnÃ©es du profil via SQL direct (Ã©vite DetachedInstanceError)
+            # Mise à jour des métadonnées du profil via SQL direct (évite DetachedInstanceError)
             from datetime import datetime
             new_version = "v" + str(int(self.profile_data.model_version.replace("v", "")) + 1) if "v" in self.profile_data.model_version else "v1"
 
@@ -4474,13 +4466,14 @@ class FineTuningWorker(QThread):
                     )
                     session.commit()
             except Exception as e:
-                logger.warning(f"Impossible de mettre Ã  jour les mÃ©tadonnÃ©es du profil: {e}")
+                logger.warning(f"Impossible de mettre à jour les métadonnées du profil: {e}")
 
             model_path = f"models/qwen2.5-32b-{self.profile_data.name.lower().replace(' ', '_')}-{new_version}/"
 
-            self.progress_updated.emit("âœ… Fine-tuning terminÃ© !", 100)
+            self.progress_updated.emit("✅ Fine-tuning terminé !", 100)
             self.finished.emit(model_path)
 
         except Exception as e:
             logger.error(f"Erreur fine-tuning : {e}")
             self.error_occurred.emit(str(e))
+

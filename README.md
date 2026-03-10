@@ -1,11 +1,14 @@
 # CVMatch générateur de CV
 
-CVMatch est une application desktop destinée à générer des CV et des lettres de motivation adaptées à votre profil. Les informations saisies sont conservés en local sur votre ordinateur uniquement. Aucune information n'est envoyé sur internet ou sur le cloud. 
+CVMatch est une application desktop destinée à générer des CV et des lettres de motivation adaptées à votre profil. Les informations saisies sont conservés en local sur votre ordinateur uniquement. Aucune information n'est envoyé sur internet ou sur un cloud. 
 Le seul moment où une connexion internet est requise est au moment de l'installation des dépendances python et les modèles IA. Autrement toutes les opérations se dérouleront sur l'application
 
-#Warning
+# Warning
 Je n'ai pour le moment réalisé aucun test sur la version Linux donc je ne peux pas garantir son bon fonctionnement.
 Je n'ai même pas encore lancé l'application sur Linux et pour le moment je n'ai pas eu le temps de le faire.
+La doc est obsolète faut que je pense à la màj un jour.
+Aucune idée si ça fonctionne avec des offres en anglais j'ai surtout testé avec des offres en fr
+
 
 # Prérequis
 
@@ -23,16 +26,15 @@ Je n'ai même pas encore lancé l'application sur Linux et pour le moment je n'a
 ## Logiciels à préinstaller
 
 - **Python** : **3.10+** (idéalement 3.10 à 3.13) installé et accessible via `python` dans le PATH.
-  - Requis aussi : `pip` + module `venv` (en général inclus avec Python).
-
-## Prérequis IA (optionnel, mais recommandé si tu veux de la génération LLM)
+- 
+## Prérequis IA (optionnel, mais recommandé génération LLM)
 
 - **GPU** : NVIDIA compatible CUDA. (je n'ai pas testé avec des GPU hors Nvidia faute de matériel)
   - GPU minimum la série 40xx.
 - **Pilotes NVIDIA** : à jour (pour que PyTorch puisse détecter CUDA).
   - Le projet référence des builds PyTorch **CUDA 12.1 (cu121)** : avoir ses driver à jours NVIDIA c'est important.
 
-> Note : CVMatch peut fonctionner **sans GPU** (mode CPU), mais ce sera plus lent et certains modèles seront inadaptés et surtout vous risquez d'user plus vite votre CPU.
+> Note : CVMatch peut fonctionner **sans GPU** (mode CPU), mais ce sera plus lent et certains modèles seront inadaptés et surtout vous risquez d'user plus vite votre CPU avec certains usages.
 
 ## Prérequis “fonctionnels” selon les features (optionnels)
 
@@ -52,7 +54,7 @@ Pour **Windows**, utilisez les fichiers en `.bat`. Pour **Linux**, utilisez les 
 
 2) **Installer l’IA**
 - **Windows** : lancez `installation_cvmatch_ai_windows.bat`
-- **Linux/macOS** : lancez `installation_cvmatch_ai_linux.sh`
+- **Linux/macOS** : lancez `bash installation_cvmatch_ai_linux.sh`
 
 Notes IA :
 - Les modèles sont téléchargés dans le cache Hugging Face (par défaut `./.hf_cache/`).
@@ -61,7 +63,7 @@ Notes IA :
 
 3) **Lancer l’application**
 - **Windows** : `cvmatch.bat`
-- **Linux** : `cvmatch.sh`
+- **Linux** :  `bash cvmatch.sh`
 
 Un terminal s’ouvre : il affiche les étapes (création/activation du venv, vérifications, etc.) et écrit des logs dans `./logs/sessionlog/`.
 

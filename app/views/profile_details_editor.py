@@ -187,7 +187,7 @@ class PersonalInfoSection(QGroupBox):
         return pix
 
     def _on_photo_selected_dialog(self):
-        """Ouvre le sélecteur de fichier pour choisir une photo."""
+        """Ouvre le sélecteur de fichier, puis le dialog de recadrage circulaire."""
         path, _ = QFileDialog.getOpenFileName(
             self, "Sélectionner une photo de profil", "",
             "Images (*.jpg *.jpeg *.png *.webp)"
@@ -199,14 +199,34 @@ class PersonalInfoSection(QGroupBox):
             photos_dir = Path("user_data") / "photos"
             photos_dir.mkdir(parents=True, exist_ok=True)
             dest = photos_dir / f"profile_{profile_id}.jpg"
+
+            saved = False
             try:
-                from PIL import Image
-                img = Image.open(path).convert("RGB")
-                img.thumbnail((800, 800))
-                img.save(str(dest), "JPEG", quality=85)
+                from PIL import Image  # noqa: F401 – presence check
+                from app.widgets.avatar_crop_dialog import AvatarCropDialog
+
+                dlg = AvatarCropDialog(path, parent=self)
+                if dlg.exec() != QDialog.DialogCode.Accepted:
+                    return
+                cropped = dlg.get_cropped_pil_image(output_size=512)
+                if cropped is None:
+                    return
+                cropped.save(str(dest), "JPEG", quality=88)
+                saved = True
             except ImportError:
-                import shutil
-                shutil.copy2(path, str(dest))
+                pass  # Pillow absent → fallback below
+
+            if not saved:
+                # Fallback: simple thumbnail copy (no crop dialog)
+                try:
+                    from PIL import Image
+                    img = Image.open(path).convert("RGB")
+                    img.thumbnail((800, 800))
+                    img.save(str(dest), "JPEG", quality=85)
+                except ImportError:
+                    import shutil
+                    shutil.copy2(path, str(dest))
+
             dest_str = str(dest)
             self.profile.profile_photo_path = dest_str
             self._current_photo_path = dest_str
