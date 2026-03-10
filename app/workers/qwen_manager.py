@@ -236,62 +236,10 @@ class QwenManager:
                     self.custom_parameters.setdefault("force_4bit_nf4", True)
 
                 if self._is_repo_auth_required_without_token(self.model_name):
-                    blocked_prefix = self._extract_repo_prefix(self.model_name)
-                    fallback = None
-                    try:
-                        import psutil  # type: ignore
-
-                        available_ram_gb = psutil.virtual_memory().available / (1024**3)
-                    except Exception:
-                        available_ram_gb = 0.0
-                    try:
-                        available_vram_gb = self._get_free_vram_gb()
-                    except Exception:
-                        available_vram_gb = 0.0
-                    try:
-                        fallback = self._resolve_fallback_candidate(
-                            available_ram_gb,
-                            available_vram_gb,
-                            stage=self._get_runtime_stage_name(),
-                            excluded_repo_prefixes=[blocked_prefix] if blocked_prefix else None,
-                            prefer_quality=True,
-                            ram_fit_ratio=1.10,
-                            require_memory_fit=True,
-                        )
-                    except Exception:
-                        fallback = None
-
-                    if fallback and fallback.get("model_id") and fallback.get("model_path"):
-                        fallback_id = str(fallback.get("model_id") or "").strip()
-                        fallback_info = model_manager.get_model_info(fallback_id)
-                        self.model_name = str(fallback.get("model_path") or self.model_name)
-                        self.current_model_id = fallback_id or self.current_model_id
-                        self.current_loader = (
-                            getattr(fallback_info, "loader", None)
-                            or self.current_loader
-                            or "transformers"
-                        )
-                        self.role_params = (
-                            (getattr(fallback_info, "metadata", None) or {}).get("role_params", {})
-                            if fallback_info is not None
-                            else {}
-                        )
-                        if (
-                            fallback_info is not None
-                            and getattr(fallback_info, "quantization", "") == "nf4"
-                        ):
-                            self.custom_parameters.setdefault("force_4bit_nf4", True)
-
-                        note = (
-                            f"[MODEL_ACCESS] '{config.model_id}' requires HF auth token. "
-                            f"Auto-fallback to open model '{self.current_model_id}'."
-                        )
-                    else:
-                        note = (
-                            f"[MODEL_ACCESS] '{config.model_id}' requires HF auth token. "
-                            "No open fallback found; generation may degrade."
-                        )
-
+                    note = (
+                        f"[MODEL_ACCESS] '{config.model_id}' requires HF auth token. "
+                        "Keeping selected model (no automatic model fallback)."
+                    )
                     self.last_model_resolution_note = note
                     logger.warning(note)
 
@@ -596,13 +544,9 @@ class QwenManager:
         return self._to_bool(custom.get("universal_ministral_recipe"), True)
 
     def _allow_model_fallback(self) -> bool:
-        custom = self.custom_parameters or {}
-        env_value = os.getenv("CVMATCH_DISABLE_MODEL_FALLBACK")
-        if env_value is not None:
-            disabled = self._to_bool(env_value, False)
-        else:
-            disabled = self._to_bool(custom.get("disable_model_fallback"), False)
-        return not disabled
+        # Product policy: never auto-switch to a smaller/different model.
+        # Keep user's selected model and rely on subprocess/offload recovery paths.
+        return False
 
     def _is_selected_model_lock_enabled(self) -> bool:
         custom = self.custom_parameters or {}
@@ -3150,6 +3094,15 @@ class QwenManager:
         """Charge le modèle sélectionné avec optimisations automatiques."""
         if allow_fallback and not self._allow_model_fallback():
             allow_fallback = False
+        if allow_fallback:
+            try:
+                if self._is_selected_model_lock_enabled():
+                    allow_fallback = False
+                    logger.info(
+                        "Model fallback disabled because selected-model lock is active."
+                    )
+            except Exception:
+                pass
 
         if self._is_selected_model_lock_enabled():
             self._enforce_selected_model_lock(reason="load_model")

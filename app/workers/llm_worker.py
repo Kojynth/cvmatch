@@ -956,31 +956,15 @@ class CVGenerationWorker(QThread):
         return "normal"
 
     def _should_use_stage_subprocess(self) -> bool:
-        try:
-            if self.qwen_manager._is_survival_mode():
-                return True
-        except Exception:
-            pass
         env_flag = os.getenv("CVMATCH_SUBPROCESS_STAGES")
         if env_flag is not None:
             return env_flag.strip().lower() in ("1", "true", "yes", "y")
         custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
         if "subprocess_stages" in custom:
             return bool(custom.get("subprocess_stages"))
-
-        pressure = self._get_runtime_memory_pressure_level(force_refresh=True)
-        if pressure in {"tight", "critical"}:
-            return True
-        if pressure == "elevated":
-            try:
-                return bool(self.qwen_manager._is_low_vram_mode())
-            except Exception:
-                return True
-
-        try:
-            return bool(self.qwen_manager._is_low_vram_mode() and pressure != "normal")
-        except Exception:
-            return False
+        # Default strategy is now adaptive in orchestrator:
+        # start without subprocess and retry per-stage in subprocess on memory failure.
+        return False
 
     @staticmethod
     def _to_bool_setting(value: Any, default: bool = False) -> bool:
@@ -3781,6 +3765,45 @@ OUTPUT RULES:
             success, _phase_results = orchestrator.run(state)
 
             if not success:
+                if self._should_retry_with_subprocess(
+                    state=state,
+                    phase_results=_phase_results,
+                ):
+                    self.progress_updated.emit(
+                        "[RECOVERY] Echec memoire detecte; retry automatique en mode subprocess..."
+                    )
+                    try:
+                        self.qwen_manager.cleanup_memory()
+                    except Exception:
+                        pass
+
+                    retry_orchestrator, retry_state = build_default_pipeline(
+                        worker=self, qwen_manager=self.qwen_manager
+                    )
+                    retry_state.profile_json = profile_json
+                    retry_state.existing_snapshot = existing_snapshot
+                    retry_state.progress_callback = self.progress_updated.emit
+                    retry_state.use_subprocess = True
+
+                    logger.warning(
+                        "Retrying pipeline once with subprocess stages after memory-related failure."
+                    )
+                    retry_success, retry_phase_results = retry_orchestrator.run(
+                        retry_state
+                    )
+                    if retry_success:
+                        self.generation_finished.emit(
+                            self._build_result_dict(retry_state)
+                        )
+                        return
+                    failed_phase, failed_error = self._extract_failed_phase_error(
+                        retry_phase_results
+                    )
+                    logger.error(
+                        "Subprocess retry failed at phase '%s': %s",
+                        failed_phase or "unknown",
+                        failed_error or "unknown error",
+                    )
                 self._complete_with_deterministic_fallback()
                 return
 
@@ -3799,6 +3822,76 @@ OUTPUT RULES:
             except Exception:
                 pass
             self.error_occurred.emit(f"Erreur generation: {str(exc)}")
+
+    @staticmethod
+    def _extract_failed_phase_error(phase_results: Any) -> Tuple[str, str]:
+        """Extract failing phase name/error from pipeline result list."""
+        if not isinstance(phase_results, list):
+            return "", ""
+        for result in reversed(phase_results):
+            if result is None:
+                continue
+            status_name = str(getattr(getattr(result, "status", None), "name", "")).upper()
+            if status_name != "FAILED":
+                continue
+            return (
+                str(getattr(result, "phase_name", "") or ""),
+                str(getattr(result, "error", "") or ""),
+            )
+        return "", ""
+
+    def _should_retry_with_subprocess(self, *, state: Any, phase_results: Any) -> bool:
+        """Return True when a non-subprocess pipeline should retry in subprocess mode."""
+        if bool(getattr(state, "use_subprocess", False)):
+            return False
+
+        # Per-phase adaptive subprocess recovery is handled by PipelineOrchestrator.
+        # Keep global full-pipeline retry disabled while adaptive mode is enabled.
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        adaptive_custom = custom.get("adaptive_subprocess_recovery")
+        adaptive_env = os.getenv("CVMATCH_ADAPTIVE_SUBPROCESS_RECOVERY")
+        if adaptive_env is not None:
+            adaptive_enabled = adaptive_env.strip().lower() in ("1", "true", "yes", "y", "on")
+        elif adaptive_custom is not None:
+            adaptive_enabled = str(adaptive_custom).strip().lower() in ("1", "true", "yes", "y", "on")
+        else:
+            adaptive_enabled = True
+        if adaptive_enabled:
+            return False
+
+        env_toggle = os.getenv("CVMATCH_RETRY_SUBPROCESS_ON_MEMORY_ERROR")
+        if env_toggle is not None and env_toggle.strip().lower() in ("0", "false", "no", "n", "off"):
+            return False
+
+        phase_name, failure_error = self._extract_failed_phase_error(phase_results)
+        if not failure_error:
+            return False
+
+        is_memory_failure = False
+        try:
+            is_memory_failure = bool(
+                self.qwen_manager._is_memory_pressure_failure_reason(failure_error)
+            )
+        except Exception:
+            is_memory_failure = False
+
+        if not is_memory_failure:
+            lowered = failure_error.strip().lower()
+            is_memory_failure = (
+                "cuda out of memory" in lowered
+                or "out of memory" in lowered
+                or "oom" in lowered
+            )
+
+        if not is_memory_failure:
+            return False
+
+        logger.warning(
+            "Will retry with subprocess mode after memory-related failure: phase=%s error=%s",
+            phase_name or "unknown",
+            failure_error[:240],
+        )
+        return True
 
     def _build_result_dict(self, state) -> dict:
         """Build generation_finished payload from completed pipeline state."""
