@@ -1206,13 +1206,13 @@ class PipelineOrchestrator:
             # Explicit global subprocess mode remains authoritative.
             return False
 
-        custom = getattr(getattr(state, "qwen_manager", None), "custom_parameters", None) or {}
-        if "adaptive_subprocess_recovery" in custom:
-            return self._to_bool(custom.get("adaptive_subprocess_recovery"), True)
-
         env_value = os.getenv("CVMATCH_ADAPTIVE_SUBPROCESS_RECOVERY")
         if env_value is not None:
             return self._to_bool(env_value, True)
+
+        custom = getattr(getattr(state, "qwen_manager", None), "custom_parameters", None) or {}
+        if "adaptive_subprocess_recovery" in custom:
+            return self._to_bool(custom.get("adaptive_subprocess_recovery"), True)
 
         return True
 
