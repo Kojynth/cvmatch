@@ -964,42 +964,15 @@ class CVGenerationWorker(QThread):
         return "normal"
 
     def _should_use_stage_subprocess(self) -> bool:
-        try:
-            if self.qwen_manager._is_survival_mode():
-                return True
-        except Exception:
-            pass
         env_flag = os.getenv("CVMATCH_SUBPROCESS_STAGES")
         if env_flag is not None:
             return env_flag.strip().lower() in ("1", "true", "yes", "y")
         custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
         if "subprocess_stages" in custom:
             return bool(custom.get("subprocess_stages"))
-        try:
-            mm = getattr(self.qwen_manager, "_memory_manager", None)
-            failures = int(getattr(mm, "consecutive_failures", 0) or 0)
-            if failures > 0:
-                logger.warning(
-                    "Stage subprocess auto-enabled after prior load failures: failures=%s",
-                    failures,
-                )
-                return True
-        except Exception:
-            pass
-
-        pressure = self._get_runtime_memory_pressure_level(force_refresh=True)
-        if pressure in {"tight", "critical"}:
-            return True
-        if pressure == "elevated":
-            try:
-                return bool(self.qwen_manager._is_low_vram_mode())
-            except Exception:
-                return True
-
-        try:
-            return bool(self.qwen_manager._is_low_vram_mode() and pressure != "normal")
-        except Exception:
-            return False
+        # Default strategy is now adaptive in orchestrator:
+        # start without subprocess and retry per-stage in subprocess on memory failure.
+        return False
 
     @staticmethod
     def _to_bool_setting(value: Any, default: bool = False) -> bool:
@@ -3878,6 +3851,20 @@ OUTPUT RULES:
     def _should_retry_with_subprocess(self, *, state: Any, phase_results: Any) -> bool:
         """Return True when a non-subprocess pipeline should retry in subprocess mode."""
         if bool(getattr(state, "use_subprocess", False)):
+            return False
+
+        # Per-phase adaptive subprocess recovery is handled by PipelineOrchestrator.
+        # Keep global full-pipeline retry disabled while adaptive mode is enabled.
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        adaptive_custom = custom.get("adaptive_subprocess_recovery")
+        adaptive_env = os.getenv("CVMATCH_ADAPTIVE_SUBPROCESS_RECOVERY")
+        if adaptive_env is not None:
+            adaptive_enabled = adaptive_env.strip().lower() in ("1", "true", "yes", "y", "on")
+        elif adaptive_custom is not None:
+            adaptive_enabled = str(adaptive_custom).strip().lower() in ("1", "true", "yes", "y", "on")
+        else:
+            adaptive_enabled = True
+        if adaptive_enabled:
             return False
 
         env_toggle = os.getenv("CVMATCH_RETRY_SUBPROCESS_ON_MEMORY_ERROR")

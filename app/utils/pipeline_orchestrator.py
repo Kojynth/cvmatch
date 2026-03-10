@@ -27,6 +27,7 @@ Pipeline phases (in order):
 from __future__ import annotations
 
 import copy
+import os
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -1186,6 +1187,130 @@ class PipelineOrchestrator:
         """
         self._phases = phases or []
 
+    @staticmethod
+    def _to_bool(value: Any, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in ("1", "true", "yes", "y", "on")
+
+    def _is_adaptive_subprocess_recovery_enabled(self, state: PipelineState) -> bool:
+        """
+        Adaptive strategy:
+        - run each phase in-process first
+        - on memory-related failure, retry that phase in subprocess
+        - resume next phases in-process
+        """
+        if bool(getattr(state, "use_subprocess", False)):
+            # Explicit global subprocess mode remains authoritative.
+            return False
+
+        custom = getattr(getattr(state, "qwen_manager", None), "custom_parameters", None) or {}
+        if "adaptive_subprocess_recovery" in custom:
+            return self._to_bool(custom.get("adaptive_subprocess_recovery"), True)
+
+        env_value = os.getenv("CVMATCH_ADAPTIVE_SUBPROCESS_RECOVERY")
+        if env_value is not None:
+            return self._to_bool(env_value, True)
+
+        return True
+
+    def _is_memory_related_failure(self, state: PipelineState, error: Optional[str]) -> bool:
+        msg = str(error or "").strip()
+        if not msg:
+            return False
+
+        qm = getattr(state, "qwen_manager", None)
+        if qm is not None:
+            try:
+                if bool(qm._is_memory_pressure_failure_reason(msg)):
+                    return True
+            except Exception:
+                pass
+
+        lowered = msg.lower()
+        return (
+            "cuda out of memory" in lowered
+            or "out of memory" in lowered
+            or "oom" in lowered
+            or "cublas_status_alloc_failed" in lowered
+            or "failed to allocate" in lowered
+        )
+
+    @staticmethod
+    def _phase_supports_subprocess_retry(phase: PipelinePhase) -> bool:
+        if str(getattr(phase, "name", "") or "") == "initialization":
+            return True
+        runner = getattr(phase, "_run_subprocess", None)
+        return callable(runner)
+
+    def _execute_phase_with_adaptive_recovery(
+        self,
+        *,
+        phase: PipelinePhase,
+        state: PipelineState,
+        adaptive_enabled: bool,
+    ) -> PhaseResult:
+        result = phase.execute(state)
+        if result.status != PipelinePhaseStatus.FAILED:
+            return result
+
+        if not adaptive_enabled:
+            return result
+        if bool(getattr(state, "use_subprocess", False)):
+            return result
+        if not self._phase_supports_subprocess_retry(phase):
+            return result
+        if not self._is_memory_related_failure(state, result.error):
+            return result
+
+        logger.warning(
+            "Phase '%s' failed with memory error in-process; retrying this phase in subprocess mode.",
+            phase.name,
+        )
+        state.emit_progress(
+            f"[RECOVERY] OOM detecte sur '{phase.name}', retry de l'etape en subprocess..."
+        )
+
+        qm = getattr(state, "qwen_manager", None)
+        if qm is not None:
+            try:
+                qm.cleanup_memory()
+            except Exception:
+                pass
+
+        previous_mode = bool(getattr(state, "use_subprocess", False))
+        state.use_subprocess = True
+        retry_result = phase.execute(state)
+        state.use_subprocess = previous_mode
+
+        if retry_result.status == PipelinePhaseStatus.COMPLETED:
+            state.emit_progress(
+                f"[RECOVERY] Etape '{phase.name}' recuperee en subprocess, reprise en mode normal."
+            )
+            metadata = dict(retry_result.metadata or {})
+            metadata["adaptive_subprocess_retry"] = True
+            metadata["initial_error"] = str(result.error or "")
+            retry_result = PhaseResult(
+                phase_name=retry_result.phase_name,
+                status=retry_result.status,
+                duration_seconds=retry_result.duration_seconds,
+                error=retry_result.error,
+                warnings=list(retry_result.warnings or []),
+                metadata=metadata,
+            )
+            return retry_result
+
+        logger.error(
+            "Adaptive subprocess retry failed at phase '%s': %s",
+            phase.name,
+            retry_result.error,
+        )
+        if not retry_result.error:
+            retry_result.error = result.error
+        return retry_result
+
     def run(self, state: PipelineState) -> Tuple[bool, List[PhaseResult]]:
         """
         Execute all phases in sequence.
@@ -1197,6 +1322,9 @@ class PipelineOrchestrator:
             Tuple of (success, list of phase results)
         """
         results: List[PhaseResult] = []
+        adaptive_enabled = self._is_adaptive_subprocess_recovery_enabled(state)
+        if adaptive_enabled:
+            logger.info("Adaptive subprocess recovery enabled (per-phase memory retry).")
 
         for phase in self._phases:
             if not phase.should_run(state):
@@ -1208,7 +1336,11 @@ class PipelineOrchestrator:
                 )
                 continue
 
-            result = phase.execute(state)
+            result = self._execute_phase_with_adaptive_recovery(
+                phase=phase,
+                state=state,
+                adaptive_enabled=adaptive_enabled,
+            )
             results.append(result)
             state.phase_results.append(result)
 
