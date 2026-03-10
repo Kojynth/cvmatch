@@ -287,6 +287,15 @@ class InitializationPhase:
                     allow_fallback = bool(qm._allow_model_fallback())
                 except Exception:
                     allow_fallback = True
+                if allow_fallback:
+                    try:
+                        if bool(qm._is_selected_model_lock_enabled()):
+                            allow_fallback = False
+                            logger.info(
+                                "Model fallback disabled for this load because selected-model lock is active."
+                            )
+                    except Exception:
+                        pass
                 qm.load_model(state.progress_callback, allow_fallback=allow_fallback)
 
             return PhaseResult(
