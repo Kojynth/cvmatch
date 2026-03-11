@@ -829,7 +829,6 @@ class CoverLetterPhase:
         enforce_alignment: Optional[Callable[[str, str], str]] = None,
         is_structure_coherent: Optional[Callable[[str, str], bool]] = None,
         critique_and_rewrite: Optional[Callable[[str, str, Any], Dict[str, Any]]] = None,
-        fallback_letter: Optional[Callable[[str], str]] = None,
         should_run_critic: Optional[Callable[[], bool]] = None,
     ):
         self._run_subprocess = run_subprocess
@@ -840,7 +839,6 @@ class CoverLetterPhase:
         self._enforce_alignment = enforce_alignment
         self._is_structure_coherent = is_structure_coherent
         self._critique_and_rewrite = critique_and_rewrite
-        self._fallback_letter = fallback_letter
         self._should_run_critic = should_run_critic
 
     @property
@@ -873,8 +871,6 @@ class CoverLetterPhase:
         state.emit_progress("[LETTER] CV-only regeneration: keeping existing letter...")
 
         state.cover_letter = str(state.existing_snapshot.get("cover_letter") or "").strip()
-        if not state.cover_letter and self._fallback_letter:
-            state.cover_letter = self._fallback_letter(state.language_code)
 
         # Extract previous review data
         previous_letter = {}
@@ -914,7 +910,6 @@ class CoverLetterPhase:
         logger.info("Cover letter generation start")
 
         letter_prompt = self._build_prompt() if self._build_prompt else ""
-        used_fallback = False
         generation_mode = "generated"
 
         try:
@@ -930,12 +925,7 @@ class CoverLetterPhase:
                         letter_prompt, state.progress_callback
                     )
         except Exception as exc:
-            if not self._fallback_letter:
-                raise RuntimeError(f"Cover letter generation failed: {exc}") from exc
-            logger.warning("Cover letter generation failed, using fallback: %s", exc)
-            state.cover_letter = self._fallback_letter(state.language_code)
-            used_fallback = True
-            generation_mode = "fallback"
+            raise RuntimeError(f"Cover letter generation failed: {exc}") from exc
 
         # Post-process
         if self._ensure_language_consistency:
@@ -946,7 +936,6 @@ class CoverLetterPhase:
         # Run critic if enabled
         should_run_critic = (
             (self._should_run_critic() if self._should_run_critic else True)
-            and not used_fallback
         )
         if should_run_critic:
             state.emit_progress("[LETTER] Critique + correction...")
@@ -986,7 +975,7 @@ class CoverLetterPhase:
         if self._enforce_alignment:
             state.cover_letter = self._enforce_alignment(state.cover_letter, state.language_code)
 
-        if self._is_structure_coherent and not used_fallback:
+        if self._is_structure_coherent:
             try:
                 structure_ok = bool(
                     self._is_structure_coherent(state.cover_letter, state.language_code)
@@ -1245,6 +1234,18 @@ class PipelineOrchestrator:
         runner = getattr(phase, "_run_subprocess", None)
         return callable(runner)
 
+    def _should_keep_subprocess_after_recovery(self, state: PipelineState) -> bool:
+        """Keep subprocess mode enabled after a successful memory recovery retry."""
+        env_value = os.getenv("CVMATCH_STICKY_SUBPROCESS_AFTER_RECOVERY")
+        if env_value is not None:
+            return self._to_bool(env_value, True)
+
+        custom = getattr(getattr(state, "qwen_manager", None), "custom_parameters", None) or {}
+        if "sticky_subprocess_after_recovery" in custom:
+            return self._to_bool(custom.get("sticky_subprocess_after_recovery"), True)
+
+        return True
+
     def _execute_phase_with_adaptive_recovery(
         self,
         *,
@@ -1283,15 +1284,18 @@ class PipelineOrchestrator:
         previous_mode = bool(getattr(state, "use_subprocess", False))
         state.use_subprocess = True
         retry_result = phase.execute(state)
-        state.use_subprocess = previous_mode
 
         if retry_result.status == PipelinePhaseStatus.COMPLETED:
+            keep_subprocess = self._should_keep_subprocess_after_recovery(state)
+            state.use_subprocess = True if keep_subprocess else previous_mode
             state.emit_progress(
-                f"[RECOVERY] Etape '{phase.name}' recuperee en subprocess, reprise en mode normal."
+                f"[RECOVERY] Etape '{phase.name}' recuperee en subprocess, "
+                + ("mode subprocess conserve." if keep_subprocess else "reprise en mode normal.")
             )
             metadata = dict(retry_result.metadata or {})
             metadata["adaptive_subprocess_retry"] = True
             metadata["initial_error"] = str(result.error or "")
+            metadata["subprocess_mode_persisted"] = bool(keep_subprocess)
             retry_result = PhaseResult(
                 phase_name=retry_result.phase_name,
                 status=retry_result.status,
@@ -1307,6 +1311,7 @@ class PipelineOrchestrator:
             phase.name,
             retry_result.error,
         )
+        state.use_subprocess = previous_mode
         if not retry_result.error:
             retry_result.error = result.error
         return retry_result
@@ -1447,10 +1452,6 @@ def build_default_pipeline(
             is_structure_coherent=worker._is_cover_letter_structure_coherent,
             critique_and_rewrite=lambda letter, lang, cb: worker.critique_and_rewrite_cover_letter(
                 cover_letter=letter, language_code=lang, progress_callback=cb
-            ),
-            fallback_letter=lambda lang: worker._fallback_cover_letter(
-                worker.offer_data if isinstance(worker.offer_data, dict) else {},
-                lang,
             ),
             should_run_critic=worker._should_run_cover_letter_critic_stage,
         ),

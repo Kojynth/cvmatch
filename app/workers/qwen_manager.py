@@ -626,8 +626,8 @@ class QwenManager:
         custom = self.custom_parameters or {}
         env_value = os.getenv("CVMATCH_PREFER_RAM_OFFLOAD")
         if env_value is not None:
-            return self._to_bool(env_value, True)
-        return self._to_bool(custom.get("prefer_ram_offload"), True)
+            return self._to_bool(env_value, False)
+        return self._to_bool(custom.get("prefer_ram_offload"), False)
 
     def _apply_ram_budget_floor(self) -> None:
         """Raise CPU budget to keep 7B alive on RAM before failing on VRAM."""
@@ -2596,8 +2596,11 @@ class QwenManager:
         if self._is_survival_mode():
             disable_compile = True
 
+        if (self._optimization_config or {}).get("load_in_4bit"):
+            disable_compile = True
+
         if disable_compile:
-            logger.info("Skip torch.compile: disabled by config.")
+            logger.info("Skip torch.compile: disabled by policy/config.")
 
         elif hasattr(torch, "compile") and self._device.type == "cuda":
             should_compile = True
