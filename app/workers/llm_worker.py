@@ -1398,8 +1398,8 @@ class CVGenerationWorker(QThread):
         return sanitized
 
     def _fallback_critic_json(self, *, reason: str = "") -> Dict[str, Any]:
-        if not self._allow_content_fallback():
-            raise RuntimeError(reason or "Critic fallback disabled")
+        # Deterministic schema recovery for critic stage must stay available
+        # even when CV content fallback is disabled.
 
         language = self._resolve_language_code()
         job_title = ""
@@ -1447,8 +1447,8 @@ class CVGenerationWorker(QThread):
             return payload
 
     def _fallback_offer_keywords_json(self, *, reason: str = "") -> Dict[str, Any]:
-        if not self._allow_content_fallback():
-            raise RuntimeError(reason or "Offer keywords fallback disabled")
+        # Deterministic schema recovery for offer-keywords stage must stay
+        # available even when CV content fallback is disabled.
 
         return build_offer_keywords_fallback(
             offer_data=self.offer_data if isinstance(self.offer_data, dict) else {},
@@ -1488,7 +1488,8 @@ class CVGenerationWorker(QThread):
         return retries
 
     def _allow_content_fallback(self) -> bool:
-        # Product policy: content fallback is disabled.
+        # Product policy: CV content fallback is disabled.
+        # Deterministic schema recovery for auxiliary JSON stages remains enabled.
         return False
 
     def _get_max_model_size_cap_b(self) -> float:
