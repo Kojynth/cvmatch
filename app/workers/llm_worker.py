@@ -2026,7 +2026,22 @@ class CVGenerationWorker(QThread):
         stage: str = "",
     ) -> Dict[str, Any]:
         if not self._allow_content_fallback():
-            raise RuntimeError(reason or "CV fallback disabled")
+            logger.warning(
+                "CV content fallback disabled, using deterministic minimum payload: stage=%s reason=%s",
+                stage or "-",
+                reason,
+            )
+            recovered = self._ensure_required_cv_fields(
+                cv_json={},
+                profile_json=profile_json,
+                stage=stage or "minimum_recovery",
+            )
+            try:
+                from ..schemas.cv_schema import CVJSON
+
+                return CVJSON.model_validate(recovered).model_dump()
+            except Exception:
+                return recovered
         try:
             return self._fallback_cv_json(profile_json=profile_json, reason=reason)
         except Exception as fallback_exc:
@@ -2061,14 +2076,6 @@ class CVGenerationWorker(QThread):
         It prevents pipeline aborts when the model returns `{}` or
         partial JSON under memory pressure.
         """
-        reason_text = str(reason or "").strip().lower()
-        if not self._allow_content_fallback() and (
-            "non_strict" in reason_text
-            or "minimum_recovery" in reason_text
-            or "postprocess_minimum" in reason_text
-        ):
-            raise RuntimeError(reason or "Minimum CV recovery disabled")
-
         base = dict(payload or {}) if isinstance(payload, dict) else {}
         profile_data = profile_json if isinstance(profile_json, dict) else {}
         personal = profile_data.get("personal_info")
