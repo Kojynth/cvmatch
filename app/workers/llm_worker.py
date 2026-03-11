@@ -2376,11 +2376,11 @@ class CVGenerationWorker(QThread):
 
             def safe_fallback_generator(pj: Dict[str, Any], reason: str) -> Dict[str, Any]:
                 source_profile = pj if isinstance(pj, dict) else {}
-                if not self._allow_content_fallback():
-                    raise RuntimeError(reason or "CV fallback disabled")
-                return self._fallback_cv_json(
+                # Keep deterministic structural postprocessing alive without any content fallback.
+                return self._ensure_required_cv_fields(
+                    cv_json={},
                     profile_json=source_profile,
-                    reason=reason,
+                    stage="postprocess_base",
                 )
 
             return coerce_generated_cv_payload(
