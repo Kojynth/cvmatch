@@ -1498,6 +1498,38 @@ class CVGenerationWorker(QThread):
             retries = max(retries, 2)
         return retries
 
+    def _non_strict_json_generation_overrides(self, role: str) -> Dict[str, Any]:
+        """
+        Generation overrides for non-strict JSON retries.
+
+        Goal: maximize JSON determinism when LMFE strict mode is unavailable.
+        """
+        env_value = os.getenv("CVMATCH_JSON_NON_STRICT_DETERMINISTIC")
+        deterministic = self._to_bool_setting(env_value, True) if env_value is not None else True
+
+        if not deterministic:
+            return {}
+
+        role_key = str(role or "").strip().lower()
+        overrides: Dict[str, Any] = {
+            "temperature": 0.0,
+            "do_sample": False,
+            "top_p": 0.9,
+            "top_k": 40,
+            "repetition_penalty": 1.05,
+        }
+
+        if role_key == "generator":
+            overrides["max_new_tokens"] = 1800
+        elif role_key == "critic":
+            overrides["max_new_tokens"] = 1000
+        elif role_key in {"offer_critic", "extractor"}:
+            overrides["max_new_tokens"] = 700
+        else:
+            overrides["max_new_tokens"] = 900
+
+        return overrides
+
     def _allow_content_fallback(self) -> bool:
         # Product policy: CV content fallback is disabled.
         # Deterministic schema recovery for auxiliary JSON stages remains enabled.
@@ -3222,6 +3254,14 @@ JOB_OFFER_TEXT:
                     f"{_trim_text(json.dumps(critic_payload, indent=2, ensure_ascii=False), 2000)}"
                 )
 
+        user_instruction_block = ""
+        user_instruction = str(self.user_instruction or "").strip()
+        if user_instruction:
+            user_instruction_block = (
+                "\n\nUSER_REGEN_INSTRUCTION (editorial guidance):\n"
+                f"{_trim_text(user_instruction, 700)}"
+            )
+
         user_prompt = f"""
 LANGUAGE: {language_code}
 JOB_TITLE: {job_title}
@@ -3234,6 +3274,7 @@ PROFILE_JSON (source of truth):
 {offer_keywords_block}
 {matched_keywords_block}
 {critic_block}
+{user_instruction_block}
 
 OUTPUT RULES:
 - Return JSON only.
@@ -3259,6 +3300,9 @@ OUTPUT RULES:
   - a concise context in summary
   - 2-4 distinct highlights focused on actions, tools, and outcomes
 - For each language item, keep `certification` when PROFILE_JSON provides one (issuer/certificate name).
+- If USER_REGEN_INSTRUCTION is present, apply it as editorial guidance while preserving factual constraints.
+- Never copy USER_REGEN_INSTRUCTION text verbatim into CV fields.
+- Never output instruction meta-text (for example "please update", "this CV needs", uppercase emphasis markers).
 - Keep output focused but informative:
   - experience <= 5 items, highlights <= 4 each.
   - skills <= 5 categories, items <= 10 each.
@@ -3372,6 +3416,7 @@ OUTPUT RULES:
                     messages["system"],
                     messages["user"],
                     progress_callback,
+                    generation_overrides=self._non_strict_json_generation_overrides("offer_critic"),
                     role="offer_critic",
                 )
                 payload = self._parse_json_response(raw)
@@ -3468,6 +3513,7 @@ OUTPUT RULES:
                     messages["system"],
                     messages["user"],
                     progress_callback,
+                    generation_overrides=self._non_strict_json_generation_overrides("generator"),
                     role="generator",
                 )
                 payload = self._parse_json_response(raw)
@@ -3602,6 +3648,7 @@ OUTPUT RULES:
                     messages["system"],
                     messages["user"],
                     progress_callback,
+                    generation_overrides=self._non_strict_json_generation_overrides("generator"),
                     role="generator",
                 )
                 payload = self._parse_json_response(raw)
@@ -3696,7 +3743,11 @@ OUTPUT RULES:
     ) -> Dict[str, Any]:
         from pydantic import ValidationError
         from ..schemas.critic_schema import CriticJSON
-        from ..utils.json_strict import generate_json_with_schema, JsonStrictError
+        from ..utils.json_strict import (
+            JsonStrictError,
+            coerce_critic_payload,
+            generate_json_with_schema,
+        )
 
         messages = self._build_critic_messages(cv_html=cv_html)
         try:
@@ -3712,7 +3763,11 @@ OUTPUT RULES:
             logger.warning("Strict CriticJSON failed, retrying non-strict: %s", exc)
             try:
                 raw = self.qwen_manager.generate_structured_json(
-                    messages["system"], messages["user"], progress_callback, role="critic"
+                    messages["system"],
+                    messages["user"],
+                    progress_callback,
+                    generation_overrides=self._non_strict_json_generation_overrides("critic"),
+                    role="critic",
                 )
                 payload = self._parse_json_response(raw)
                 if payload:
@@ -3723,6 +3778,16 @@ OUTPUT RULES:
                         logger.warning(
                             "Non-strict CriticJSON validation failed: %s", val_exc
                         )
+                        coerced = coerce_critic_payload(payload)
+                        if isinstance(coerced, dict):
+                            try:
+                                parsed = CriticJSON.model_validate(coerced)
+                                logger.warning(
+                                    "Non-strict CriticJSON recovered via payload coercion."
+                                )
+                                return parsed.model_dump()
+                            except ValidationError:
+                                pass
                         fallback_reason = self._compose_fallback_reason(
                             strict_error=exc,
                             retry_error=val_exc,

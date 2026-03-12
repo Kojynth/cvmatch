@@ -222,6 +222,17 @@ def _coerce_critic_payload(payload: Any) -> Optional[Dict[str, Any]]:
     return payload
 
 
+def coerce_critic_payload(payload: Any) -> Optional[Dict[str, Any]]:
+    """
+    Public helper to coerce a critic payload to a minimally valid shape.
+
+    This is shared by strict and non-strict paths.
+    """
+    if isinstance(payload, dict):
+        payload = dict(payload)
+    return _coerce_critic_payload(payload)
+
+
 def _should_abort_generator_retries_on_missing_required(
     *, role: str, payload: Any, validation_error: str
 ) -> bool:

@@ -3530,6 +3530,12 @@ class QwenManager:
 
             lowered = error_msg.lower()
 
+            if "cpu-only device map in hybrid-only policy" in lowered:
+                try:
+                    self.unload_model(reason="cpu_only_hybrid_policy_error")
+                except Exception:
+                    pass
+
             self._record_failure(f"load_model: {error_msg[:240]}")
 
             if (
