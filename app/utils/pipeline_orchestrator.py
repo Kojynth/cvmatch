@@ -1223,6 +1223,9 @@ class PipelineOrchestrator:
             "cuda out of memory" in lowered
             or "out of memory" in lowered
             or "oom" in lowered
+            or "cpu-only device map" in lowered
+            or "hybrid-only policy" in lowered
+            or "insufficient for mixed placement" in lowered
             or "cublas_status_alloc_failed" in lowered
             or "failed to allocate" in lowered
         )

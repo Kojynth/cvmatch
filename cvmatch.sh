@@ -141,6 +141,250 @@ detect_python() {
     return 1
 }
 
+setup_single_instance_lock() {
+    local lock_dir="$PROJECT_ROOT/runtime"
+    LOCK_FILE="$lock_dir/cvmatch_launcher.lock"
+    mkdir -p "$lock_dir"
+
+    if [[ -f "$LOCK_FILE" ]]; then
+        local existing_pid
+        existing_pid="$(sed -n '1p' "$LOCK_FILE" 2>/dev/null | tr -d '[:space:]')"
+        if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
+            log_error "Une instance CVMatch est deja active (PID $existing_pid)."
+            echo "Fermez l'autre instance avant de relancer."
+            echo "Commande utile: kill -TERM $existing_pid"
+            exit 1
+        fi
+        rm -f "$LOCK_FILE"
+    fi
+
+    printf '%s\n' "$$" > "$LOCK_FILE"
+    trap 'rm -f "$LOCK_FILE"' EXIT INT TERM
+}
+
+detect_primary_gpu_name() {
+    if ! command -v nvidia-smi >/dev/null 2>&1; then
+        return 0
+    fi
+    nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null \
+        | head -n 1 \
+        | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+detect_primary_gpu_compute_capability() {
+    if ! command -v nvidia-smi >/dev/null 2>&1; then
+        return 0
+    fi
+    nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null \
+        | head -n 1 \
+        | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+is_truthy_flag() {
+    local raw="${1:-}"
+    local lowered
+    lowered="$(echo "$raw" | tr '[:upper:]' '[:lower:]')"
+    [[ "$lowered" == "1" || "$lowered" == "true" || "$lowered" == "yes" || "$lowered" == "y" || "$lowered" == "on" ]]
+}
+
+extract_arch_major_from_sm() {
+    local sm_arch="$1"
+    if [[ "$sm_arch" =~ ^sm_([0-9]+)$ ]]; then
+        local digits="${BASH_REMATCH[1]}"
+        if (( ${#digits} >= 2 )); then
+            echo "${digits:0:${#digits}-1}"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+should_apply_gpu_oom_profile() {
+    local compute_capability="$1"
+    local torch_arch="$2"
+    local torch_arch_supported="$3"
+
+    if is_truthy_flag "${CVMATCH_DISABLE_GPU_OOM_PROFILE:-}"; then
+        return 1
+    fi
+    if is_truthy_flag "${CVMATCH_FORCE_GPU_OOM_PROFILE:-}"; then
+        return 0
+    fi
+
+    # If current torch build does not support detected GPU arch, force safer runtime profile.
+    if [[ "$torch_arch_supported" == "0" ]] && [[ -n "$torch_arch" ]] && [[ "$torch_arch" != "unknown" ]]; then
+        return 0
+    fi
+
+    local threshold_raw="${CVMATCH_GPU_OOM_PROFILE_MIN_CC_MAJOR:-12}"
+    local threshold_major=12
+    if [[ "$threshold_raw" =~ ^[0-9]+$ ]]; then
+        threshold_major="$threshold_raw"
+    fi
+
+    local cc_major=""
+    if [[ "$compute_capability" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
+        cc_major="${BASH_REMATCH[1]}"
+    else
+        cc_major="$(extract_arch_major_from_sm "$torch_arch" 2>/dev/null || true)"
+    fi
+
+    if [[ -n "$cc_major" ]] && (( cc_major >= threshold_major )); then
+        return 0
+    fi
+
+    return 1
+}
+
+apply_target_gpu_oom_profile() {
+    local applied=()
+
+    if [[ -z "${CVMATCH_SUBPROCESS_STAGES:-}" ]]; then
+        export CVMATCH_SUBPROCESS_STAGES=1
+        applied+=("CVMATCH_SUBPROCESS_STAGES=1")
+    fi
+    if [[ -z "${CVMATCH_FORCE_DISK_OFFLOAD:-}" ]]; then
+        export CVMATCH_FORCE_DISK_OFFLOAD=1
+        applied+=("CVMATCH_FORCE_DISK_OFFLOAD=1")
+    fi
+    if [[ -z "${CVMATCH_PREFER_RAM_OFFLOAD:-}" ]]; then
+        export CVMATCH_PREFER_RAM_OFFLOAD=0
+        applied+=("CVMATCH_PREFER_RAM_OFFLOAD=0")
+    fi
+    if [[ -z "${CVMATCH_MAX_MEMORY_GPU_GB:-}" ]]; then
+        export CVMATCH_MAX_MEMORY_GPU_GB=6.5
+        applied+=("CVMATCH_MAX_MEMORY_GPU_GB=6.5")
+    fi
+    if [[ -z "${CVMATCH_VRAM_HEADROOM_GB:-}" ]]; then
+        export CVMATCH_VRAM_HEADROOM_GB=2.0
+        applied+=("CVMATCH_VRAM_HEADROOM_GB=2.0")
+    fi
+    if [[ -z "${CVMATCH_CPU_HEADROOM_GB:-}" ]]; then
+        export CVMATCH_CPU_HEADROOM_GB=0.5
+        applied+=("CVMATCH_CPU_HEADROOM_GB=0.5")
+    fi
+
+    if (( ${#applied[@]} > 0 )); then
+        log_warning "Profil anti-OOM active selon politique GPU auto."
+        printf '%s\n' "${applied[@]}"
+        if [[ -n "${SESSION_LOG:-}" ]]; then
+            printf '[GPU_PROFILE] %s\n' "${applied[@]}" >> "$SESSION_LOG"
+        fi
+    else
+        log_info "Profil GPU auto deja configure via variables existantes."
+        if [[ -n "${SESSION_LOG:-}" ]]; then
+            echo "[GPU_PROFILE] Aucun override applique (variables deja definies)." >> "$SESSION_LOG"
+        fi
+    fi
+}
+
+probe_torch_gpu_arch_support() {
+    TORCH_PROBE_STATUS=""
+    TORCH_GPU_ARCH=""
+    TORCH_GPU_ARCH_SUPPORTED="1"
+    TORCH_VERSION_DETECTED=""
+    TORCH_CUDA_VERSION_DETECTED=""
+
+    local probe_output
+    probe_output="$("$VENV_PYTHON" - <<'PY'
+try:
+    import torch  # type: ignore
+except Exception as exc:
+    print("TORCH_PROBE_STATUS=torch_missing")
+    print(f"TORCH_PROBE_ERROR={exc}")
+    raise SystemExit(0)
+
+if not torch.cuda.is_available():
+    print("TORCH_PROBE_STATUS=cuda_unavailable")
+    print(f"TORCH_VERSION={getattr(torch, '__version__', 'unknown')}")
+    print(f"CUDA_VERSION={getattr(torch.version, 'cuda', None)}")
+    raise SystemExit(0)
+
+arch = "unknown"
+arch_list = []
+try:
+    major, minor = torch.cuda.get_device_capability(0)
+    arch = f"sm_{major}{minor}"
+except Exception:
+    pass
+try:
+    arch_list = list(torch.cuda.get_arch_list() or [])
+except Exception:
+    arch_list = []
+supported = arch != "unknown" and arch in arch_list
+print("TORCH_PROBE_STATUS=ok")
+print(f"TORCH_VERSION={getattr(torch, '__version__', 'unknown')}")
+print(f"CUDA_VERSION={getattr(torch.version, 'cuda', None)}")
+print(f"GPU_ARCH={arch}")
+print(f"GPU_ARCH_SUPPORTED={1 if supported else 0}")
+print(f"GPU_ARCH_LIST={' '.join(arch_list)}")
+PY
+)"
+
+    local key
+    local value
+    while IFS='=' read -r key value; do
+        case "$key" in
+            TORCH_PROBE_STATUS) TORCH_PROBE_STATUS="$value" ;;
+            TORCH_VERSION) TORCH_VERSION_DETECTED="$value" ;;
+            CUDA_VERSION) TORCH_CUDA_VERSION_DETECTED="$value" ;;
+            GPU_ARCH) TORCH_GPU_ARCH="$value" ;;
+            GPU_ARCH_SUPPORTED) TORCH_GPU_ARCH_SUPPORTED="$value" ;;
+            *) ;;
+        esac
+    done <<< "$probe_output"
+
+    if [[ -n "${SESSION_LOG:-}" ]] && [[ -n "$probe_output" ]]; then
+        echo "$probe_output" >> "$SESSION_LOG"
+    fi
+}
+
+setup_auto_gpu_runtime_profile() {
+    local gpu_name
+    gpu_name="$(detect_primary_gpu_name)"
+    if [[ -z "$gpu_name" ]]; then
+        log_info "Aucun GPU NVIDIA detecte (ou nvidia-smi indisponible)."
+        return 0
+    fi
+
+    log_info "GPU detecte: $gpu_name"
+    if [[ -n "${SESSION_LOG:-}" ]]; then
+        echo "[GPU] Detecte: $gpu_name" >> "$SESSION_LOG"
+    fi
+
+    local compute_capability
+    compute_capability="$(detect_primary_gpu_compute_capability)"
+    probe_torch_gpu_arch_support
+
+    if ! should_apply_gpu_oom_profile "$compute_capability" "$TORCH_GPU_ARCH" "$TORCH_GPU_ARCH_SUPPORTED"; then
+        log_info "Politique GPU auto: profil OOM non applique."
+        if [[ -n "${SESSION_LOG:-}" ]]; then
+            echo "[GPU] Profil OOM auto non applique (policy)." >> "$SESSION_LOG"
+            if [[ -n "$compute_capability" ]]; then
+                echo "[GPU] compute_cap=$compute_capability" >> "$SESSION_LOG"
+            fi
+        fi
+        return 0
+    fi
+
+    log_warning "Politique GPU auto: activation du profil OOM."
+    if [[ -n "${SESSION_LOG:-}" ]]; then
+        echo "[GPU] Profil OOM auto active (policy)." >> "$SESSION_LOG"
+        if [[ -n "$compute_capability" ]]; then
+            echo "[GPU] compute_cap=$compute_capability" >> "$SESSION_LOG"
+        fi
+    fi
+    apply_target_gpu_oom_profile
+
+    if [[ "$TORCH_PROBE_STATUS" == "ok" ]] && [[ "$TORCH_GPU_ARCH_SUPPORTED" != "1" ]]; then
+        log_warning "Build PyTorch potentiellement incompatible avec $TORCH_GPU_ARCH."
+        log_warning "Recommande: torch/torchvision/torchaudio recents + bitsandbytes>=0.49.1"
+        if [[ -n "${SESSION_LOG:-}" ]]; then
+            echo "[GPU][WARN] Torch=$TORCH_VERSION_DETECTED CUDA=$TORCH_CUDA_VERSION_DETECTED arch=$TORCH_GPU_ARCH unsupported." >> "$SESSION_LOG"
+        fi
+    fi
+}
+
 echo ""
 echo "========================================"
 echo "CVMatch - lanceur"
@@ -150,6 +394,7 @@ echo "========================================"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR"
 cd "$PROJECT_ROOT"
+setup_single_instance_lock
 
 VENV_DIR="$PROJECT_ROOT/cvmatch_env"
 VENV_PYTHON="$VENV_DIR/bin/python"
@@ -159,8 +404,8 @@ if [[ -z "${CVMATCH_AI_MODE:-}" ]]; then
     CVMATCH_AI_MODE="lite"
 fi
 
-if [[ -z "${PYTORCH_CUDA_ALLOC_CONF:-}" ]]; then
-    export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+if [[ -z "${PYTORCH_ALLOC_CONF:-}" ]]; then
+    export PYTORCH_ALLOC_CONF="expandable_segments:True"
 fi
 
 # Créer log de session avec timestamp dès le début
@@ -265,6 +510,7 @@ source "$VENV_DIR/bin/activate" || {
 }
 
 log_success "Environnement virtuel activé"
+setup_auto_gpu_runtime_profile
 
 # ================================================================
 # ÉTAPE 3: Mise à jour pip et outils de base

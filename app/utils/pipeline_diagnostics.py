@@ -124,6 +124,9 @@ def classify_error(error_message: str) -> Tuple[str, str]:
     memory_markers = (
         "out of memory",
         "cuda out of memory",
+        "cpu-only device map",
+        "hybrid-only policy",
+        "insufficient for mixed placement",
         "oom",
         "memory error",
         "memoryerror",

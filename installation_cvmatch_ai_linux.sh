@@ -43,11 +43,8 @@ fi
 
 TORCH_CPU_INDEX="https://download.pytorch.org/whl/cpu"
 TORCH_CUDA_INDEXES=(
-    "https://download.pytorch.org/whl/cu131"
+    "https://download.pytorch.org/whl/cu130"
     "https://download.pytorch.org/whl/cu128"
-    "https://download.pytorch.org/whl/cu126"
-    "https://download.pytorch.org/whl/cu124"
-    "https://download.pytorch.org/whl/cu121"
 )
 HAS_NVIDIA_GPU=0
 if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
@@ -158,6 +155,23 @@ install_torch() {
         "${PYTHON_CMD}" -m pip install --progress-bar off -v --upgrade --force-reinstall torch torchvision torchaudio --index-url "${index_url}"
 }
 
+check_torch_arch_compat() {
+    local out
+    out="$("${PYTHON_CMD}" "${SCRIPT_DIR}/scripts/check_torch_arch_compat.py" 2>&1 || true)"
+    if [[ -n "$out" ]]; then
+        echo "$out"
+    fi
+    local status
+    status="$(echo "$out" | awk -F= '/^TORCH_CHECK_STATUS=/{print $2; exit}')"
+    case "$status" in
+        supported) return 0 ;;
+        unsupported) return 2 ;;
+        cuda_unavailable) return 3 ;;
+        torch_missing) return 4 ;;
+        *) return 1 ;;
+    esac
+}
+
 ensure_ai_runtime() {
     local needs_runtime=0
     local cuda_ok=0
@@ -167,13 +181,10 @@ ensure_ai_runtime() {
     fi
 
     if [[ "${needs_runtime}" -eq 0 && "${HAS_NVIDIA_GPU}" -eq 1 ]]; then
-        if "${PYTHON_CMD}" -c "import torch, sys; sys.exit(0 if torch.cuda.is_available() else 2)" >/dev/null 2>&1; then
+        if check_torch_arch_compat; then
             cuda_ok=1
         else
-            local cuda_status=$?
-            if [[ "${cuda_status}" -eq 2 ]]; then
-                needs_runtime=1
-            fi
+            needs_runtime=1
         fi
     fi
 
@@ -186,10 +197,23 @@ ensure_ai_runtime() {
             for idx in "${TORCH_CUDA_INDEXES[@]}"; do
                 echo "Attempting PyTorch CUDA via ${idx}..."
                 if install_torch "${idx}"; then
-                    installed_cuda=1
-                    break
+                    if check_torch_arch_compat; then
+                        installed_cuda=1
+                        echo "[OK] PyTorch CUDA compatible via ${idx}"
+                        break
+                    else
+                        local compat_status=$?
+                        if [[ "${compat_status}" -eq 2 ]]; then
+                            echo "[WARN] CUDA wheel installed but GPU arch is unsupported by torch (index=${idx})."
+                        elif [[ "${compat_status}" -eq 3 ]]; then
+                            echo "[WARN] CUDA wheel installed but torch.cuda.is_available()=False (index=${idx})."
+                        else
+                            echo "[WARN] Torch/CUDA compatibility check failed (index=${idx}, status=${compat_status})."
+                        fi
+                    fi
+                else
+                    echo "[WARN] PyTorch CUDA install failed via ${idx}"
                 fi
-                echo "[WARN] PyTorch CUDA install failed via ${idx}"
             done
 
             if [[ "${installed_cuda}" -eq 0 ]]; then
