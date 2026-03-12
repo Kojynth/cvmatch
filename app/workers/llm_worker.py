@@ -1170,9 +1170,9 @@ class CVGenerationWorker(QThread):
                     run_env["CVMATCH_SURVIVAL_MODE"] = "1"
                     run_env.setdefault("CVMATCH_SURVIVAL_IGNORE_SELECTED_MODEL", "1")
                 if attempt > 1:
-                    # Retry in RAM-first mode: keep selected model and reduce GPU fragility.
-                    run_env.setdefault("CVMATCH_PREFER_RAM_OFFLOAD", "1")
-                    run_env.setdefault("CVMATCH_FORCE_DISK_OFFLOAD", "0")
+                    # Retry with disk offload priority to keep GPU footprint stable.
+                    run_env.setdefault("CVMATCH_PREFER_RAM_OFFLOAD", "0")
+                    run_env.setdefault("CVMATCH_FORCE_DISK_OFFLOAD", "1")
                     run_env.setdefault("CVMATCH_DISABLE_TORCH_COMPILE", "1")
                     run_env.setdefault("CVMATCH_CPU_HEADROOM_GB", "0.5")
                     run_env.setdefault("CVMATCH_MAX_MEMORY_CPU_GB", "12")
@@ -1398,8 +1398,8 @@ class CVGenerationWorker(QThread):
         return sanitized
 
     def _fallback_critic_json(self, *, reason: str = "") -> Dict[str, Any]:
-        if not self._allow_content_fallback():
-            raise RuntimeError(reason or "Critic fallback disabled")
+        # Deterministic schema recovery for critic stage must stay available
+        # even when CV content fallback is disabled.
 
         language = self._resolve_language_code()
         job_title = ""
@@ -1447,8 +1447,8 @@ class CVGenerationWorker(QThread):
             return payload
 
     def _fallback_offer_keywords_json(self, *, reason: str = "") -> Dict[str, Any]:
-        if not self._allow_content_fallback():
-            raise RuntimeError(reason or "Offer keywords fallback disabled")
+        # Deterministic schema recovery for offer-keywords stage must stay
+        # available even when CV content fallback is disabled.
 
         return build_offer_keywords_fallback(
             offer_data=self.offer_data if isinstance(self.offer_data, dict) else {},
@@ -1488,13 +1488,9 @@ class CVGenerationWorker(QThread):
         return retries
 
     def _allow_content_fallback(self) -> bool:
-        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
-        env_value = os.getenv("CVMATCH_DISABLE_CONTENT_FALLBACK")
-        if env_value is not None:
-            return not self._to_bool_setting(env_value, False)
-        if self._to_bool_setting(custom.get("disable_model_fallback"), False):
-            return False
-        return not self._to_bool_setting(custom.get("disable_content_fallback"), False)
+        # Product policy: CV content fallback is disabled.
+        # Deterministic schema recovery for auxiliary JSON stages remains enabled.
+        return False
 
     def _get_max_model_size_cap_b(self) -> float:
         custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
@@ -2030,6 +2026,23 @@ class CVGenerationWorker(QThread):
         reason: str = "",
         stage: str = "",
     ) -> Dict[str, Any]:
+        if not self._allow_content_fallback():
+            logger.warning(
+                "CV content fallback disabled, using deterministic minimum payload: stage=%s reason=%s",
+                stage or "-",
+                reason,
+            )
+            recovered = self._ensure_required_cv_fields(
+                cv_json={},
+                profile_json=profile_json,
+                stage=stage or "minimum_recovery",
+            )
+            try:
+                from ..schemas.cv_schema import CVJSON
+
+                return CVJSON.model_validate(recovered).model_dump()
+            except Exception:
+                return recovered
         try:
             return self._fallback_cv_json(profile_json=profile_json, reason=reason)
         except Exception as fallback_exc:
@@ -2371,21 +2384,12 @@ class CVGenerationWorker(QThread):
 
             def safe_fallback_generator(pj: Dict[str, Any], reason: str) -> Dict[str, Any]:
                 source_profile = pj if isinstance(pj, dict) else {}
-                try:
-                    return self._fallback_cv_json(
-                        profile_json=source_profile,
-                        reason=reason,
-                    )
-                except Exception as fallback_exc:
-                    logger.warning(
-                        "CV fallback unavailable during final postprocess; using deterministic minimum payload: %s",
-                        fallback_exc,
-                    )
-                    return self._coerce_minimum_cv_json_payload(
-                        {},
-                        profile_json=source_profile,
-                        reason=f"postprocess_minimum:{reason or fallback_exc}",
-                    )
+                # Keep deterministic structural postprocessing alive without any content fallback.
+                return self._ensure_required_cv_fields(
+                    cv_json={},
+                    profile_json=source_profile,
+                    stage="postprocess_base",
+                )
 
             return coerce_generated_cv_payload(
                 payload=cv_json or {},
@@ -2528,24 +2532,6 @@ class CVGenerationWorker(QThread):
         except Exception as exc:
             logger.warning("critique_and_rewrite_cover_letter failed: %s", exc)
             return cover_letter
-
-    def _fallback_cover_letter(
-        self, offer_data: dict, lang: str, progress_callback=None
-    ) -> str:
-        if not self._allow_content_fallback():
-            raise RuntimeError("Cover letter fallback disabled")
-
-        try:
-            from ..utils.cover_letter_fallback import generate_fallback_cover_letter
-            return generate_fallback_cover_letter(
-                profile_data=self.profile_data,
-                offer_data=offer_data,
-                language_code=lang,
-                offer_keywords_collector=self._collect_offer_keywords,
-            )
-        except Exception as exc:
-            logger.warning("_fallback_cover_letter failed: %s", exc)
-            return ""
 
     def _should_run_cover_letter_critic_stage(self) -> bool:
         return bool(getattr(self, "cover_letter_critic_enabled", False))
@@ -3408,7 +3394,7 @@ OUTPUT RULES:
                 return _stabilize(payload, reason="non_strict_offer_keywords")
             except Exception as retry_exc:
                 logger.error(
-                    "OfferKeywords non-strict retry failed, using fallback: %s",
+                    "OfferKeywords non-strict retry failed: %s",
                     retry_exc,
                 )
                 fallback_reason = self._compose_fallback_reason(
@@ -3420,7 +3406,7 @@ OUTPUT RULES:
                     reason=fallback_reason,
                 )
         except Exception as exc:
-            logger.error("OfferKeywords generation failed, using fallback: %s", exc)
+            logger.error("OfferKeywords generation failed: %s", exc)
             return _stabilize(
                 self._fallback_offer_keywords_json(reason=str(exc)),
                 reason=str(exc),
@@ -3539,7 +3525,7 @@ OUTPUT RULES:
                 )
                 return CVJSON.model_validate(enriched).model_dump()
             except Exception as retry_exc:
-                logger.error("Draft CVJSON non-strict retry failed, using fallback: %s", retry_exc)
+                logger.error("Draft CVJSON non-strict retry failed: %s", retry_exc)
                 fallback_reason = self._compose_fallback_reason(
                     strict_error=exc,
                     retry_error=retry_exc,
@@ -3550,7 +3536,7 @@ OUTPUT RULES:
                     stage="draft",
                 )
         except Exception as exc:
-            logger.error("Draft CVJSON generation failed, using fallback: %s", exc)
+            logger.error("Draft CVJSON generation failed: %s", exc)
             return self._fallback_or_minimum_cv_json(
                 profile_json=profile_json,
                 reason=str(exc),
@@ -3673,7 +3659,7 @@ OUTPUT RULES:
                 )
                 return CVJSON.model_validate(enriched).model_dump()
             except Exception as retry_exc:
-                logger.error("Final CVJSON non-strict retry failed, using fallback: %s", retry_exc)
+                logger.error("Final CVJSON non-strict retry failed: %s", retry_exc)
                 fallback_reason = self._compose_fallback_reason(
                     strict_error=exc,
                     retry_error=retry_exc,
@@ -3684,7 +3670,7 @@ OUTPUT RULES:
                     stage="final",
                 )
         except Exception as exc:
-            logger.error("Final CVJSON generation failed, using fallback: %s", exc)
+            logger.error("Final CVJSON generation failed: %s", exc)
             return self._fallback_or_minimum_cv_json(
                 profile_json=profile_json,
                 reason=str(exc),
@@ -3738,14 +3724,14 @@ OUTPUT RULES:
                 )
                 return self._fallback_critic_json(reason=fallback_reason)
             except Exception as retry_exc:
-                logger.error("CriticJSON non-strict retry failed, using fallback: %s", retry_exc)
+                logger.error("CriticJSON non-strict retry failed: %s", retry_exc)
                 fallback_reason = self._compose_fallback_reason(
                     strict_error=exc,
                     retry_error=retry_exc,
                 )
                 return self._fallback_critic_json(reason=fallback_reason)
         except Exception as exc:
-            logger.error("Critic JSON generation failed, using fallback: %s", exc)
+            logger.error("Critic JSON generation failed: %s", exc)
             return self._fallback_critic_json(reason=str(exc))
 
     def run(self) -> None:
@@ -4476,4 +4462,3 @@ class FineTuningWorker(QThread):
         except Exception as e:
             logger.error(f"Erreur fine-tuning : {e}")
             self.error_occurred.emit(str(e))
-

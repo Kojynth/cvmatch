@@ -626,8 +626,8 @@ class QwenManager:
         custom = self.custom_parameters or {}
         env_value = os.getenv("CVMATCH_PREFER_RAM_OFFLOAD")
         if env_value is not None:
-            return self._to_bool(env_value, True)
-        return self._to_bool(custom.get("prefer_ram_offload"), True)
+            return self._to_bool(env_value, False)
+        return self._to_bool(custom.get("prefer_ram_offload"), False)
 
     def _apply_ram_budget_floor(self) -> None:
         """Raise CPU budget to keep 7B alive on RAM before failing on VRAM."""
@@ -2243,8 +2243,30 @@ class QwenManager:
 
         return False
 
+    def _is_memory_recovery_attempt(self) -> bool:
+        """Return True when current load happens after a memory-related failure."""
+        try:
+            stage_attempt = max(1, int(os.getenv("CVMATCH_STAGE_ATTEMPT", "1")))
+        except Exception:
+            stage_attempt = 1
+        if stage_attempt > 1:
+            return True
+
+        try:
+            failures = int(getattr(self._memory_manager, "consecutive_failures", 0) or 0)
+        except Exception:
+            failures = 0
+        if failures > 0:
+            return True
+
+        if bool(getattr(self, "_ram_assist_mode", False)):
+            return True
+        if bool(getattr(self, "_meta_recovery_mode", False)):
+            return True
+        return False
+
     def _should_auto_enable_disk_offload_for_4bit(self) -> Tuple[bool, str]:
-        """Enable disk offload automatically for 4-bit loads under VRAM pressure."""
+        """Enable disk offload automatically for 4-bit loads after memory failures."""
         disable_auto = self._resolve_bool_setting(
             (self.custom_parameters or {}).get("disable_auto_disk_offload_4bit"),
             os.getenv("CVMATCH_DISABLE_AUTO_DISK_OFFLOAD_4BIT"),
@@ -2252,6 +2274,8 @@ class QwenManager:
         )
         if disable_auto:
             return False, "disabled_by_config"
+        if not self._is_memory_recovery_attempt():
+            return False, "first_attempt_no_recovery"
 
         details = (
             dict(self._last_max_memory_map_details)
@@ -2313,7 +2337,7 @@ class QwenManager:
             elif auto_disk:
                 disk_offload_enabled = True
                 logger.warning(
-                    "4-bit mode: auto-enabling disk offload due VRAM pressure (%s).",
+                    "4-bit mode: auto-enabling disk offload on recovery path (%s).",
                     auto_reason,
                 )
             elif disk_offload_enabled:
@@ -2596,8 +2620,11 @@ class QwenManager:
         if self._is_survival_mode():
             disable_compile = True
 
+        if (self._optimization_config or {}).get("load_in_4bit"):
+            disable_compile = True
+
         if disable_compile:
-            logger.info("Skip torch.compile: disabled by config.")
+            logger.info("Skip torch.compile: disabled by policy/config.")
 
         elif hasattr(torch, "compile") and self._device.type == "cuda":
             should_compile = True
