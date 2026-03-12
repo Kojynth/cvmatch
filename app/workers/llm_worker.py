@@ -1175,7 +1175,18 @@ class CVGenerationWorker(QThread):
                     run_env.setdefault("CVMATCH_FORCE_DISK_OFFLOAD", "1")
                     run_env.setdefault("CVMATCH_DISABLE_TORCH_COMPILE", "1")
                     run_env.setdefault("CVMATCH_CPU_HEADROOM_GB", "0.5")
-                    run_env.setdefault("CVMATCH_MAX_MEMORY_CPU_GB", "12")
+                    run_env.setdefault("CVMATCH_VRAM_HEADROOM_GB", "2.0")
+                    retry_gpu_cap_gb = 6.5
+                    try:
+                        total_vram_gb = float(
+                            (getattr(gpu_manager, "gpu_info", {}) or {}).get("total_memory_gb")
+                            or 0.0
+                        )
+                        if total_vram_gb > 0:
+                            retry_gpu_cap_gb = max(3.5, min(7.0, total_vram_gb * 0.62))
+                    except Exception:
+                        pass
+                    run_env.setdefault("CVMATCH_MAX_MEMORY_GPU_GB", f"{retry_gpu_cap_gb:.2f}")
                     run_env.setdefault("CVMATCH_FORCE_GPU", "0")
                     run_env.setdefault("CVMATCH_KEEP_SELECTED_STAGE_MODEL", "1")
 
