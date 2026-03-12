@@ -31,7 +31,7 @@ set "HF_HUB_CACHE=%HF_CACHE_DIR%"
 set "TRANSFORMERS_CACHE=%HF_CACHE_DIR%"
 set "HF_HUB_DISABLE_SYMLINKS=1"
 set "HF_HUB_DISABLE_SYMLINKS_WARNING=1"
-if "%PYTORCH_CUDA_ALLOC_CONF%"=="" set "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
+if "%PYTORCH_ALLOC_CONF%"=="" set "PYTORCH_ALLOC_CONF=expandable_segments:True"
 if "%CVMATCH_AI_MODE%"=="" set "CVMATCH_AI_MODE=lite"
 
 rem Creer log de session avec timestamp des le debut

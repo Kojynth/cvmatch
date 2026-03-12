@@ -404,8 +404,8 @@ if [[ -z "${CVMATCH_AI_MODE:-}" ]]; then
     CVMATCH_AI_MODE="lite"
 fi
 
-if [[ -z "${PYTORCH_CUDA_ALLOC_CONF:-}" ]]; then
-    export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+if [[ -z "${PYTORCH_ALLOC_CONF:-}" ]]; then
+    export PYTORCH_ALLOC_CONF="expandable_segments:True"
 fi
 
 # Créer log de session avec timestamp dès le début

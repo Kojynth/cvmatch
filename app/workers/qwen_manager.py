@@ -31,11 +31,11 @@ try:
     os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
     os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
     os.environ["TRANSFORMERS_VERBOSITY"] = "error"
-    alloc_conf = str(os.getenv("PYTORCH_CUDA_ALLOC_CONF") or "").strip()
+    alloc_conf = str(os.getenv("PYTORCH_ALLOC_CONF") or "").strip()
     if not alloc_conf:
-        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+        os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
     elif "expandable_segments" not in alloc_conf.lower():
-        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = f"{alloc_conf},expandable_segments:True"
+        os.environ["PYTORCH_ALLOC_CONF"] = f"{alloc_conf},expandable_segments:True"
 
     TRANSFORMERS_AVAILABLE = True
     TORCH_AVAILABLE = True
@@ -3496,8 +3496,28 @@ class QwenManager:
                     device_summary = self._summarize_device_map()
                 except Exception:
                     device_summary = {}
-                has_cuda = any(str(key).startswith("cuda") for key in (device_summary or {}).keys())
-                if not has_cuda:
+                try:
+                    resolved_input_device = self._resolve_input_device()
+                except Exception:
+                    resolved_input_device = None
+
+                has_cuda_map = any(
+                    str(key).startswith("cuda") for key in (device_summary or {}).keys()
+                )
+                resolved_is_cuda = bool(
+                    resolved_input_device is not None
+                    and getattr(resolved_input_device, "type", "") == "cuda"
+                )
+
+                # Only fail when we can confirm CPU-only placement.
+                # Some loaders do not always expose hf_device_map reliably.
+                cpu_only_confirmed = False
+                if device_summary:
+                    cpu_only_confirmed = (not has_cuda_map) and (not resolved_is_cuda)
+                else:
+                    cpu_only_confirmed = not resolved_is_cuda
+
+                if cpu_only_confirmed:
                     raise RuntimeError(
                         "CUDA model resolved to CPU-only device map in hybrid-only policy. "
                         "Free VRAM/RAM budget is insufficient for mixed placement."
