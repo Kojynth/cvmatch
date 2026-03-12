@@ -153,7 +153,7 @@ exit /b 1
 
 rem Ensure AI python dependencies (torch/transformers/huggingface_hub)
 set "TORCH_CPU_INDEX=https://download.pytorch.org/whl/cpu"
-set "TORCH_CUDA_INDEXES=https://download.pytorch.org/whl/cu131 https://download.pytorch.org/whl/cu128 https://download.pytorch.org/whl/cu126 https://download.pytorch.org/whl/cu124 https://download.pytorch.org/whl/cu121"
+set "TORCH_CUDA_INDEXES=https://download.pytorch.org/whl/cu130 https://download.pytorch.org/whl/cu128"
 set "HAS_NVIDIA_GPU="
 where nvidia-smi >nul 2>&1
 if not errorlevel 1 set "HAS_NVIDIA_GPU=1"
@@ -164,8 +164,8 @@ if defined HAS_NVIDIA_GPU goto :check_torch_cuda
 goto :ai_deps_done
 
 :check_torch_cuda
-"%PYTHON_CMD%" %PYTHON_ARGS% -c "import torch, sys; sys.exit(0 if torch.cuda.is_available() else 2)" >nul 2>&1
-if errorlevel 2 goto :install_ai_deps
+call :CHECK_TORCH_ARCH_COMPAT
+if errorlevel 1 goto :install_ai_deps
 goto :ai_deps_done
 
 :install_ai_deps
@@ -417,11 +417,37 @@ for %%I in (%TORCH_CUDA_INDEXES%) do (
         echo [WARN] PyTorch CUDA failed via %%I
         echo [WARN] PyTorch CUDA failed via %%I >> "%INSTALL_LOG%"
     ) else (
-        echo [OK] PyTorch CUDA installed via %%I
-        echo [OK] PyTorch CUDA installed via %%I >> "%INSTALL_LOG%"
-        exit /b 0
+        call :CHECK_TORCH_ARCH_COMPAT
+        set "COMPAT_RC=!ERRORLEVEL!"
+        if "!COMPAT_RC!"=="0" (
+            echo [OK] PyTorch CUDA compatible via %%I
+            echo [OK] PyTorch CUDA compatible via %%I >> "%INSTALL_LOG%"
+            exit /b 0
+        ) else if "!COMPAT_RC!"=="2" (
+            echo [WARN] CUDA wheel installed but GPU arch unsupported by torch via %%I
+            echo [WARN] CUDA wheel installed but GPU arch unsupported by torch via %%I >> "%INSTALL_LOG%"
+        ) else if "!COMPAT_RC!"=="3" (
+            echo [WARN] CUDA wheel installed but torch.cuda.is_available()=False via %%I
+            echo [WARN] CUDA wheel installed but torch.cuda.is_available()=False via %%I >> "%INSTALL_LOG%"
+        ) else (
+            echo [WARN] Torch/CUDA compatibility check failed via %%I (status=!COMPAT_RC!)
+            echo [WARN] Torch/CUDA compatibility check failed via %%I (status=!COMPAT_RC!) >> "%INSTALL_LOG%"
+        )
     )
 )
+exit /b 1
+
+:CHECK_TORCH_ARCH_COMPAT
+set "TC_OUT=%TEMP%\cvmatch_torch_compat_%RANDOM%_%RANDOM%.txt"
+"%PYTHON_CMD%" %PYTHON_ARGS% "%PROJECT_ROOT%scripts\check_torch_arch_compat.py" > "%TC_OUT%" 2>&1
+set "TC_RC=%ERRORLEVEL%"
+if exist "%TC_OUT%" type "%TC_OUT%"
+if exist "%TC_OUT%" type "%TC_OUT%" >> "%INSTALL_LOG%"
+if exist "%TC_OUT%" del "%TC_OUT%" >nul 2>&1
+if "%TC_RC%"=="0" exit /b 0
+if "%TC_RC%"=="2" exit /b 2
+if "%TC_RC%"=="3" exit /b 3
+if "%TC_RC%"=="4" exit /b 4
 exit /b 1
 
 :INSTALL_TORCH

@@ -204,17 +204,73 @@ echo "Mise a jour pip/setuptools/wheel..."
 run_with_spinner "Upgrade pip/setuptools/wheel" 240 \
     "$VENV_DIR/bin/python" -m pip install --progress-bar off -v --upgrade pip setuptools wheel
 
-# Détection GPU pour PyTorch
-TORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
-TORCH_VARIANT="CPU"
-if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
-    TORCH_INDEX_URL="https://download.pytorch.org/whl/cu121"
-    TORCH_VARIANT="CUDA"
+# Detection GPU pour PyTorch + verification compat arch
+TORCH_CPU_INDEX="https://download.pytorch.org/whl/cpu"
+TORCH_CUDA_INDEXES=(
+    "https://download.pytorch.org/whl/cu130"
+    "https://download.pytorch.org/whl/cu128"
+)
+HAS_NVIDIA_GPU=0
+if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
+    HAS_NVIDIA_GPU=1
 fi
 
-echo "Installation PyTorch ($TORCH_VARIANT)..."
-run_with_spinner "Install PyTorch ($TORCH_VARIANT)" 900 \
-    "$VENV_DIR/bin/python" -m pip install --progress-bar off -v --upgrade --force-reinstall torch torchvision torchaudio --index-url "$TORCH_INDEX_URL"
+install_torch_from_index() {
+    local index_url="$1"
+    run_with_spinner "Install PyTorch (${index_url})" 900 \
+        "$VENV_DIR/bin/python" -m pip install --progress-bar off -v --upgrade --force-reinstall torch torchvision torchaudio --index-url "$index_url"
+}
+
+check_torch_arch_compat() {
+    local out
+    out="$("$VENV_DIR/bin/python" scripts/check_torch_arch_compat.py 2>&1 || true)"
+    if [[ -n "$out" ]]; then
+        echo "$out"
+    fi
+    local status
+    status="$(echo "$out" | awk -F= '/^TORCH_CHECK_STATUS=/{print $2; exit}')"
+    case "$status" in
+        supported) return 0 ;;
+        unsupported) return 2 ;;
+        cuda_unavailable) return 3 ;;
+        torch_missing) return 4 ;;
+        *) return 1 ;;
+    esac
+}
+
+if [[ "$HAS_NVIDIA_GPU" -eq 1 ]]; then
+    echo "Installation PyTorch (CUDA auto)..."
+    TORCH_OK=0
+    for index_url in "${TORCH_CUDA_INDEXES[@]}"; do
+        echo "Tentative CUDA via ${index_url}..."
+        if install_torch_from_index "$index_url"; then
+            if check_torch_arch_compat; then
+                TORCH_OK=1
+                echo "[OK] PyTorch CUDA compatible via ${index_url}"
+                break
+            else
+                compat_status=$?
+                if [[ "$compat_status" -eq 2 ]]; then
+                    echo "[WARN] Wheel CUDA installee mais arch GPU non supportee par torch (index=${index_url})."
+                elif [[ "$compat_status" -eq 3 ]]; then
+                    echo "[WARN] Wheel CUDA installee mais torch.cuda.is_available()=False (index=${index_url})."
+                else
+                    echo "[WARN] Verification compat torch/cuda echouee (index=${index_url}, status=${compat_status})."
+                fi
+            fi
+        else
+            echo "[WARN] Echec installation torch via ${index_url}."
+        fi
+    done
+
+    if [[ "$TORCH_OK" -ne 1 ]]; then
+        echo "[WARN] Aucune wheel CUDA compatible detectee. Bascule CPU."
+        install_torch_from_index "$TORCH_CPU_INDEX"
+    fi
+else
+    echo "Installation PyTorch (CPU)..."
+    install_torch_from_index "$TORCH_CPU_INDEX"
+fi
 
 run_with_spinner "Install HF/Transformers deps" 300 \
     "$VENV_DIR/bin/python" -m pip install --progress-bar off -v --upgrade huggingface_hub transformers protobuf sentencepiece
