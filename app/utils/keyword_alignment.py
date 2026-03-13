@@ -43,6 +43,8 @@ JOB_KEYWORD_EQUIVALENTS: Dict[str, Tuple[str, ...]] = {
     "software engineering": ("software development", "developpement logiciel"),
 }
 
+_TERM_DELIMITER_PATTERN = re.compile(r"[./-]+")
+
 
 def normalize_keyword_for_match(text: str) -> str:
     if not text:
@@ -55,6 +57,27 @@ def normalize_keyword_for_match(text: str) -> str:
     lowered = folded.lower()
     cleaned = re.sub(r"[^a-z0-9+.#/ -]+", " ", lowered)
     return " ".join(cleaned.split())
+
+
+def _canonicalize_term_presence_text(text: str) -> str:
+    normalized = normalize_keyword_for_match(text)
+    if not normalized:
+        return ""
+    # Treat punctuation separators as token boundaries so
+    # "aws/azure", "aws.azure", and "aws azure" match consistently.
+    canonical = _TERM_DELIMITER_PATTERN.sub(" ", normalized)
+    return " ".join(canonical.split())
+
+
+def normalized_term_in_probe(probe: str, term: str) -> bool:
+    """Check whether a normalized keyword term is present on token boundaries."""
+    probe_text = _canonicalize_term_presence_text(probe)
+    term_text = _canonicalize_term_presence_text(term)
+    if not probe_text or not term_text:
+        return False
+    if probe_text == term_text:
+        return True
+    return f" {term_text} " in f" {probe_text} "
 
 
 def keyword_tokens(text: str) -> List[str]:

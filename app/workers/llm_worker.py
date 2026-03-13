@@ -3080,7 +3080,10 @@ class CVGenerationWorker(QThread):
             return
         try:
             from ..utils.cv_postprocessing import enforce_cv_offer_adaptation
-            from ..utils.keyword_alignment import normalize_keyword_for_match
+            from ..utils.keyword_alignment import (
+                normalize_keyword_for_match,
+                normalized_term_in_probe as normalized_term_present,
+            )
         except Exception:
             return
 
@@ -3112,13 +3115,10 @@ class CVGenerationWorker(QThread):
         experience_probe = normalize_keyword_for_match(" ".join(experience_parts))
 
         def _normalized_term_in_probe(probe: str, normalized_term: str) -> bool:
-            probe_text = str(probe or "").strip()
-            term_text = str(normalized_term or "").strip()
-            if not probe_text or not term_text:
-                return False
             # Token-boundary match on normalized text to avoid false positives
-            # like "go" in "ongoing" or "c" in "customer".
-            return f" {term_text} " in f" {probe_text} "
+            # like "go" in "ongoing" or "c" in "customer", while matching
+            # terms across delimiters like "/" and ".".
+            return normalized_term_present(probe, normalized_term)
 
         def missing_terms(terms: List[str], probe: str, limit: int) -> List[str]:
             output: List[str] = []

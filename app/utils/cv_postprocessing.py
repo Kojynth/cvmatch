@@ -99,7 +99,7 @@ SKILL_SPLIT_PATTERN = re.compile(r"[;\n\|•]+")
 SKILL_SENTENCE_NOISE_PATTERN = re.compile(
     r"(?i)\b("
     r"i|we|my|our|je|j ai|nous|mon|notre|candidate|candidat|"
-    r"experience|worked|responsible|mission|"
+    r"worked|responsible|mission|"
     r"should|must|need|needs|please|job offer|offre|profile json|instruction"
     r")\b"
 )
@@ -1916,7 +1916,10 @@ def enforce_cv_offer_adaptation(
         return cv_json
 
     try:
-        from .keyword_alignment import normalize_keyword_for_match
+        from .keyword_alignment import (
+            normalize_keyword_for_match,
+            normalized_term_in_probe as normalized_term_present,
+        )
     except Exception:
         return cv_json
 
@@ -1982,7 +1985,7 @@ def enforce_cv_offer_adaptation(
             for idx, entry in enumerate(experience_entries):
                 score = 0.0
                 probe_norm = normalize_keyword_for_match(entry_probe(entry))
-                if term_norm and term_norm in probe_norm:
+                if term_norm and normalized_term_present(probe_norm, term_norm):
                     score += 6.0
                 if entry.get("summary"):
                     score += 1.0
@@ -1995,7 +1998,7 @@ def enforce_cv_offer_adaptation(
                     profile_desc_norm = normalize_keyword_for_match(
                         matched_profile.get("description") or ""
                     )
-                    if term_norm and term_norm in profile_desc_norm:
+                    if term_norm and normalized_term_present(profile_desc_norm, term_norm):
                         score += 2.5
                 if score > best_score:
                     best_score = score
@@ -2037,7 +2040,7 @@ def enforce_cv_offer_adaptation(
                 break
 
             if base:
-                if keyword_norm in normalize_keyword_for_match(base):
+                if normalized_term_present(normalize_keyword_for_match(base), keyword_norm):
                     bullet = f"{base}."
                 else:
                     tail = (
@@ -2058,7 +2061,7 @@ def enforce_cv_offer_adaptation(
                     )
 
             bullet = clean_narrative_text(_trim_text(bullet, 240))
-            if keyword_norm not in normalize_keyword_for_match(bullet):
+            if not normalized_term_present(normalize_keyword_for_match(bullet), keyword_norm):
                 bullet = clean_narrative_text(
                     _trim_text(
                         f"{bullet.rstrip('.')} ({keyword_text}).",
@@ -2080,7 +2083,7 @@ def enforce_cv_offer_adaptation(
             already_present = False
             for entry in experience_entries:
                 probe_norm = normalize_keyword_for_match(entry_probe(entry))
-                if keyword_norm in probe_norm:
+                if normalized_term_present(probe_norm, keyword_norm):
                     already_present = True
                     break
             if already_present:
@@ -2095,9 +2098,12 @@ def enforce_cv_offer_adaptation(
             if not new_bullet:
                 continue
 
-            highlights.append(new_bullet)
+            cleaned_highlights = [
+                item for item in highlights if isinstance(item, str) and item.strip()
+            ]
+            # Keep injected bullet even when target entry already has 4 highlights.
             target_entry["highlights"] = _dedup_preserve(
-                [item for item in highlights if isinstance(item, str) and item.strip()]
+                [new_bullet] + cleaned_highlights
             )[:4]
             added += 1
 
