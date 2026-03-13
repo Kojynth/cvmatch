@@ -43,7 +43,7 @@
       </section>
       {% endif %}
 
-      {% if experience %}
+      {% if experience or additional_relevant_items %}
       <section class="cv-section">
         <h2 class="section-title">{{ labels.experience if labels is defined and labels.experience is defined else 'Experience' }}</h2>
         <div class="section-content">
@@ -68,6 +68,12 @@
             {% endif %}
           </div>
           {% endfor %}
+          {% if additional_relevant_items %}
+          <div class="entry">
+            <h3>{{ labels.additional_relevant if labels is defined and labels.additional_relevant is defined else 'Additional relevant details' }}</h3>
+            <p>{{ additional_relevant_summary if additional_relevant_summary is defined and additional_relevant_summary else '' }}</p>
+          </div>
+          {% endif %}
         </div>
       </section>
       {% endif %}

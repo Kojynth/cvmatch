@@ -3187,7 +3187,9 @@ class CVGenerationWorker(QThread):
         fallback_experience_limit = 2
         if missing_ratio >= 0.70:
             summary_limit = 6
-            experience_limit = 5
+            # Experience bullets are capped to 4 items per entry in postprocess.
+            # Do not target more missing experience terms than this capacity.
+            experience_limit = 4
             fallback_summary_limit = 5
             fallback_experience_limit = 4
         elif missing_ratio >= 0.50:
