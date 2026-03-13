@@ -393,21 +393,34 @@ def sanitize_cv_json_output(
 
     fallback_category = "Skills" if language_code == "en" else "Competences"
     def normalize_text_for_match(value: Any) -> str:
-        text = str(value or "").strip().lower()
+        text = str(value or "").strip().casefold()
         if not text:
             return ""
+        # Keep Unicode letters (Arabic/Japanese/etc.) so non-Latin labels are preserved.
+        text = re.sub(r"[^\w]+", " ", text, flags=re.UNICODE)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    def normalize_text_for_role_detection(value: Any) -> str:
+        text = str(value or "").strip().casefold()
+        if not text:
+            return ""
+        # Role heuristics use a Latin token list; fold accents for robust matching.
         text = (
             unicodedata.normalize("NFKD", text)
             .encode("ascii", "ignore")
             .decode("ascii")
         )
-        text = re.sub(r"[\W_]+", " ", text, flags=re.UNICODE)
+        text = re.sub(r"[^\w]+", " ", text, flags=re.UNICODE)
         text = re.sub(r"\s+", " ", text).strip()
         return text
 
     target_job_title_norm = normalize_text_for_match(cv_json.get("target_job_title") or "")
+    target_job_title_role_norm = normalize_text_for_role_detection(
+        cv_json.get("target_job_title") or ""
+    )
     target_job_title_token_set = {
-        tok for tok in target_job_title_norm.split() if tok
+        tok for tok in target_job_title_role_norm.split() if tok
     }
 
     def has_role_like_title_overlap(label_tokens: Sequence[str]) -> bool:
@@ -456,10 +469,14 @@ def sanitize_cv_json_output(
             return fallback_category
         label = SKILL_LABEL_PREFIX_PATTERN.sub("", label).strip(" :-")
         label_norm = normalize_text_for_match(label)
+        if not label_norm and label.strip():
+            # Preserve original non-empty label when Unicode tokenization yields no tokens.
+            return label
         if not label_norm:
             return fallback_category
 
-        tokens = [tok for tok in label_norm.split() if tok]
+        label_role_norm = normalize_text_for_role_detection(label)
+        tokens = [tok for tok in label_role_norm.split() if tok]
         role_like = False
         if target_job_title_norm and (
             label_norm == target_job_title_norm
@@ -563,10 +580,11 @@ def sanitize_cv_json_output(
                 if not is_skill_like_phrase(text):
                     continue
                 text_norm = normalize_text_for_match(text)
+                text_role_norm = normalize_text_for_role_detection(text)
                 # Filter role titles accidentally emitted as skills.
-                if text_norm in ROLE_LIKE_SKILL_TOKENS:
+                if text_role_norm in ROLE_LIKE_SKILL_TOKENS:
                     continue
-                item_tokens = [tok for tok in text_norm.split() if tok]
+                item_tokens = [tok for tok in text_role_norm.split() if tok]
                 if is_role_like_phrase(item_tokens):
                     continue
                 if target_job_title_norm and text_norm == target_job_title_norm:
