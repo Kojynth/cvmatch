@@ -95,6 +95,57 @@ SKILL_LABEL_PREFIX_PATTERN = re.compile(
     r"(?i)^(?:skills?|comp[eé]tences?|technical skills|competences techniques)\s*[:\-]\s*"
 )
 
+SKILL_SPLIT_PATTERN = re.compile(r"[;\n\|•]+")
+SKILL_SENTENCE_NOISE_PATTERN = re.compile(
+    r"(?i)\b("
+    r"i|we|my|our|je|j ai|nous|mon|notre|candidate|candidat|"
+    r"experience|worked|responsible|mission|project|projet|"
+    r"should|must|need|needs|please|job offer|offre|profile json|instruction"
+    r")\b"
+)
+SKILL_GLUE_WORDS = {
+    "and",
+    "or",
+    "with",
+    "for",
+    "the",
+    "a",
+    "an",
+    "to",
+    "of",
+    "in",
+    "on",
+    "de",
+    "des",
+    "du",
+    "et",
+    "ou",
+    "en",
+    "pour",
+    "avec",
+    "sur",
+}
+SHORT_TECH_TOKENS = {
+    "ai",
+    "ml",
+    "nlp",
+    "qa",
+    "ui",
+    "ux",
+    "bi",
+    "ci",
+    "cd",
+    "etl",
+    "api",
+    "sql",
+    "nosql",
+    "go",
+    "js",
+    "ts",
+    "c",
+    "r",
+}
+
 
 def _dedup_preserve(items: Sequence[str]) -> List[str]:
     """Deduplicate list while preserving order."""
@@ -373,6 +424,32 @@ def sanitize_cv_json_output(
             return any(tok in ROLE_LIKE_SKILL_TOKENS for tok in target_job_title_token_set)
         return False
 
+    def is_role_like_phrase(tokens: Sequence[str]) -> bool:
+        normalized_tokens = [tok for tok in tokens if tok]
+        if not normalized_tokens:
+            return False
+
+        role_tokens = [tok for tok in normalized_tokens if tok in ROLE_LIKE_SKILL_TOKENS]
+        if not role_tokens:
+            return False
+
+        # Ignore tiny glue tokens introduced by punctuation variants:
+        # "Ingenieur(e)" -> ["ingenieur", "e"].
+        non_role_long_tokens = [
+            tok for tok in normalized_tokens if tok not in ROLE_LIKE_SKILL_TOKENS and len(tok) > 2
+        ]
+        if not non_role_long_tokens and len(normalized_tokens) <= 4:
+            return True
+
+        # If phrase clearly overlaps target job title and contains a role token,
+        # treat it as role/title wording, not a technical skill.
+        if target_job_title_token_set and (
+            {tok for tok in normalized_tokens} & target_job_title_token_set
+        ):
+            return True
+
+        return False
+
     def normalize_skill_category_label(raw_label: Any) -> str:
         label = clean_text_field(raw_label or "", max_length=80)
         if not label:
@@ -389,12 +466,69 @@ def sanitize_cv_json_output(
             or has_role_like_title_overlap(tokens)
         ):
             role_like = True
-        elif 0 < len(tokens) <= 3 and all(tok in ROLE_LIKE_SKILL_TOKENS for tok in tokens):
+        elif is_role_like_phrase(tokens):
             role_like = True
 
         if role_like or len(label) > 40:
             return fallback_category
         return label
+
+    def split_skill_item_candidates(raw_item: str) -> List[str]:
+        cleaned = clean_text_field(
+            raw_item,
+            max_length=220,
+            check_review_markers=False,
+            dedupe_narrative=False,
+        )
+        if not cleaned:
+            return []
+
+        cleaned = SKILL_LABEL_PREFIX_PATTERN.sub("", cleaned).strip(" :-")
+        cleaned = re.sub(r"^[\-\*\d\.\)\(]+\s*", "", cleaned).strip()
+        if not cleaned:
+            return []
+
+        chunks: List[str] = []
+        for chunk in SKILL_SPLIT_PATTERN.split(cleaned):
+            part = chunk.strip(" ,:-")
+            if not part:
+                continue
+            # Split comma-separated flat skill lists: "Python, SQL, Airflow"
+            if "," in part:
+                subparts = [value.strip(" ,:-") for value in part.split(",")]
+                subparts = [value for value in subparts if value]
+                if len(subparts) >= 2 and all(0 < len(value.split()) <= 4 for value in subparts):
+                    chunks.extend(subparts)
+                    continue
+            chunks.append(part)
+
+        return _dedup_preserve(chunks)
+
+    def is_skill_like_phrase(text: str) -> bool:
+        if not text:
+            return False
+        if any(mark in text for mark in (".", "!", "?", "\n")):
+            return False
+        if SKILL_SENTENCE_NOISE_PATTERN.search(text):
+            return False
+
+        text_norm = normalize_text_for_match(text)
+        tokens = [tok for tok in text_norm.split() if tok]
+        if not tokens:
+            return False
+        if len(tokens) > 6:
+            return False
+        if all(tok in SKILL_GLUE_WORDS for tok in tokens):
+            return False
+        if len(tokens) == 1:
+            token = tokens[0]
+            if token in SHORT_TECH_TOKENS:
+                return True
+            if token in SKILL_GLUE_WORDS:
+                return False
+            if len(token) < 2:
+                return False
+        return True
 
     # Clean top-level text fields
     contact = cv_json.get("contact")
@@ -422,16 +556,18 @@ def sanitize_cv_json_output(
         for item in items:
             if not isinstance(item, str):
                 continue
-            text = clean_text_field(item, max_length=80)
-            if text and not text_has_review_markers(text):
+            for candidate in split_skill_item_candidates(item):
+                text = clean_text_field(candidate, max_length=80)
+                if not text or text_has_review_markers(text):
+                    continue
+                if not is_skill_like_phrase(text):
+                    continue
                 text_norm = normalize_text_for_match(text)
                 # Filter role titles accidentally emitted as skills.
                 if text_norm in ROLE_LIKE_SKILL_TOKENS:
                     continue
                 item_tokens = [tok for tok in text_norm.split() if tok]
-                if 0 < len(item_tokens) <= 3 and all(
-                    tok in ROLE_LIKE_SKILL_TOKENS for tok in item_tokens
-                ):
+                if is_role_like_phrase(item_tokens):
                     continue
                 if target_job_title_norm and text_norm == target_job_title_norm:
                     continue
@@ -442,7 +578,33 @@ def sanitize_cv_json_output(
                 "category": label or fallback_category,
                 "items": cleaned_items,
             })
-    cv_json["skills"] = cleaned_skills
+    merged_skills: List[Dict[str, Any]] = []
+    skills_index: Dict[str, int] = {}
+    for block in cleaned_skills:
+        category_label = str(block.get("category") or fallback_category).strip() or fallback_category
+        category_key = normalize_text_for_match(category_label) or category_label.lower()
+        items = [
+            item for item in (block.get("items") or [])
+            if isinstance(item, str) and item.strip()
+        ]
+        if not items:
+            continue
+        if category_key not in skills_index:
+            skills_index[category_key] = len(merged_skills)
+            merged_skills.append(
+                {
+                    "category": category_label,
+                    "items": _dedup_preserve(items),
+                }
+            )
+            continue
+        idx = skills_index[category_key]
+        existing_items = merged_skills[idx].get("items") or []
+        merged_skills[idx]["items"] = _dedup_preserve(
+            [*existing_items, *items]
+        )
+
+    cv_json["skills"] = merged_skills
 
     # Clean experience
     cleaned_experience = []
@@ -1699,6 +1861,7 @@ def enforce_cv_offer_adaptation(
     missing_summary_terms: List[str],
     missing_experience_terms: List[str],
     language_code: str = "fr",
+    profile_json: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Enforce CV adaptation to job offer requirements.
 
@@ -1718,6 +1881,11 @@ def enforce_cv_offer_adaptation(
         The modified cv_json
     """
     if not isinstance(cv_json, dict):
+        return cv_json
+
+    try:
+        from .keyword_alignment import normalize_keyword_for_match
+    except Exception:
         return cv_json
 
     is_en = language_code == "en"
@@ -1754,23 +1922,157 @@ def enforce_cv_offer_adaptation(
         )
         cv_json["summary"] = clean_narrative_text(summary)
 
-    # Add missing keywords to first experience entry
+    # Add missing keywords to experience bullets with profile-grounded phrasing
     experience_entries = [
         item for item in (cv_json.get("experience") or []) if isinstance(item, dict)
     ]
     if experience_entries and missing_experience_terms:
-        sentence = (
-            f"Applied keywords relevant to the offer: {', '.join(missing_experience_terms[:2])}."
-            if is_en
-            else f"Mots-cles appliques et pertinents pour l'offre: {', '.join(missing_experience_terms[:2])}."
-        )
-        target_entry = experience_entries[0]
-        highlights = target_entry.get("highlights")
-        if not isinstance(highlights, list):
-            highlights = []
-        highlights.append(sentence)
-        target_entry["highlights"] = _dedup_preserve(
-            [item for item in highlights if isinstance(item, str) and item.strip()]
-        )[:4]
+        profile_experiences = _extract_profile_experiences(profile_json or {})
+
+        def entry_probe(entry: Dict[str, Any]) -> str:
+            parts: List[str] = []
+            for key in ("title", "company", "summary"):
+                value = entry.get(key)
+                if isinstance(value, str) and value.strip():
+                    parts.append(value)
+            highlights = entry.get("highlights")
+            if isinstance(highlights, list):
+                for item in highlights:
+                    if isinstance(item, str) and item.strip():
+                        parts.append(item)
+            return " ".join(parts)
+
+        def choose_target_entry(term_norm: str) -> Tuple[Dict[str, Any], Optional[Dict[str, str]]]:
+            best_idx = 0
+            best_score = -1.0
+            best_profile: Optional[Dict[str, str]] = None
+
+            for idx, entry in enumerate(experience_entries):
+                score = 0.0
+                probe_norm = normalize_keyword_for_match(entry_probe(entry))
+                if term_norm and term_norm in probe_norm:
+                    score += 6.0
+                if entry.get("summary"):
+                    score += 1.0
+                highlights = entry.get("highlights")
+                if isinstance(highlights, list):
+                    score += min(2.0, 0.4 * len(highlights))
+                matched_profile = _best_profile_match(entry, profile_experiences)
+                if isinstance(matched_profile, dict):
+                    score += 0.5
+                    profile_desc_norm = normalize_keyword_for_match(
+                        matched_profile.get("description") or ""
+                    )
+                    if term_norm and term_norm in profile_desc_norm:
+                        score += 2.5
+                if score > best_score:
+                    best_score = score
+                    best_idx = idx
+                    best_profile = matched_profile
+
+            return experience_entries[best_idx], best_profile
+
+        def build_keyword_bullet(
+            entry: Dict[str, Any],
+            keyword: str,
+            profile_hint: Optional[Dict[str, str]],
+        ) -> str:
+            keyword_text = str(keyword or "").strip()
+            keyword_norm = normalize_keyword_for_match(keyword_text)
+            if not keyword_text or not keyword_norm:
+                return ""
+
+            context_candidates: List[str] = []
+            if isinstance(profile_hint, dict):
+                profile_desc = str(profile_hint.get("description") or "").strip()
+                context_candidates.extend(extract_experience_highlights(profile_desc))
+
+            context_candidates.extend(_split_sentences(str(entry.get("summary") or "")))
+            highlights = entry.get("highlights")
+            if isinstance(highlights, list):
+                for item in highlights:
+                    if isinstance(item, str) and item.strip():
+                        context_candidates.append(item)
+
+            base = ""
+            for candidate in context_candidates:
+                text = clean_narrative_text(candidate)
+                if not text:
+                    continue
+                if _looks_like_company_description(text, str(entry.get("company") or "")):
+                    continue
+                base = text.rstrip(" .")
+                break
+
+            if base:
+                if keyword_norm in normalize_keyword_for_match(base):
+                    bullet = f"{base}."
+                else:
+                    tail = (
+                        f"with focus on {keyword_text}"
+                        if is_en
+                        else f"avec un focus sur {keyword_text}"
+                    )
+                    bullet = f"{base} {tail}."
+            else:
+                role_hint = clean_text_field(entry.get("title") or "")
+                if is_en:
+                    bullet = (
+                        f"Applied {keyword_text} in delivery tasks aligned with {role_hint or 'project requirements'}."
+                    )
+                else:
+                    bullet = (
+                        f"Mise en oeuvre de {keyword_text} dans des activites de livraison alignees sur {role_hint or 'les exigences projet'}."
+                    )
+
+            bullet = clean_narrative_text(_trim_text(bullet, 240))
+            if keyword_norm not in normalize_keyword_for_match(bullet):
+                bullet = clean_narrative_text(
+                    _trim_text(
+                        f"{bullet.rstrip('.')} ({keyword_text}).",
+                        240,
+                    )
+                )
+            return bullet
+
+        missing_experience_terms = _dedup_preserve(
+            [str(term or "").strip() for term in missing_experience_terms if str(term or "").strip()]
+        )[:3]
+
+        added = 0
+        for keyword in missing_experience_terms:
+            keyword_norm = normalize_keyword_for_match(keyword)
+            if not keyword_norm:
+                continue
+
+            already_present = False
+            for entry in experience_entries:
+                probe_norm = normalize_keyword_for_match(entry_probe(entry))
+                if keyword_norm in probe_norm:
+                    already_present = True
+                    break
+            if already_present:
+                continue
+
+            target_entry, target_profile = choose_target_entry(keyword_norm)
+            highlights = target_entry.get("highlights")
+            if not isinstance(highlights, list):
+                highlights = []
+
+            new_bullet = build_keyword_bullet(target_entry, keyword, target_profile)
+            if not new_bullet:
+                continue
+
+            highlights.append(new_bullet)
+            target_entry["highlights"] = _dedup_preserve(
+                [item for item in highlights if isinstance(item, str) and item.strip()]
+            )[:4]
+            added += 1
+
+        if added:
+            logger.info(
+                "Offer adaptation injected critic keywords into experience bullets: added=%s",
+                added,
+            )
 
     return cv_json

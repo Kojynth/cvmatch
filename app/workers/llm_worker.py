@@ -2472,6 +2472,11 @@ class CVGenerationWorker(QThread):
                     candidate,
                     critic_json=review,
                 ),
+                offer_adaptation_fn=lambda candidate, review: self._apply_offer_adaptation(
+                    candidate,
+                    critic_json=review,
+                    profile_json=profile_json,
+                ),
             )
         except Exception as exc:
             logger.warning("_postprocess_final_candidate_wrapper failed: %s", exc)
@@ -3062,6 +3067,93 @@ class CVGenerationWorker(QThread):
             "Keyword alignment applied: pairs=%s replacements=%s",
             len(mapping),
             replacements,
+        )
+
+    def _apply_offer_adaptation(
+        self,
+        cv_json: Dict[str, Any],
+        *,
+        critic_json: Optional[Dict[str, Any]] = None,
+        profile_json: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not isinstance(cv_json, dict):
+            return
+        try:
+            from ..utils.cv_postprocessing import enforce_cv_offer_adaptation
+            from ..utils.keyword_alignment import normalize_keyword_for_match
+        except Exception:
+            return
+
+        offer_keywords = self._collect_offer_keywords_only(critic_json=critic_json)
+        critic_missing: List[str] = []
+        if isinstance(critic_json, dict):
+            raw_missing = critic_json.get("missing_keywords")
+            if isinstance(raw_missing, list):
+                for item in raw_missing:
+                    text = str(item or "").strip()
+                    if text:
+                        critic_missing.append(text)
+        critic_missing = _dedup_preserve(critic_missing)
+
+        summary_probe = normalize_keyword_for_match(str(cv_json.get("summary") or ""))
+        experience_parts: List[str] = []
+        for item in cv_json.get("experience") or []:
+            if not isinstance(item, dict):
+                continue
+            for key in ("title", "company", "summary"):
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    experience_parts.append(value)
+            highlights = item.get("highlights")
+            if isinstance(highlights, list):
+                for value in highlights:
+                    if isinstance(value, str) and value.strip():
+                        experience_parts.append(value)
+        experience_probe = normalize_keyword_for_match(" ".join(experience_parts))
+
+        def missing_terms(terms: List[str], probe: str, limit: int) -> List[str]:
+            output: List[str] = []
+            for term in terms:
+                norm = normalize_keyword_for_match(term)
+                if not norm:
+                    continue
+                if norm in probe:
+                    continue
+                output.append(term)
+                if len(output) >= limit:
+                    break
+            return output
+
+        missing_summary_terms = missing_terms(critic_missing, summary_probe, 4)
+        missing_experience_terms = missing_terms(critic_missing, experience_probe, 3)
+
+        # If critic did not provide useful misses, fall back to offer keywords.
+        if not missing_summary_terms:
+            missing_summary_terms = missing_terms(offer_keywords, summary_probe, 3)
+        if not missing_experience_terms:
+            missing_experience_terms = missing_terms(offer_keywords, experience_probe, 2)
+
+        if not missing_summary_terms and not missing_experience_terms:
+            return
+
+        enforce_cv_offer_adaptation(
+            cv_json,
+            job_title=str(self.offer_data.get("job_title") or "")
+            if isinstance(self.offer_data, dict)
+            else "",
+            company=str(self.offer_data.get("company") or "")
+            if isinstance(self.offer_data, dict)
+            else "",
+            aligned_terms=offer_keywords[:20],
+            missing_summary_terms=missing_summary_terms,
+            missing_experience_terms=missing_experience_terms,
+            language_code=self._resolve_language_code(),
+            profile_json=profile_json if isinstance(profile_json, dict) else None,
+        )
+        logger.info(
+            "Offer adaptation enforced from critic: summary_terms=%s experience_terms=%s",
+            len(missing_summary_terms),
+            len(missing_experience_terms),
         )
 
     def _collect_offer_keywords(self) -> List[str]:
