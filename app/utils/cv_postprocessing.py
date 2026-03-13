@@ -103,6 +103,9 @@ SKILL_SENTENCE_NOISE_PATTERN = re.compile(
     r"should|must|need|needs|please|job offer|offre|profile json|instruction"
     r")\b"
 )
+DOTTED_TECH_SKILL_PATTERN = re.compile(
+    r"(?i)^(?:(?:[a-z0-9+#]+(?:\.[a-z0-9+#]+)+)|(?:\.[a-z0-9+#]+))(?:\s+[a-z0-9+#]{2,16}){0,2}$"
+)
 SKILL_GLUE_WORDS = {
     "and",
     "or",
@@ -501,7 +504,9 @@ def sanitize_cv_json_output(
             return []
 
         cleaned = SKILL_LABEL_PREFIX_PATTERN.sub("", cleaned).strip(" :-")
-        cleaned = re.sub(r"^[\-\*\d\.\)\(]+\s*", "", cleaned).strip()
+        # Strip list markers like "-", "*" or "1)" / "1." without stripping
+        # leading dots from technology names such as ".NET".
+        cleaned = re.sub(r"^(?:[-\*]|(?:\d+[.)]))\s*", "", cleaned).strip()
         if not cleaned:
             return []
 
@@ -524,8 +529,17 @@ def sanitize_cv_json_output(
     def is_skill_like_phrase(text: str) -> bool:
         if not text:
             return False
-        if any(mark in text for mark in (".", "!", "?", "\n")):
+        if any(mark in text for mark in ("!", "?", "\n")):
             return False
+        if "." in text:
+            compact = str(text).strip()
+            dotted_tech = bool(DOTTED_TECH_SKILL_PATTERN.fullmatch(compact))
+            # Keep dotted technology names, but reject sentence-like forms.
+            if not dotted_tech and (
+                re.search(r"\.\s", compact)
+                or compact.endswith(".")
+            ):
+                return False
         if SKILL_SENTENCE_NOISE_PATTERN.search(text):
             return False
 
