@@ -3111,13 +3111,22 @@ class CVGenerationWorker(QThread):
                         experience_parts.append(value)
         experience_probe = normalize_keyword_for_match(" ".join(experience_parts))
 
+        def _normalized_term_in_probe(probe: str, normalized_term: str) -> bool:
+            probe_text = str(probe or "").strip()
+            term_text = str(normalized_term or "").strip()
+            if not probe_text or not term_text:
+                return False
+            # Token-boundary match on normalized text to avoid false positives
+            # like "go" in "ongoing" or "c" in "customer".
+            return f" {term_text} " in f" {probe_text} "
+
         def missing_terms(terms: List[str], probe: str, limit: int) -> List[str]:
             output: List[str] = []
             for term in terms:
                 norm = normalize_keyword_for_match(term)
                 if not norm:
                     continue
-                if norm in probe:
+                if _normalized_term_in_probe(probe, norm):
                     continue
                 output.append(term)
                 if len(output) >= limit:

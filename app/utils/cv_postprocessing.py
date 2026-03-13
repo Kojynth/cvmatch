@@ -99,7 +99,7 @@ SKILL_SPLIT_PATTERN = re.compile(r"[;\n\|•]+")
 SKILL_SENTENCE_NOISE_PATTERN = re.compile(
     r"(?i)\b("
     r"i|we|my|our|je|j ai|nous|mon|notre|candidate|candidat|"
-    r"experience|worked|responsible|mission|project|projet|"
+    r"experience|worked|responsible|mission|"
     r"should|must|need|needs|please|job offer|offre|profile json|instruction"
     r")\b"
 )
