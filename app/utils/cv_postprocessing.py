@@ -15,6 +15,7 @@ Key features:
 from __future__ import annotations
 
 import re
+import unicodedata
 from difflib import SequenceMatcher
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -71,6 +72,27 @@ PLACEHOLDER_PATTERN = re.compile(
 INTERNAL_MARKER_PATTERN = re.compile(
     r"(PROFILE_JSON|YEAR_OF_PROFILE_JSON)",
     re.IGNORECASE,
+)
+
+ROLE_LIKE_SKILL_TOKENS = {
+    "ingenieur",
+    "engineer",
+    "developpeur",
+    "developer",
+    "consultant",
+    "manager",
+    "lead",
+    "architecte",
+    "architect",
+    "analyste",
+    "analyst",
+    "alternant",
+    "stagiaire",
+    "intern",
+}
+
+SKILL_LABEL_PREFIX_PATTERN = re.compile(
+    r"(?i)^(?:skills?|comp[eé]tences?|technical skills|competences techniques)\s*[:\-]\s*"
 )
 
 
@@ -319,6 +341,44 @@ def sanitize_cv_json_output(
         return
 
     fallback_category = "Skills" if language_code == "en" else "Competences"
+    def normalize_text_for_match(value: Any) -> str:
+        text = str(value or "").strip().lower()
+        if not text:
+            return ""
+        text = (
+            unicodedata.normalize("NFKD", text)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+        )
+        text = re.sub(r"[\W_]+", " ", text, flags=re.UNICODE)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    target_job_title_norm = normalize_text_for_match(cv_json.get("target_job_title") or "")
+
+    def normalize_skill_category_label(raw_label: Any) -> str:
+        label = clean_text_field(raw_label or "", max_length=80)
+        if not label:
+            return fallback_category
+        label = SKILL_LABEL_PREFIX_PATTERN.sub("", label).strip(" :-")
+        label_norm = normalize_text_for_match(label)
+        if not label_norm:
+            return fallback_category
+
+        tokens = [tok for tok in label_norm.split() if tok]
+        role_like = False
+        if target_job_title_norm and (
+            label_norm == target_job_title_norm
+            or label_norm in target_job_title_norm
+            or target_job_title_norm in label_norm
+        ):
+            role_like = True
+        elif 0 < len(tokens) <= 3 and any(tok in ROLE_LIKE_SKILL_TOKENS for tok in tokens):
+            role_like = True
+
+        if role_like or len(label) > 40:
+            return fallback_category
+        return label
 
     # Clean top-level text fields
     contact = cv_json.get("contact")
@@ -338,7 +398,7 @@ def sanitize_cv_json_output(
     for category in cv_json.get("skills", []) or []:
         if not isinstance(category, dict):
             continue
-        label = clean_text_field(category.get("category") or "")
+        label = normalize_skill_category_label(category.get("category") or "")
         items = category.get("items") or []
         if not isinstance(items, list):
             items = []
@@ -348,6 +408,17 @@ def sanitize_cv_json_output(
                 continue
             text = clean_text_field(item, max_length=80)
             if text and not text_has_review_markers(text):
+                text_norm = normalize_text_for_match(text)
+                # Filter role titles accidentally emitted as skills.
+                if text_norm in ROLE_LIKE_SKILL_TOKENS:
+                    continue
+                item_tokens = [tok for tok in text_norm.split() if tok]
+                if 0 < len(item_tokens) <= 3 and any(
+                    tok in ROLE_LIKE_SKILL_TOKENS for tok in item_tokens
+                ):
+                    continue
+                if target_job_title_norm and text_norm == target_job_title_norm:
+                    continue
                 cleaned_items.append(text)
         cleaned_items = _dedup_preserve(cleaned_items)
         if cleaned_items:
