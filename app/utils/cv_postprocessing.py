@@ -355,6 +355,23 @@ def sanitize_cv_json_output(
         return text
 
     target_job_title_norm = normalize_text_for_match(cv_json.get("target_job_title") or "")
+    target_job_title_token_set = {
+        tok for tok in target_job_title_norm.split() if tok
+    }
+
+    def has_role_like_title_overlap(label_tokens: Sequence[str]) -> bool:
+        if not target_job_title_token_set:
+            return False
+        label_token_set = {tok for tok in label_tokens if tok}
+        if not label_token_set:
+            return False
+        if label_token_set == target_job_title_token_set:
+            return True
+        if label_token_set.issubset(target_job_title_token_set):
+            return any(tok in ROLE_LIKE_SKILL_TOKENS for tok in label_token_set)
+        if target_job_title_token_set.issubset(label_token_set):
+            return any(tok in ROLE_LIKE_SKILL_TOKENS for tok in target_job_title_token_set)
+        return False
 
     def normalize_skill_category_label(raw_label: Any) -> str:
         label = clean_text_field(raw_label or "", max_length=80)
@@ -369,11 +386,10 @@ def sanitize_cv_json_output(
         role_like = False
         if target_job_title_norm and (
             label_norm == target_job_title_norm
-            or label_norm in target_job_title_norm
-            or target_job_title_norm in label_norm
+            or has_role_like_title_overlap(tokens)
         ):
             role_like = True
-        elif 0 < len(tokens) <= 3 and any(tok in ROLE_LIKE_SKILL_TOKENS for tok in tokens):
+        elif 0 < len(tokens) <= 3 and all(tok in ROLE_LIKE_SKILL_TOKENS for tok in tokens):
             role_like = True
 
         if role_like or len(label) > 40:
@@ -413,7 +429,7 @@ def sanitize_cv_json_output(
                 if text_norm in ROLE_LIKE_SKILL_TOKENS:
                     continue
                 item_tokens = [tok for tok in text_norm.split() if tok]
-                if 0 < len(item_tokens) <= 3 and any(
+                if 0 < len(item_tokens) <= 3 and all(
                     tok in ROLE_LIKE_SKILL_TOKENS for tok in item_tokens
                 ):
                     continue
