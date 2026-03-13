@@ -1166,6 +1166,250 @@ def reconcile_cv_sections_with_profile(cv_json: Dict[str, Any], profile_json: Di
     _reconcile_languages_section(cv_json, profile_json)
 
 
+_SUMMARY_CONTACT_PATTERNS = (
+    re.compile(r"(?i)\bcontact(?: details?)?\s*:\s*"),
+    re.compile(r"(?i)\b(?:email|e-mail)\s*:\s*[\w\.\-+%]+@[\w\.\-]+\.\w+"),
+    re.compile(r"(?i)\b(?:phone|tel|telephone|mobile)\s*:\s*[+\d][\d\-\s\(\)\.]{6,}"),
+    re.compile(r"(?i)\blinkedin(?:_url)?\s*:\s*\S+"),
+    re.compile(r"(?i)https?://(?:www\.)?linkedin\.com/\S+"),
+)
+
+
+def _strip_contact_blobs_from_summary(text: str) -> str:
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        return ""
+    for pattern in _SUMMARY_CONTACT_PATTERNS:
+        cleaned = pattern.sub("", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,;:-")
+    return cleaned
+
+
+def _split_sentences(text: str) -> List[str]:
+    cleaned = clean_narrative_text(text or "")
+    if not cleaned:
+        return []
+    parts = re.split(r"(?<=[\.\!\?])\s+|\n+", cleaned)
+    return [part.strip(" \t\r\n-") for part in parts if part and part.strip()]
+
+
+def _best_profile_match(
+    entry: Dict[str, Any],
+    profile_experiences: List[Dict[str, str]],
+) -> Optional[Dict[str, str]]:
+    best_score = 0.0
+    best_entry: Optional[Dict[str, str]] = None
+    for candidate in profile_experiences:
+        score = _score_profile_experience_match(entry, candidate)
+        if score > best_score:
+            best_score = score
+            best_entry = candidate
+    if best_score >= 0.35:
+        return best_entry
+    return None
+
+
+def _seed_experience_from_profile(
+    cv_json: Dict[str, Any],
+    profile_json: Dict[str, Any],
+) -> int:
+    if not isinstance(cv_json, dict):
+        return 0
+    existing = cv_json.get("experience")
+    if isinstance(existing, list) and existing:
+        return 0
+
+    seeded: List[Dict[str, Any]] = []
+    for item in _extract_profile_experiences(profile_json)[:4]:
+        fallback_description = item.get("description") or ""
+        summary = _select_action_summary(
+            "",
+            highlights=[],
+            fallback_description=fallback_description,
+            company=item.get("company") or "",
+        )
+        highlights = _dedup_preserve(
+            [
+                clean_narrative_text(value)
+                for value in extract_experience_highlights(fallback_description)
+                if clean_narrative_text(value)
+            ]
+        )[:4]
+        if summary and highlights and _is_same_narrative(summary, highlights[0]):
+            highlights = highlights[1:]
+
+        seeded.append(
+            {
+                "title": item.get("title") or "",
+                "company": item.get("company") or "",
+                "start_date": item.get("start_date") or "",
+                "end_date": item.get("end_date") or "",
+                "location": item.get("location") or "",
+                "summary": _trim_text(summary, 280),
+                "highlights": highlights[:4],
+            }
+        )
+
+    if seeded:
+        cv_json["experience"] = seeded
+    return len(seeded)
+
+
+def rebalance_cv_narrative(
+    cv_json: Dict[str, Any],
+    *,
+    profile_json: Dict[str, Any],
+) -> None:
+    """Rebalance narrative density between summary and experience bullets.
+
+    This deterministic pass addresses weak generations where model output
+    collapses most content into one long summary paragraph while experience
+    bullets stay sparse.
+    """
+    if not isinstance(cv_json, dict):
+        return
+
+    profile_experiences = _extract_profile_experiences(profile_json)
+
+    summary = _strip_contact_blobs_from_summary(cv_json.get("summary") or "")
+    summary = clean_narrative_text(summary)
+    summary_sentences = _split_sentences(summary)
+    summary_overflow: List[str] = []
+
+    if summary and (len(summary) > 420 or len(summary_sentences) > 4):
+        kept: List[str] = []
+        length_budget = 0
+        for sentence in summary_sentences:
+            projected = length_budget + len(sentence) + (1 if kept else 0)
+            if len(kept) < 3 and projected <= 420:
+                kept.append(sentence)
+                length_budget = projected
+            else:
+                summary_overflow.append(sentence)
+        if not kept:
+            kept = [_trim_text(summary, 420)]
+        cv_json["summary"] = " ".join(kept).strip()
+    else:
+        cv_json["summary"] = _trim_text(summary, 420)
+
+    seeded_count = _seed_experience_from_profile(cv_json, profile_json)
+    if seeded_count:
+        logger.info("Experience section rebuilt from profile data: entries=%s", seeded_count)
+
+    experience_entries = cv_json.get("experience")
+    if not isinstance(experience_entries, list):
+        return
+
+    synthesized_highlights = 0
+    for entry in experience_entries:
+        if not isinstance(entry, dict):
+            continue
+
+        entry_summary = _strip_contact_blobs_from_summary(entry.get("summary") or "")
+        entry_summary = clean_narrative_text(entry_summary)
+        entry_sentences = _split_sentences(entry_summary)
+        entry_overflow: List[str] = []
+        if entry_summary and (len(entry_summary) > 300 or len(entry_sentences) > 3):
+            kept = entry_sentences[:2]
+            entry_overflow = entry_sentences[2:]
+            entry_summary = _trim_text(" ".join(kept), 280) if kept else _trim_text(entry_summary, 280)
+        else:
+            entry_summary = _trim_text(entry_summary, 280)
+
+        highlights: List[str] = []
+        for value in entry.get("highlights") or []:
+            if not isinstance(value, str):
+                continue
+            text = clean_narrative_text(value)
+            if not text:
+                continue
+            highlights.append(text)
+        highlights = _dedup_preserve(highlights)
+
+        matched_profile = _best_profile_match(entry, profile_experiences)
+        profile_description = matched_profile.get("description") if isinstance(matched_profile, dict) else ""
+
+        if not entry_summary and profile_description:
+            entry_summary = _select_action_summary(
+                "",
+                highlights=highlights,
+                fallback_description=profile_description,
+                company=str(entry.get("company") or ""),
+            )
+
+        highlight_candidates: List[str] = []
+        highlight_candidates.extend(entry_overflow)
+        if profile_description:
+            highlight_candidates.extend(extract_experience_highlights(profile_description))
+        if not highlight_candidates and entry_sentences:
+            highlight_candidates.extend(entry_sentences[1:])
+
+        for candidate in highlight_candidates:
+            text = clean_narrative_text(candidate)
+            if not text:
+                continue
+            if entry_summary and _is_same_narrative(entry_summary, text):
+                continue
+            if _looks_like_company_description(text, str(entry.get("company") or "")):
+                continue
+            highlights.append(text)
+
+        highlights = _dedup_preserve(highlights)
+        if len(highlights) < 2 and profile_description:
+            for candidate in extract_experience_highlights(profile_description):
+                text = clean_narrative_text(candidate)
+                if not text:
+                    continue
+                if entry_summary and _is_same_narrative(entry_summary, text):
+                    continue
+                highlights.append(text)
+                if len(_dedup_preserve(highlights)) >= 2:
+                    break
+            highlights = _dedup_preserve(highlights)
+
+        original_highlights = entry.get("highlights")
+        original_count = len(original_highlights) if isinstance(original_highlights, list) else 0
+        if highlights:
+            synthesized_highlights += max(0, len(highlights) - original_count)
+
+        if not entry_summary and highlights:
+            entry_summary = _trim_text(highlights[0], 220)
+
+        entry["summary"] = _trim_text(entry_summary, 280)
+        entry["highlights"] = highlights[:4]
+
+        if isinstance(matched_profile, dict):
+            for field in ("title", "company", "start_date", "end_date", "location"):
+                if not entry.get(field) and matched_profile.get(field):
+                    entry[field] = matched_profile.get(field)
+
+    if summary_overflow and experience_entries:
+        first = experience_entries[0] if isinstance(experience_entries[0], dict) else None
+        if isinstance(first, dict):
+            first_highlights = first.get("highlights")
+            if not isinstance(first_highlights, list):
+                first_highlights = []
+            for sentence in summary_overflow:
+                text = clean_narrative_text(sentence)
+                if not text:
+                    continue
+                if first.get("summary") and _is_same_narrative(first.get("summary"), text):
+                    continue
+                first_highlights.append(text)
+            first["highlights"] = _dedup_preserve(first_highlights)[:4]
+
+    if summary_overflow:
+        logger.info(
+            "Summary rebalanced into experience bullets: moved_sentences=%s",
+            len(summary_overflow),
+        )
+    if synthesized_highlights > 0:
+        logger.info(
+            "Experience highlights synthesized from profile/generated text: added=%s",
+            synthesized_highlights,
+        )
+
+
 def coerce_generated_cv_payload(
     *,
     payload: Dict[str, Any],
@@ -1273,6 +1517,12 @@ def coerce_generated_cv_payload(
     if offer_adaptation_fn:
         offer_adaptation_fn(merged, critic_json)
 
+    # Deterministic quality pass: avoid overstuffed summary + empty bullets.
+    rebalance_cv_narrative(
+        merged,
+        profile_json=profile_json,
+    )
+
     # Re-sanitize after optional post-merge transformations.
     sanitize_cv_json_output(merged, language_code=language_code)
     reconcile_cv_sections_with_profile(merged, profile_json)
@@ -1293,7 +1543,7 @@ def extract_experience_highlights(description: str) -> List[str]:
         return []
 
     highlights: List[str] = []
-    for part in re.split(r"[\r\n]+", description):
+    for part in re.split(r"[\r\n]+|(?<=[\.\!\?])\s+", description):
         cleaned = part.strip(" -*\t")
         if cleaned:
             highlights.append(cleaned)

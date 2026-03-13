@@ -1111,6 +1111,15 @@ class CVGenerationWorker(QThread):
         payload["profile_data"] = asdict(self.profile_data)
         payload["offer_data"] = self.offer_data
         payload["template"] = self.template
+        payload.setdefault("user_instruction", self.user_instruction)
+        payload.setdefault("application_id", self.application_id)
+        payload.setdefault("cv_only_regen", bool(self.cv_only_regen))
+        payload.setdefault(
+            "previous_generation_audit",
+            dict(self.previous_generation_audit)
+            if isinstance(self.previous_generation_audit, dict)
+            else {},
+        )
         try:
             stage_model_id = self._choose_stage_model_override(stage)
         except Exception:
@@ -2194,10 +2203,19 @@ class CVGenerationWorker(QThread):
             base["render_hints"] = None
 
         if reason:
-            logger.warning(
-                "CVJSON payload coerced to minimum schema shape: %s",
-                reason,
-            )
+            reason_text = str(reason or "")
+            if reason_text.startswith("postprocess_base_required_fields"):
+                # This is the deterministic base skeleton used by postprocess;
+                # keep it visible but avoid warning noise.
+                logger.info(
+                    "CVJSON postprocess base skeleton prepared: %s",
+                    reason_text,
+                )
+            else:
+                logger.warning(
+                    "CVJSON payload coerced to minimum schema shape: %s",
+                    reason_text,
+                )
         return base
 
     def _fallback_cv_json(
@@ -3260,6 +3278,11 @@ JOB_OFFER_TEXT:
             user_instruction_block = (
                 "\n\nUSER_REGEN_INSTRUCTION (editorial guidance):\n"
                 f"{_trim_text(user_instruction, 700)}"
+            )
+            logger.info(
+                "CV regen instruction attached to prompt: stage=%s len=%s",
+                stage,
+                len(user_instruction),
             )
 
         user_prompt = f"""
