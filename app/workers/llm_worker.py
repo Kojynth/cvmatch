@@ -150,6 +150,33 @@ def _join_nonempty(parts: Iterable[str], sep: str = " | ") -> str:
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 LINKEDIN_RE = re.compile(r"https?://[^\s]*linkedin\.com/[^\s]+", re.IGNORECASE)
 PHONE_RE = re.compile(r"(?:\+?\d[\d\s().-]{8,}\d)")
+SKILL_LABEL_PREFIX_PATTERN = re.compile(
+    r"(?i)^(?:skills?|comp[eé]tences?|technical skills|competences techniques)\s*[:\-]\s*"
+)
+ROLE_LIKE_SKILL_TOKENS = {
+    "ingenieur",
+    "engineer",
+    "developpeur",
+    "developer",
+    "consultant",
+    "manager",
+    "lead",
+    "architecte",
+    "architect",
+    "analyste",
+    "analyst",
+    "alternant",
+    "stagiaire",
+    "intern",
+}
+GENERIC_SKILL_LABELS = {
+    "skill",
+    "skills",
+    "competence",
+    "competences",
+    "technical skill",
+    "technical skills",
+}
 
 
 def _dedup_preserve(items: Iterable[str]) -> List[str]:
@@ -2930,6 +2957,124 @@ class CVGenerationWorker(QThread):
 
         return _dedup_preserve([k for k in keywords if isinstance(k, str) and k.strip()])[:60]
 
+    @staticmethod
+    def _normalize_skill_text_for_role_detection(value: Any) -> str:
+        text = str(value or "").strip().casefold()
+        if not text:
+            return ""
+        text = (
+            unicodedata.normalize("NFKD", text)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+        )
+        text = re.sub(r"[^\w]+", " ", text, flags=re.UNICODE)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    def _sanitize_skill_item_text(self, value: Any) -> str:
+        if not isinstance(value, str):
+            return ""
+        cleaned = self._strip_placeholders(value)
+        if not cleaned:
+            return ""
+        cleaned = SKILL_LABEL_PREFIX_PATTERN.sub("", cleaned).strip(" :-")
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        if not cleaned:
+            return ""
+        if self._text_has_review_markers(cleaned):
+            return ""
+        if len(cleaned) > 80:
+            return ""
+        if any(mark in cleaned for mark in ("!", "?", "\n")):
+            return ""
+
+        normalized = _normalize_keyword_for_match(cleaned)
+        if not normalized:
+            return ""
+        if normalized in GENERIC_SKILL_LABELS:
+            return ""
+
+        role_norm = self._normalize_skill_text_for_role_detection(cleaned)
+        tokens = [tok for tok in role_norm.split() if tok]
+        if not tokens:
+            return ""
+        role_tokens = [tok for tok in tokens if tok in ROLE_LIKE_SKILL_TOKENS]
+        if role_tokens:
+            non_role_tokens = [
+                tok
+                for tok in tokens
+                if tok not in ROLE_LIKE_SKILL_TOKENS and len(tok) > 2
+            ]
+            if not non_role_tokens and len(tokens) <= 4:
+                return ""
+        if len(tokens) > 6:
+            return ""
+        return cleaned
+
+    def _collect_profile_skill_terms(self) -> List[str]:
+        terms: List[str] = []
+
+        def add_term(value: Any) -> None:
+            if isinstance(value, dict):
+                add_term(value.get("name"))
+                add_term(value.get("skill"))
+                return
+            if isinstance(value, list):
+                for item in value:
+                    add_term(item)
+                return
+            if not isinstance(value, str):
+                return
+            cleaned = self._sanitize_skill_item_text(value)
+            if cleaned:
+                terms.append(cleaned)
+
+        skills = getattr(self.profile_data, "extracted_skills", None) or []
+        for entry in skills:
+            if isinstance(entry, dict):
+                add_term(entry.get("items") or entry.get("skills_list") or entry.get("skills") or [])
+            else:
+                add_term(entry)
+
+        certifications = getattr(self.profile_data, "extracted_certifications", None) or []
+        for entry in certifications:
+            if isinstance(entry, dict):
+                add_term(entry.get("name"))
+            else:
+                add_term(entry)
+
+        projects = getattr(self.profile_data, "extracted_projects", None) or []
+        for entry in projects:
+            if isinstance(entry, dict):
+                add_term(entry.get("technologies"))
+                add_term(entry.get("tech_stack"))
+
+        return _dedup_preserve(terms)[:16]
+
+    def _build_fallback_skill_items(
+        self,
+        terms: Iterable[Any],
+        *,
+        min_items: int = 2,
+        max_items: int = 8,
+    ) -> List[str]:
+        cleaned_items: List[str] = []
+        seen_norm: set = set()
+        for raw in terms:
+            cleaned = self._sanitize_skill_item_text(raw)
+            if not cleaned:
+                continue
+            norm = _normalize_keyword_for_match(cleaned)
+            if not norm or norm in seen_norm:
+                continue
+            seen_norm.add(norm)
+            cleaned_items.append(cleaned)
+            if len(cleaned_items) >= max_items:
+                break
+        if len(cleaned_items) < max(1, int(min_items or 1)):
+            return []
+        return cleaned_items
+
     def _update_ats_keywords(
         self, cv_json: Dict[str, Any], offer_keywords: List[str]
     ) -> None:
@@ -2966,20 +3111,27 @@ class CVGenerationWorker(QThread):
             return
         candidate_terms = _collect_candidate_keywords(self.profile_data)
         mapping = _build_keyword_alignment(candidate_terms, offer_keywords)
+        profile_skill_terms = self._collect_profile_skill_terms()
         language_code = self._resolve_language_code()
         fallback_category = "Skills" if language_code == "en" else "Competences"
         offer_norm = {_normalize_keyword_for_match(item) for item in offer_keywords}
         if not mapping:
             self._update_ats_keywords(cv_json, offer_keywords)
-            fallback_items = []
-            for term in candidate_terms:
-                if _normalize_keyword_for_match(term) in offer_norm:
-                    fallback_items.append(term)
-            fallback_items = _dedup_preserve(fallback_items)
+            fallback_items = self._build_fallback_skill_items(
+                [
+                    term
+                    for term in profile_skill_terms
+                    if _normalize_keyword_for_match(term) in offer_norm
+                ]
+            )
             if fallback_items and not cv_json.get("skills"):
                 cv_json["skills"] = [
                     {"category": fallback_category, "items": fallback_items[:8]}
                 ]
+            elif not fallback_items:
+                logger.info(
+                    "Keyword alignment skipped: no high-signal fallback skills available."
+                )
             logger.info("Keyword alignment skipped: no candidate matches.")
             return
 
@@ -3000,20 +3152,14 @@ class CVGenerationWorker(QThread):
                     if not isinstance(item, str):
                         updated_items.append(item)
                         continue
-                    cleaned = self._strip_placeholders(item)
+                    cleaned = self._sanitize_skill_item_text(item)
                     if not cleaned:
-                        continue
-                    if self._text_has_review_markers(cleaned) or len(cleaned) > 80:
-                        extracted = self._extract_terms_from_text(
-                            cleaned,
-                            mapping=mapping,
-                            candidate_terms=candidate_terms,
-                        )
-                        updated_items.extend(extracted)
                         continue
                     updated, count = _replace_terms_in_text(cleaned, mapping)
                     replacements += count
-                    updated_items.append(updated)
+                    cleaned_updated = self._sanitize_skill_item_text(updated)
+                    if cleaned_updated:
+                        updated_items.append(cleaned_updated)
                 category["items"] = _dedup_preserve(
                     [item for item in updated_items if isinstance(item, str) and item.strip()]
                 )
@@ -3076,16 +3222,23 @@ class CVGenerationWorker(QThread):
                 )
 
         if not skills_present:
-            fallback_items = _dedup_preserve(list(mapping.values()))
+            fallback_items = self._build_fallback_skill_items(list(mapping.values()))
             if not fallback_items:
-                for term in candidate_terms:
-                    if _normalize_keyword_for_match(term) in offer_norm:
-                        fallback_items.append(term)
-                fallback_items = _dedup_preserve(fallback_items)
+                fallback_items = self._build_fallback_skill_items(
+                    [
+                        term
+                        for term in profile_skill_terms
+                        if _normalize_keyword_for_match(term) in offer_norm
+                    ]
+                )
             if fallback_items:
                 cv_json["skills"] = [
                     {"category": fallback_category, "items": fallback_items[:8]}
                 ]
+            else:
+                logger.info(
+                    "Skipping low-signal skill fallback: no usable skill set met minimum quality."
+                )
 
         self._update_ats_keywords(cv_json, offer_keywords)
         logger.info(
@@ -3122,22 +3275,84 @@ class CVGenerationWorker(QThread):
                     if text:
                         critic_missing.append(text)
         critic_missing = _dedup_preserve(critic_missing)
+        critic_skill_candidates = _dedup_preserve(
+            [
+                clean
+                for clean in (
+                    self._sanitize_skill_item_text(term) for term in critic_missing
+                )
+                if clean
+            ]
+        )
+        offer_skill_candidates = _dedup_preserve(
+            [
+                clean
+                for clean in (
+                    self._sanitize_skill_item_text(term) for term in offer_keywords
+                )
+                if clean
+            ]
+        )
 
-        summary_probe = normalize_keyword_for_match(str(cv_json.get("summary") or ""))
-        experience_parts: List[str] = []
-        for item in cv_json.get("experience") or []:
-            if not isinstance(item, dict):
-                continue
-            for key in ("title", "company", "summary"):
-                value = item.get(key)
-                if isinstance(value, str) and value.strip():
-                    experience_parts.append(value)
-            highlights = item.get("highlights")
-            if isinstance(highlights, list):
-                for value in highlights:
-                    if isinstance(value, str) and value.strip():
-                        experience_parts.append(value)
-        experience_probe = normalize_keyword_for_match(" ".join(experience_parts))
+        def _collect_probe_fragments(value: Any, output: List[str]) -> None:
+            if isinstance(value, str):
+                if value.strip():
+                    output.append(value)
+                return
+            if isinstance(value, list):
+                for item in value:
+                    _collect_probe_fragments(item, output)
+                return
+            if isinstance(value, dict):
+                for item in value.values():
+                    _collect_probe_fragments(item, output)
+
+        def _build_section_probe(section_key: str) -> str:
+            fragments: List[str] = []
+            if section_key == "summary":
+                summary_value = cv_json.get("summary")
+                if isinstance(summary_value, str):
+                    fragments.append(summary_value)
+                return normalize_keyword_for_match(" ".join(fragments))
+
+            section_data = cv_json.get(section_key)
+            if isinstance(section_data, list):
+                for entry in section_data:
+                    if not isinstance(entry, dict):
+                        continue
+                    if section_key == "experience":
+                        for key in ("title", "company", "summary", "highlights"):
+                            _collect_probe_fragments(entry.get(key), fragments)
+                    elif section_key == "skills":
+                        _collect_probe_fragments(entry.get("category"), fragments)
+                        _collect_probe_fragments(entry.get("items"), fragments)
+                    elif section_key == "projects":
+                        for key in ("name", "description", "technologies"):
+                            _collect_probe_fragments(entry.get(key), fragments)
+                    elif section_key == "education":
+                        for key in ("school", "degree", "field_of_study", "details"):
+                            _collect_probe_fragments(entry.get(key), fragments)
+                    elif section_key == "certifications":
+                        for key in ("name", "organization", "date"):
+                            _collect_probe_fragments(entry.get(key), fragments)
+                    elif section_key == "languages":
+                        for key in ("language", "level", "certification"):
+                            _collect_probe_fragments(entry.get(key), fragments)
+                    else:
+                        _collect_probe_fragments(entry, fragments)
+            return normalize_keyword_for_match(" ".join(fragments))
+
+        section_probes = {
+            "summary": _build_section_probe("summary"),
+            "experience": _build_section_probe("experience"),
+            "skills": _build_section_probe("skills"),
+            "projects": _build_section_probe("projects"),
+            "education": _build_section_probe("education"),
+            "certifications": _build_section_probe("certifications"),
+            "languages": _build_section_probe("languages"),
+        }
+        summary_probe = section_probes["summary"]
+        experience_probe = section_probes["experience"]
 
         def _normalized_term_in_probe(probe: str, normalized_term: str) -> bool:
             # Token-boundary match on normalized text to avoid false positives
@@ -3145,16 +3360,24 @@ class CVGenerationWorker(QThread):
             # terms across delimiters like "/" and ".".
             return normalized_term_present(probe, normalized_term)
 
-        def missing_terms(terms: List[str], probe: str, limit: int) -> List[str]:
+        def missing_terms(
+            terms: List[str],
+            probe: str,
+            limit: Optional[int] = None,
+        ) -> List[str]:
             output: List[str] = []
+            seen: set[str] = set()
             for term in terms:
                 norm = normalize_keyword_for_match(term)
                 if not norm:
                     continue
+                if norm in seen:
+                    continue
+                seen.add(norm)
                 if _normalized_term_in_probe(probe, norm):
                     continue
                 output.append(term)
-                if len(output) >= limit:
+                if isinstance(limit, int) and limit > 0 and len(output) >= limit:
                     break
             return output
 
@@ -3176,42 +3399,82 @@ class CVGenerationWorker(QThread):
 
         reference_terms = critic_missing if critic_missing else offer_keywords
         combined_probe = " ".join(
-            part for part in (summary_probe, experience_probe) if part
+            part for part in section_probes.values() if part
         ).strip()
         reference_coverage = coverage_ratio(reference_terms, combined_probe)
         missing_ratio = max(0.0, 1.0 - reference_coverage)
 
-        summary_limit = 4
-        experience_limit = 3
-        fallback_summary_limit = 3
-        fallback_experience_limit = 2
-        if missing_ratio >= 0.70:
-            summary_limit = 6
-            # Experience bullets are capped to 4 items per entry in postprocess.
-            # Do not target more missing experience terms than this capacity.
-            experience_limit = 4
-            fallback_summary_limit = 5
-            fallback_experience_limit = 4
-        elif missing_ratio >= 0.50:
-            summary_limit = 5
-            experience_limit = 4
-            fallback_summary_limit = 4
-            fallback_experience_limit = 3
-
-        missing_summary_terms = missing_terms(critic_missing, summary_probe, summary_limit)
-        missing_experience_terms = missing_terms(critic_missing, experience_probe, experience_limit)
+        # Creative adaptation policy: do not cap adaptation term count.
+        # Guardrails against factual invention stay enforced downstream.
+        missing_summary_terms = missing_terms(critic_missing, summary_probe)
+        missing_experience_terms = missing_terms(critic_missing, experience_probe)
+        missing_skills_terms = missing_terms(
+            critic_skill_candidates,
+            section_probes["skills"],
+        )
+        missing_projects_terms = missing_terms(
+            critic_missing,
+            section_probes["projects"],
+        )
+        missing_education_terms = missing_terms(
+            critic_missing,
+            section_probes["education"],
+        )
+        missing_certification_terms = missing_terms(
+            critic_missing,
+            section_probes["certifications"],
+        )
+        missing_language_terms = missing_terms(
+            critic_missing,
+            section_probes["languages"],
+        )
 
         # If critic did not provide useful misses, fall back to offer keywords.
         if not missing_summary_terms:
             missing_summary_terms = missing_terms(
-                offer_keywords, summary_probe, fallback_summary_limit
+                offer_keywords,
+                summary_probe,
             )
         if not missing_experience_terms:
             missing_experience_terms = missing_terms(
-                offer_keywords, experience_probe, fallback_experience_limit
+                offer_keywords,
+                experience_probe,
+            )
+        if not missing_skills_terms:
+            missing_skills_terms = missing_terms(
+                offer_skill_candidates,
+                section_probes["skills"],
+            )
+        if not missing_projects_terms:
+            missing_projects_terms = missing_terms(
+                offer_keywords,
+                section_probes["projects"],
+            )
+        if not missing_education_terms:
+            missing_education_terms = missing_terms(
+                offer_keywords,
+                section_probes["education"],
+            )
+        if not missing_certification_terms:
+            missing_certification_terms = missing_terms(
+                offer_keywords,
+                section_probes["certifications"],
+            )
+        if not missing_language_terms:
+            missing_language_terms = missing_terms(
+                offer_keywords,
+                section_probes["languages"],
             )
 
-        if not missing_summary_terms and not missing_experience_terms:
+        if (
+            not missing_summary_terms
+            and not missing_experience_terms
+            and not missing_skills_terms
+            and not missing_projects_terms
+            and not missing_education_terms
+            and not missing_certification_terms
+            and not missing_language_terms
+        ):
             return
 
         enforce_cv_offer_adaptation(
@@ -3222,19 +3485,43 @@ class CVGenerationWorker(QThread):
             company=str(self.offer_data.get("company") or "")
             if isinstance(self.offer_data, dict)
             else "",
-            aligned_terms=offer_keywords[:20],
+            aligned_terms=offer_keywords,
             missing_summary_terms=missing_summary_terms,
             missing_experience_terms=missing_experience_terms,
-            summary_term_limit=summary_limit,
-            experience_term_limit=experience_limit,
+            missing_skills_terms=missing_skills_terms,
+            missing_projects_terms=missing_projects_terms,
+            missing_education_terms=missing_education_terms,
+            missing_certification_terms=missing_certification_terms,
+            missing_language_terms=missing_language_terms,
+            summary_term_limit=None,
+            experience_term_limit=None,
             language_code=self._resolve_language_code(),
             profile_json=profile_json if isinstance(profile_json, dict) else None,
         )
+        updated_probes = {
+            "summary": _build_section_probe("summary"),
+            "experience": _build_section_probe("experience"),
+            "skills": _build_section_probe("skills"),
+            "projects": _build_section_probe("projects"),
+            "education": _build_section_probe("education"),
+            "certifications": _build_section_probe("certifications"),
+            "languages": _build_section_probe("languages"),
+        }
+        updated_combined_probe = " ".join(
+            part for part in updated_probes.values() if part
+        ).strip()
+        updated_coverage = coverage_ratio(reference_terms, updated_combined_probe)
         logger.info(
-            "Offer adaptation enforced from critic: summary_terms=%s experience_terms=%s coverage=%.2f missing_ratio=%.2f",
+            "Offer adaptation enforced from critic: summary=%s experience=%s skills=%s projects=%s education=%s certifications=%s languages=%s coverage=%.2f->%.2f missing_ratio=%.2f",
             len(missing_summary_terms),
             len(missing_experience_terms),
+            len(missing_skills_terms),
+            len(missing_projects_terms),
+            len(missing_education_terms),
+            len(missing_certification_terms),
+            len(missing_language_terms),
             reference_coverage,
+            updated_coverage,
             missing_ratio,
         )
 

@@ -1899,15 +1899,26 @@ def enforce_cv_offer_adaptation(
     aligned_terms: List[str],
     missing_summary_terms: List[str],
     missing_experience_terms: List[str],
-    summary_term_limit: int = 3,
-    experience_term_limit: int = 3,
+    missing_skills_terms: Optional[List[str]] = None,
+    missing_projects_terms: Optional[List[str]] = None,
+    missing_education_terms: Optional[List[str]] = None,
+    missing_certification_terms: Optional[List[str]] = None,
+    missing_language_terms: Optional[List[str]] = None,
+    summary_term_limit: Optional[int] = None,
+    experience_term_limit: Optional[int] = None,
     language_code: str = "fr",
     profile_json: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Enforce CV adaptation to job offer requirements.
 
-    This function ensures the CV summary and experience sections
-    contain references to the target job title, company, and aligned keywords.
+    This function primarily enforces alignment in summary and experience,
+    and can also reinforce skills, projects, education, certifications and
+    language ordering when those sections are present.
+
+    Adaptation policy:
+    - Creative reformulation is allowed.
+    - Facts should stay grounded in existing CV/profile sections.
+    - No new top-level experience/certification entries are created.
 
     Args:
         cv_json: CV JSON dictionary (modified in place)
@@ -1916,8 +1927,13 @@ def enforce_cv_offer_adaptation(
         aligned_terms: List of offer-aligned keyword terms
         missing_summary_terms: Terms missing from summary
         missing_experience_terms: Terms missing from experience
-        summary_term_limit: Max terms injected into summary adaptation
-        experience_term_limit: Max terms injected into experience adaptation
+        missing_skills_terms: Terms missing from skills section
+        missing_projects_terms: Terms missing from projects section
+        missing_education_terms: Terms missing from education section
+        missing_certification_terms: Terms missing from certifications section
+        missing_language_terms: Terms missing from languages section
+        summary_term_limit: Optional max terms injected into summary adaptation
+        experience_term_limit: Optional max terms injected into experience adaptation
         language_code: Language code for generated text
 
     Returns:
@@ -1925,6 +1941,15 @@ def enforce_cv_offer_adaptation(
     """
     if not isinstance(cv_json, dict):
         return cv_json
+
+    initial_experience_count = (
+        len(cv_json.get("experience")) if isinstance(cv_json.get("experience"), list) else None
+    )
+    initial_certification_count = (
+        len(cv_json.get("certifications"))
+        if isinstance(cv_json.get("certifications"), list)
+        else None
+    )
 
     try:
         from .keyword_alignment import (
@@ -1935,6 +1960,85 @@ def enforce_cv_offer_adaptation(
         return cv_json
 
     is_en = language_code == "en"
+    missing_skills_terms = list(missing_skills_terms or [])
+    missing_projects_terms = list(missing_projects_terms or [])
+    missing_education_terms = list(missing_education_terms or [])
+    missing_certification_terms = list(missing_certification_terms or [])
+    missing_language_terms = list(missing_language_terms or [])
+
+    def _prepare_terms(raw_terms: List[Any], *, limit: Optional[int] = None) -> List[str]:
+        terms = _dedup_preserve(
+            [str(term or "").strip() for term in raw_terms if str(term or "").strip()]
+        )
+        if isinstance(limit, int) and limit > 0:
+            return terms[:limit]
+        return terms
+
+    def _append_render_hint_note(note: str) -> None:
+        clean_note = clean_text_field(
+            note or "",
+            max_length=240,
+            check_review_markers=False,
+        )
+        if not clean_note:
+            return
+        render_hints = cv_json.get("render_hints")
+        if not isinstance(render_hints, dict):
+            render_hints = {}
+            cv_json["render_hints"] = render_hints
+        existing_notes = clean_text_field(
+            render_hints.get("notes") or "",
+            max_length=0,
+            check_review_markers=False,
+        )
+        chunks = [part.strip() for part in existing_notes.split(" | ") if part.strip()]
+        if clean_note not in chunks:
+            chunks.append(clean_note)
+        render_hints["notes"] = _trim_text(" | ".join(chunks), 1200)
+
+    def _sanitize_adapted_skill_term(raw_term: Any) -> str:
+        term = clean_text_field(
+            raw_term or "",
+            max_length=80,
+            check_review_markers=False,
+        )
+        if not term:
+            return ""
+        term = SKILL_LABEL_PREFIX_PATTERN.sub("", term).strip(" :-")
+        if not term:
+            return ""
+        term_norm = normalize_keyword_for_match(term)
+        if not term_norm:
+            return ""
+        if term_norm in {
+            "skill",
+            "skills",
+            "competence",
+            "competences",
+            "technical skill",
+            "technical skills",
+        }:
+            return ""
+        role_norm = (
+            unicodedata.normalize("NFKD", term.casefold())
+            .encode("ascii", "ignore")
+            .decode("ascii")
+        )
+        role_norm = re.sub(r"[^\w]+", " ", role_norm, flags=re.UNICODE)
+        role_norm = re.sub(r"\s+", " ", role_norm).strip()
+        tokens = [tok for tok in role_norm.split() if tok]
+        if not tokens:
+            return ""
+        role_tokens = [tok for tok in tokens if tok in ROLE_LIKE_SKILL_TOKENS]
+        if role_tokens:
+            non_role_tokens = [
+                tok
+                for tok in tokens
+                if tok not in ROLE_LIKE_SKILL_TOKENS and len(tok) > 2
+            ]
+            if not non_role_tokens and len(tokens) <= 4:
+                return ""
+        return term
 
     # Enforce job title and company in summary
     summary = str(cv_json.get("summary") or "").strip()
@@ -1952,8 +2056,10 @@ def enforce_cv_offer_adaptation(
         )
 
     # Add missing aligned terms to summary
-    summary_limit = max(1, min(8, int(summary_term_limit or 3)))
-    missing_summary_terms = missing_summary_terms[:summary_limit]
+    missing_summary_terms = _prepare_terms(
+        missing_summary_terms,
+        limit=summary_term_limit,
+    )
     if missing_summary_terms:
         summary_additions.append(
             f"Offer-aligned strengths: {', '.join(missing_summary_terms)}."
@@ -2082,10 +2188,10 @@ def enforce_cv_offer_adaptation(
                 )
             return bullet
 
-        experience_limit = max(1, min(8, int(experience_term_limit or 3)))
-        missing_experience_terms = _dedup_preserve(
-            [str(term or "").strip() for term in missing_experience_terms if str(term or "").strip()]
-        )[:experience_limit]
+        missing_experience_terms = _prepare_terms(
+            missing_experience_terms,
+            limit=experience_term_limit,
+        )
 
         added = 0
         for keyword in missing_experience_terms:
@@ -2125,5 +2231,341 @@ def enforce_cv_offer_adaptation(
                 "Offer adaptation injected critic keywords into experience bullets: added=%s",
                 added,
             )
+
+    # Add missing terms to skills section when present.
+    skills_section = cv_json.get("skills")
+    if isinstance(skills_section, list) and missing_skills_terms:
+        skills_entries = [item for item in skills_section if isinstance(item, dict)]
+        if skills_entries:
+            def skills_probe() -> str:
+                parts: List[str] = []
+                for block in skills_entries:
+                    category = block.get("category")
+                    if isinstance(category, str) and category.strip():
+                        parts.append(category)
+                    items = block.get("items")
+                    if isinstance(items, list):
+                        for item in items:
+                            if isinstance(item, str) and item.strip():
+                                parts.append(item)
+                return normalize_keyword_for_match(" ".join(parts))
+
+            current_probe = skills_probe()
+            added_skills = 0
+            skill_terms = _prepare_terms(missing_skills_terms)
+
+            for term in skill_terms:
+                clean_term = _sanitize_adapted_skill_term(term)
+                if not clean_term:
+                    continue
+                term_norm = normalize_keyword_for_match(clean_term)
+                if not term_norm:
+                    continue
+                if normalized_term_present(current_probe, term_norm):
+                    continue
+
+                target = None
+                target_len = 10_000
+                for block in skills_entries:
+                    items = block.get("items")
+                    if not isinstance(items, list):
+                        continue
+                    items_len = len(items)
+                    if items_len < target_len:
+                        target = block
+                        target_len = items_len
+                if target is None:
+                    target = {
+                        "category": "Skills" if is_en else "Competences",
+                        "items": [],
+                    }
+                    skills_section.append(target)
+                    skills_entries.append(target)
+
+                items = target.get("items")
+                if not isinstance(items, list):
+                    items = []
+                target["items"] = _dedup_preserve(
+                    [clean_term, *[item for item in items if isinstance(item, str) and item.strip()]]
+                )[:10]
+                current_probe = skills_probe()
+                added_skills += 1
+
+            if added_skills:
+                logger.info(
+                    "Offer adaptation reinforced skills section: added=%s",
+                    added_skills,
+                )
+
+    # Add missing terms to projects section when present.
+    projects_section = cv_json.get("projects")
+    if isinstance(projects_section, list) and missing_projects_terms:
+        project_entries = [item for item in projects_section if isinstance(item, dict)]
+        if project_entries:
+            def project_probe() -> str:
+                parts: List[str] = []
+                for entry in project_entries:
+                    for key in ("name", "description", "technologies"):
+                        value = entry.get(key)
+                        if isinstance(value, str) and value.strip():
+                            parts.append(value)
+                return normalize_keyword_for_match(" ".join(parts))
+
+            current_probe = project_probe()
+            added_projects = 0
+            project_terms = _prepare_terms(missing_projects_terms)
+
+            def choose_project_target() -> Dict[str, Any]:
+                best_entry = project_entries[0]
+                best_score = -1.0
+                for entry in project_entries:
+                    score = 0.0
+                    description = str(entry.get("description") or "").strip()
+                    technologies = str(entry.get("technologies") or "").strip()
+                    if description:
+                        score += 2.0
+                    if technologies:
+                        score += 1.0
+                    score += min(2.0, float(len(description)) / 220.0)
+                    if score > best_score:
+                        best_score = score
+                        best_entry = entry
+                return best_entry
+
+            for term in project_terms:
+                term_norm = normalize_keyword_for_match(term)
+                if not term_norm:
+                    continue
+                if normalized_term_present(current_probe, term_norm):
+                    continue
+
+                target = choose_project_target()
+                injected = False
+
+                technologies = str(target.get("technologies") or "").strip()
+                tech_items = [
+                    part.strip()
+                    for part in re.split(r"[,;/|]+", technologies)
+                    if part.strip()
+                ]
+                tech_probe = normalize_keyword_for_match(" ".join(tech_items))
+                if not normalized_term_present(tech_probe, term_norm):
+                    tech_items = _dedup_preserve([*tech_items, term])[:10]
+                    target["technologies"] = ", ".join(tech_items)
+                    injected = True
+
+                description = clean_narrative_text(str(target.get("description") or ""))
+                description_norm = normalize_keyword_for_match(description)
+                if not normalized_term_present(description_norm, term_norm):
+                    sentence = (
+                        f"Contribution focused on {term}."
+                        if is_en
+                        else f"Contribution orientee sur {term}."
+                    )
+                    target["description"] = clean_narrative_text(
+                        _trim_text(
+                            f"{description} {sentence}".strip() if description else sentence,
+                            320,
+                        )
+                    )
+                    injected = True
+
+                if injected:
+                    added_projects += 1
+                    current_probe = project_probe()
+
+            if added_projects:
+                logger.info(
+                    "Offer adaptation reinforced projects section: added=%s",
+                    added_projects,
+                )
+
+    # Add missing terms to education details when present.
+    education_section = cv_json.get("education")
+    if isinstance(education_section, list) and missing_education_terms:
+        education_entries = [item for item in education_section if isinstance(item, dict)]
+        if education_entries:
+            def education_probe() -> str:
+                parts: List[str] = []
+                for entry in education_entries:
+                    for key in ("school", "degree", "field_of_study"):
+                        value = entry.get(key)
+                        if isinstance(value, str) and value.strip():
+                            parts.append(value)
+                    details = entry.get("details")
+                    if isinstance(details, list):
+                        for value in details:
+                            if isinstance(value, str) and value.strip():
+                                parts.append(value)
+                return normalize_keyword_for_match(" ".join(parts))
+
+            current_probe = education_probe()
+            added_education = 0
+            education_terms = _prepare_terms(missing_education_terms)
+
+            for term in education_terms:
+                term_norm = normalize_keyword_for_match(term)
+                if not term_norm:
+                    continue
+                if normalized_term_present(current_probe, term_norm):
+                    continue
+
+                target = education_entries[0]
+                best_score = -1.0
+                for entry in education_entries:
+                    score = 0.0
+                    if entry.get("field_of_study"):
+                        score += 2.0
+                    details = entry.get("details")
+                    if isinstance(details, list):
+                        score += min(2.0, 0.5 * len(details))
+                    if score > best_score:
+                        best_score = score
+                        target = entry
+
+                details = target.get("details")
+                if not isinstance(details, list):
+                    details = []
+                bullet = (
+                    f"Advanced coursework aligned with {term}."
+                    if is_en
+                    else f"Approfondissement aligne sur {term}."
+                )
+                target["details"] = _dedup_preserve(
+                    [bullet, *[item for item in details if isinstance(item, str) and item.strip()]]
+                )[:6]
+                added_education += 1
+                current_probe = education_probe()
+
+            if added_education:
+                logger.info(
+                    "Offer adaptation reinforced education section: added=%s",
+                    added_education,
+                )
+
+    # Certifications adaptation: keep factual fields unchanged and store extra
+    # offer emphasis as render hints.
+    certifications_section = cv_json.get("certifications")
+    if isinstance(certifications_section, list) and missing_certification_terms:
+        certification_entries = [
+            item for item in certifications_section if isinstance(item, dict)
+        ]
+        if certification_entries:
+            def cert_probe() -> str:
+                parts: List[str] = []
+                for entry in certification_entries:
+                    for key in ("name", "organization"):
+                        value = entry.get(key)
+                        if isinstance(value, str) and value.strip():
+                            parts.append(value)
+                return normalize_keyword_for_match(" ".join(parts))
+
+            current_probe = cert_probe()
+            stored_terms: List[str] = []
+            cert_terms = _prepare_terms(missing_certification_terms)
+
+            for term in cert_terms:
+                term_norm = normalize_keyword_for_match(term)
+                if not term_norm:
+                    continue
+                if normalized_term_present(current_probe, term_norm):
+                    continue
+                stored_terms.append(term)
+                current_probe = normalize_keyword_for_match(
+                    f"{current_probe} {term}".strip()
+                )
+
+            if stored_terms:
+                hint = (
+                    f"Certifications emphasis: {', '.join(_dedup_preserve(stored_terms))}."
+                    if is_en
+                    else f"Certifications a valoriser: {', '.join(_dedup_preserve(stored_terms))}."
+                )
+                _append_render_hint_note(hint)
+                logger.info(
+                    "Offer adaptation stored certification emphasis in render_hints: terms=%s",
+                    len(stored_terms),
+                )
+
+    # Reorder languages by offer relevance when language section is present.
+    languages_section = cv_json.get("languages")
+    if isinstance(languages_section, list) and languages_section:
+        language_entries = [item for item in languages_section if isinstance(item, dict)]
+        if language_entries:
+            def normalize_language_token(value: Any) -> str:
+                raw = str(value or "").strip().casefold()
+                if not raw:
+                    return ""
+                folded = (
+                    unicodedata.normalize("NFKD", raw)
+                    .encode("ascii", "ignore")
+                    .decode("ascii")
+                )
+                compact = re.sub(r"[^a-z]+", "", folded)
+                aliases = {
+                    "fr": "french",
+                    "fra": "french",
+                    "french": "french",
+                    "francais": "french",
+                    "en": "english",
+                    "eng": "english",
+                    "english": "english",
+                    "anglais": "english",
+                    "de": "german",
+                    "ger": "german",
+                    "german": "german",
+                    "allemand": "german",
+                    "es": "spanish",
+                    "spa": "spanish",
+                    "spanish": "spanish",
+                    "espagnol": "spanish",
+                    "it": "italian",
+                    "ita": "italian",
+                    "italian": "italian",
+                    "italien": "italian",
+                    "pt": "portuguese",
+                    "por": "portuguese",
+                    "portuguese": "portuguese",
+                    "portugais": "portuguese",
+                    "ja": "japanese",
+                    "jpn": "japanese",
+                    "japanese": "japanese",
+                    "japonais": "japanese",
+                    "zh": "chinese",
+                    "chi": "chinese",
+                    "chinese": "chinese",
+                    "chinois": "chinese",
+                    "mandarin": "chinese",
+                }
+                return aliases.get(compact, "")
+
+            language_targets: List[str] = []
+            for term in [*aligned_terms, *missing_language_terms]:
+                token = normalize_language_token(term)
+                if token:
+                    language_targets.append(token)
+            language_targets = _dedup_preserve(language_targets)
+
+            if language_targets:
+                ranked_payloads: List[Tuple[int, int, Dict[str, Any]]] = []
+                for idx, entry in enumerate(language_entries):
+                    language_name = entry.get("language")
+                    token = normalize_language_token(language_name)
+                    score = 1 if token in language_targets else 0
+                    ranked_payloads.append((score, idx, entry))
+                if any(score > 0 for score, _, _ in ranked_payloads):
+                    ranked_payloads.sort(key=lambda payload: (-payload[0], payload[1]))
+                    reordered = [payload[2] for payload in ranked_payloads]
+                    if reordered != language_entries:
+                        cv_json["languages"] = reordered
+                        logger.info(
+                            "Offer adaptation reordered languages section by offer relevance."
+                        )
+
+    # Guardrail: keep experience/certification entry cardinality stable.
+    if initial_experience_count is not None and isinstance(cv_json.get("experience"), list):
+        cv_json["experience"] = cv_json["experience"][:initial_experience_count]
+    if initial_certification_count is not None and isinstance(cv_json.get("certifications"), list):
+        cv_json["certifications"] = cv_json["certifications"][:initial_certification_count]
 
     return cv_json
