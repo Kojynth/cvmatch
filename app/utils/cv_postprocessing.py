@@ -1808,6 +1808,13 @@ def coerce_generated_cv_payload(
     sanitize_cv_json_output(merged, language_code=language_code)
     reconcile_cv_sections_with_profile(merged, profile_json)
 
+    # Second offer-adaptation pass: rebalance/reconcile may overwrite
+    # earlier keyword injections in summary/experience.
+    if offer_adaptation_fn:
+        offer_adaptation_fn(merged, critic_json)
+        sanitize_cv_json_output(merged, language_code=language_code)
+        reconcile_cv_sections_with_profile(merged, profile_json)
+
     return merged
 
 
@@ -1892,6 +1899,8 @@ def enforce_cv_offer_adaptation(
     aligned_terms: List[str],
     missing_summary_terms: List[str],
     missing_experience_terms: List[str],
+    summary_term_limit: int = 3,
+    experience_term_limit: int = 3,
     language_code: str = "fr",
     profile_json: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -1907,6 +1916,8 @@ def enforce_cv_offer_adaptation(
         aligned_terms: List of offer-aligned keyword terms
         missing_summary_terms: Terms missing from summary
         missing_experience_terms: Terms missing from experience
+        summary_term_limit: Max terms injected into summary adaptation
+        experience_term_limit: Max terms injected into experience adaptation
         language_code: Language code for generated text
 
     Returns:
@@ -1941,7 +1952,8 @@ def enforce_cv_offer_adaptation(
         )
 
     # Add missing aligned terms to summary
-    missing_summary_terms = missing_summary_terms[:3]
+    summary_limit = max(1, min(8, int(summary_term_limit or 3)))
+    missing_summary_terms = missing_summary_terms[:summary_limit]
     if missing_summary_terms:
         summary_additions.append(
             f"Offer-aligned strengths: {', '.join(missing_summary_terms)}."
@@ -2070,9 +2082,10 @@ def enforce_cv_offer_adaptation(
                 )
             return bullet
 
+        experience_limit = max(1, min(8, int(experience_term_limit or 3)))
         missing_experience_terms = _dedup_preserve(
             [str(term or "").strip() for term in missing_experience_terms if str(term or "").strip()]
-        )[:3]
+        )[:experience_limit]
 
         added = 0
         for keyword in missing_experience_terms:

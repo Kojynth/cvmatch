@@ -2489,9 +2489,24 @@ class CVGenerationWorker(QThread):
         try:
             from ..utils.alignment_scoring import build_alignment_audit
             from ..utils.alignment_retry_controller import get_alignment_thresholds
-            from ..utils.keyword_alignment import normalize_keyword_for_match
+            from ..utils.keyword_alignment import (
+                normalize_keyword_for_match,
+                normalized_term_in_probe as normalized_term_present,
+            )
 
             probe_parts: List[str] = []
+            def _collect_text_fragments(value: Any) -> None:
+                if isinstance(value, str):
+                    probe_parts.append(value)
+                    return
+                if isinstance(value, dict):
+                    for nested in value.values():
+                        _collect_text_fragments(nested)
+                    return
+                if isinstance(value, list):
+                    for nested in value:
+                        _collect_text_fragments(nested)
+
             if isinstance(cv_json, dict):
                 for field in ("summary", "target_job_title", "target_company"):
                     val = cv_json.get(field)
@@ -2501,12 +2516,7 @@ class CVGenerationWorker(QThread):
                     items = cv_json.get(section_key)
                     if isinstance(items, list):
                         for item in items:
-                            if isinstance(item, str):
-                                probe_parts.append(item)
-                            elif isinstance(item, dict):
-                                for v in item.values():
-                                    if isinstance(v, str):
-                                        probe_parts.append(v)
+                            _collect_text_fragments(item)
             normalized_probe = normalize_keyword_for_match(" ".join(probe_parts))
 
             offer_kw = self._collect_offer_keywords_only(critic_json=critic_json)
@@ -2522,10 +2532,25 @@ class CVGenerationWorker(QThread):
                             normalize_keyword_for_match(t) for t in fam_terms if t
                         ]
 
-            thresholds = get_alignment_thresholds()
+            thresholds_raw = get_alignment_thresholds()
+            thresholds = {
+                "exact_min": float(
+                    thresholds_raw.get(
+                        "exact_min",
+                        thresholds_raw.get("exact_keyword_min", 55.0),
+                    )
+                ),
+                "family_min": float(
+                    thresholds_raw.get(
+                        "family_min",
+                        thresholds_raw.get("lexical_family_min", 45.0),
+                    )
+                ),
+                "overall_min": float(thresholds_raw.get("overall_min", 52.0)),
+            }
 
             def _term_present(probe: str, term: str) -> bool:
-                return term in probe if term else False
+                return normalized_term_present(probe, term) if term else False
 
             return build_alignment_audit(
                 normalized_probe=normalized_probe,
@@ -3133,14 +3158,58 @@ class CVGenerationWorker(QThread):
                     break
             return output
 
-        missing_summary_terms = missing_terms(critic_missing, summary_probe, 4)
-        missing_experience_terms = missing_terms(critic_missing, experience_probe, 3)
+        def coverage_ratio(terms: List[str], probe: str) -> float:
+            normalized_terms: List[str] = []
+            seen: set[str] = set()
+            for term in terms:
+                norm = normalize_keyword_for_match(term)
+                if not norm or norm in seen:
+                    continue
+                seen.add(norm)
+                normalized_terms.append(norm)
+            if not normalized_terms:
+                return 1.0
+            present = sum(
+                1 for term in normalized_terms if _normalized_term_in_probe(probe, term)
+            )
+            return present / float(len(normalized_terms))
+
+        reference_terms = critic_missing if critic_missing else offer_keywords
+        combined_probe = " ".join(
+            part for part in (summary_probe, experience_probe) if part
+        ).strip()
+        reference_coverage = coverage_ratio(reference_terms, combined_probe)
+        missing_ratio = max(0.0, 1.0 - reference_coverage)
+
+        summary_limit = 4
+        experience_limit = 3
+        fallback_summary_limit = 3
+        fallback_experience_limit = 2
+        if missing_ratio >= 0.70:
+            summary_limit = 6
+            # Experience bullets are capped to 4 items per entry in postprocess.
+            # Do not target more missing experience terms than this capacity.
+            experience_limit = 4
+            fallback_summary_limit = 5
+            fallback_experience_limit = 4
+        elif missing_ratio >= 0.50:
+            summary_limit = 5
+            experience_limit = 4
+            fallback_summary_limit = 4
+            fallback_experience_limit = 3
+
+        missing_summary_terms = missing_terms(critic_missing, summary_probe, summary_limit)
+        missing_experience_terms = missing_terms(critic_missing, experience_probe, experience_limit)
 
         # If critic did not provide useful misses, fall back to offer keywords.
         if not missing_summary_terms:
-            missing_summary_terms = missing_terms(offer_keywords, summary_probe, 3)
+            missing_summary_terms = missing_terms(
+                offer_keywords, summary_probe, fallback_summary_limit
+            )
         if not missing_experience_terms:
-            missing_experience_terms = missing_terms(offer_keywords, experience_probe, 2)
+            missing_experience_terms = missing_terms(
+                offer_keywords, experience_probe, fallback_experience_limit
+            )
 
         if not missing_summary_terms and not missing_experience_terms:
             return
@@ -3156,13 +3225,17 @@ class CVGenerationWorker(QThread):
             aligned_terms=offer_keywords[:20],
             missing_summary_terms=missing_summary_terms,
             missing_experience_terms=missing_experience_terms,
+            summary_term_limit=summary_limit,
+            experience_term_limit=experience_limit,
             language_code=self._resolve_language_code(),
             profile_json=profile_json if isinstance(profile_json, dict) else None,
         )
         logger.info(
-            "Offer adaptation enforced from critic: summary_terms=%s experience_terms=%s",
+            "Offer adaptation enforced from critic: summary_terms=%s experience_terms=%s coverage=%.2f missing_ratio=%.2f",
             len(missing_summary_terms),
             len(missing_experience_terms),
+            reference_coverage,
+            missing_ratio,
         )
 
     def _collect_offer_keywords(self) -> List[str]:

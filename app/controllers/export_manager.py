@@ -6,9 +6,10 @@ Gestionnaire pour l'export des CV en différents formats.
 """
 
 import os
+import re
 import tempfile
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Tuple
 from jinja2 import Environment, FileSystemLoader
 from loguru import logger
 
@@ -31,6 +32,13 @@ def _check_weasyprint():
 
 class ExportManager:
     """Gestionnaire d'export pour les CV."""
+
+    DEFAULT_PRIMARY_EXPERIENCE_COUNT = 4
+    PRIMARY_EXPERIENCE_COUNT = DEFAULT_PRIMARY_EXPERIENCE_COUNT
+    MIN_PRIMARY_EXPERIENCE_COUNT = 2
+    MAX_PRIMARY_EXPERIENCE_COUNT = 6
+    PRIMARY_EXPERIENCE_INFO_BUDGET = 12
+    PRIMARY_EXPERIENCE_RELEVANCE_THRESHOLD = 1.0
     
     def __init__(self):
         # Chemin vers les templates
@@ -147,6 +155,7 @@ class ExportManager:
             "contact": "Contact" if is_en else "Contact",
             "profile": "Profile" if is_en else "Profil",
             "experience": "Experience" if is_en else "Experience",
+            "additional_relevant": "Additional relevant details" if is_en else "Elements complementaires pertinents",
             "skills": "Skills" if is_en else "Competences",
             "education": "Education" if is_en else "Formation",
             "projects": "Projects" if is_en else "Projets",
@@ -178,12 +187,43 @@ class ExportManager:
         try:
             experience_data = formatted_data.get("experience")
             if experience_data is not None and isinstance(experience_data, list):
-                formatted_data["experience"] = self.format_experience(experience_data)
+                normalized_experience = self.format_experience(experience_data)
+                job_title_hint = (
+                    formatted_data.get("job_title")
+                    or formatted_data.get("target_job_title")
+                    or ""
+                )
+                offer_terms = self._collect_offer_terms_for_render(formatted_data)
+                primary_experience, additional_relevant_items = self._split_experience_for_render(
+                    normalized_experience,
+                    job_title=job_title_hint,
+                    offer_terms=offer_terms,
+                    primary_count=None,
+                )
+                formatted_data["experience_all"] = normalized_experience
+                formatted_data["experience"] = primary_experience
+                formatted_data["experience_primary"] = primary_experience
+                formatted_data["additional_relevant_items"] = additional_relevant_items
+                formatted_data["experience_top_n"] = len(primary_experience)
+                formatted_data["additional_relevant_summary"] = self._build_additional_relevant_summary(
+                    additional_relevant_items,
+                    formatted_data,
+                )
             elif experience_data is None:
                 formatted_data["experience"] = []
+                formatted_data["experience_all"] = []
+                formatted_data["experience_primary"] = []
+                formatted_data["additional_relevant_items"] = []
+                formatted_data["experience_top_n"] = 0
+                formatted_data["additional_relevant_summary"] = ""
         except Exception as e:
             logger.warning(f"Erreur formatage experience: {e}")
             formatted_data["experience"] = []
+            formatted_data["experience_all"] = []
+            formatted_data["experience_primary"] = []
+            formatted_data["additional_relevant_items"] = []
+            formatted_data["experience_top_n"] = 0
+            formatted_data["additional_relevant_summary"] = ""
         
         return formatted_data
     
@@ -210,7 +250,7 @@ class ExportManager:
             backdrop-filter: blur(10px);
         }
         .fallback-warning::before {
-            content: "⚠️";
+            content: "!";
             margin-right: 8px;
             font-size: 16px;
         }
@@ -315,26 +355,453 @@ class ExportManager:
         except Exception as e:
             logger.error(f"Erreur format_skills: {e}")
             return []
-    
     def format_experience(self, experience: list) -> list:
-        """Formate l'expérience pour les templates."""
+        """Formate l'experience pour les templates."""
         if not experience or not isinstance(experience, list):
             return []
-        
+
         try:
+            normalized: List[Dict[str, Any]] = []
             for exp in experience:
-                if isinstance(exp, dict):
-                    # S'assurer que la description est une liste pour les templates
-                    if isinstance(exp.get("description"), str):
-                        exp["description"] = [exp["description"]]
-                    elif exp.get("description") is None:
-                        exp["description"] = []
-            
-            return experience
+                if not isinstance(exp, dict):
+                    continue
+
+                entry = dict(exp)
+                description_lines: List[str] = []
+                description_raw = entry.get("description")
+                if isinstance(description_raw, str) and description_raw.strip():
+                    description_lines.append(description_raw.strip())
+                elif isinstance(description_raw, list):
+                    for value in description_raw:
+                        if isinstance(value, str) and value.strip():
+                            description_lines.append(value.strip())
+
+                summary = entry.get("summary")
+                if isinstance(summary, str) and summary.strip():
+                    description_lines.insert(0, summary.strip())
+
+                highlights = entry.get("highlights")
+                if isinstance(highlights, list):
+                    for value in highlights:
+                        if isinstance(value, str) and value.strip():
+                            description_lines.append(value.strip())
+
+                dedup_seen = set()
+                dedup_desc: List[str] = []
+                for line in description_lines:
+                    key = line.lower()
+                    if key in dedup_seen:
+                        continue
+                    dedup_seen.add(key)
+                    dedup_desc.append(line)
+
+                entry["description"] = dedup_desc
+                normalized.append(entry)
+
+            return normalized
         except Exception as e:
             logger.error(f"Erreur format_experience: {e}")
             return []
-    
+
+    def _collect_offer_terms_for_render(self, formatted_data: Dict[str, Any]) -> List[str]:
+        terms: List[str] = []
+        if not isinstance(formatted_data, dict):
+            return terms
+
+        for key in ("ats_keywords", "keywords", "skills", "tools", "responsibilities"):
+            value = formatted_data.get(key)
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, str) and item.strip():
+                        terms.append(item.strip())
+            elif isinstance(value, str):
+                terms.extend(part.strip() for part in value.split(",") if part.strip())
+
+        return terms
+
+    def _experience_recency_rank(self, exp: Dict[str, Any]) -> int:
+        if not isinstance(exp, dict):
+            return 0
+
+        def parse_date_rank(raw: Any) -> int:
+            raw_text = str(raw or "").strip()
+            text = raw_text.lower()
+            if not raw_text:
+                return 0
+            if any(token in text for token in ("present", "current", "actuel", "en cours", "aujourd")):
+                return 999912
+
+            def rank_from_yyyy_mm(value: Any) -> int:
+                probe = str(value or "").strip()
+                match = re.match(r"^(?P<y>\d{4})-(?P<m>0[1-9]|1[0-2])$", probe)
+                if not match:
+                    return 0
+                return int(match.group("y")) * 100 + int(match.group("m"))
+
+            month_map = {
+                "jan": 1, "janv": 1, "january": 1, "janvier": 1,
+                "feb": 2, "fev": 2, "fevr": 2, "february": 2, "fevrier": 2,
+                "mar": 3, "march": 3, "mars": 3,
+                "apr": 4, "avr": 4, "april": 4, "avril": 4,
+                "may": 5, "mai": 5,
+                "jun": 6, "june": 6, "juin": 6,
+                "jul": 7, "july": 7, "juil": 7, "juillet": 7,
+                "aug": 8, "aou": 8, "aout": 8, "august": 8,
+                "sep": 9, "sept": 9, "september": 9, "septembre": 9,
+                "oct": 10, "october": 10, "octobre": 10,
+                "nov": 11, "november": 11, "novembre": 11,
+                "dec": 12, "december": 12, "decembre": 12,
+            }
+
+            alpha = re.sub(r"[^a-z]+", " ", text)
+            month = 0
+            for token in alpha.split():
+                if token in month_map:
+                    month = month_map[token]
+                    break
+
+            # Single source of truth for numeric date formats.
+            try:
+                from ..rules.date_normalize import normalize_date_span, _normalize_single_date
+
+                ambiguous_day_first = re.search(
+                    r"\b(?P<d>0?[1-9]|1[0-2])\s*[/\-]\s*(?P<m>0?[1-9]|1[0-2])\s*[/\-]\s*(?P<y>19\d{2}|20\d{2})\b",
+                    raw_text,
+                )
+                if ambiguous_day_first:
+                    logger.warning(
+                        "RECENCY_AMBIGUOUS_DAY_FIRST: '{}' interpreted as DD/MM/YYYY (FR).",
+                        raw_text,
+                    )
+
+                start_norm, end_norm, is_current = normalize_date_span(raw_text)
+                if is_current:
+                    return 999912
+
+                for candidate in (end_norm, start_norm):
+                    rank = rank_from_yyyy_mm(candidate)
+                    if rank:
+                        return rank
+
+                iso_yyyy_mm_dd = re.search(
+                    r"\b(?P<y>19\d{2}|20\d{2})\s*[/\-]\s*(?P<m>0?[1-9]|1[0-2])\s*[/\-]\s*(?P<d>0?[1-9]|[12]\d|3[01])\b",
+                    raw_text,
+                )
+                if iso_yyyy_mm_dd:
+                    return int(iso_yyyy_mm_dd.group("y")) * 100 + int(iso_yyyy_mm_dd.group("m"))
+
+                iso_yyyy_mm = re.search(
+                    r"\b(?P<y>19\d{2}|20\d{2})\s*[/\-]\s*(?P<m>0?[1-9]|1[0-2])\b",
+                    raw_text,
+                )
+                if iso_yyyy_mm:
+                    return int(iso_yyyy_mm.group("y")) * 100 + int(iso_yyyy_mm.group("m"))
+
+                single_norm = _normalize_single_date(raw_text)
+                rank = rank_from_yyyy_mm(single_norm)
+                if rank:
+                    return rank
+            except Exception as exc:
+                logger.debug(f"Recency date_normalize fallback used: {exc}")
+
+            year_match = re.search(r"(19\d{2}|20\d{2})", text)
+            if year_match:
+                year = int(year_match.group(1))
+                return year * 100 + (month or 12)
+
+            return 0
+
+        end_rank = parse_date_rank(exp.get("end_date"))
+        if end_rank:
+            return end_rank
+        return parse_date_rank(exp.get("start_date"))
+
+    def _experience_information_units(self, exp: Dict[str, Any]) -> int:
+        if not isinstance(exp, dict):
+            return 1
+
+        units = 1
+        summary = exp.get("summary")
+        if isinstance(summary, str) and summary.strip():
+            units += 1
+
+        description = exp.get("description")
+        if isinstance(description, list):
+            description_items = [
+                item.strip()
+                for item in description
+                if isinstance(item, str) and item.strip()
+            ]
+            units += min(4, len(description_items))
+            if any(len(item) >= 120 for item in description_items):
+                units += 1
+        elif isinstance(description, str) and description.strip():
+            units += 1
+
+        technologies = exp.get("technologies")
+        if isinstance(technologies, list) and any(
+            isinstance(item, str) and item.strip() for item in technologies
+        ):
+            units += 1
+
+        return max(1, min(units, 8))
+
+    def _rank_experiences_for_render(
+        self,
+        experiences: List[Dict[str, Any]],
+        *,
+        job_title: str,
+        offer_terms: List[str],
+    ) -> Tuple[List[Dict[str, Any]], List[Tuple[float, int, int, int, Dict[str, Any]]]]:
+        if not experiences:
+            return [], []
+
+        try:
+            from ..utils.keyword_alignment import (
+                normalize_keyword_for_match,
+                normalized_term_in_probe as normalized_term_present,
+            )
+        except Exception:
+            scored_fallback: List[Tuple[float, int, int, int, Dict[str, Any]]] = []
+            for idx, exp in enumerate(experiences):
+                if not isinstance(exp, dict):
+                    continue
+                recency_rank = self._experience_recency_rank(exp)
+                info_units = self._experience_information_units(exp)
+                scored_fallback.append((0.0, recency_rank, -idx, info_units, exp))
+            scored_fallback.sort(key=lambda row: (row[1], row[2]), reverse=True)
+            return [row[4] for row in scored_fallback], scored_fallback
+
+        job_norm = normalize_keyword_for_match(job_title)
+        normalized_terms: List[str] = []
+        seen = set()
+        for term in offer_terms or []:
+            norm = normalize_keyword_for_match(term)
+            if not norm or norm in seen:
+                continue
+            seen.add(norm)
+            normalized_terms.append(norm)
+
+        scored: List[Tuple[float, int, int, int, Dict[str, Any]]] = []
+        max_relevance = 0.0
+        for idx, exp in enumerate(experiences):
+            if not isinstance(exp, dict):
+                continue
+            parts: List[str] = []
+            for key in ("title", "company", "summary", "location"):
+                value = exp.get(key)
+                if isinstance(value, str) and value.strip():
+                    parts.append(value.strip())
+            for line in exp.get("description") or []:
+                if isinstance(line, str) and line.strip():
+                    parts.append(line.strip())
+            blob_norm = normalize_keyword_for_match(" ".join(parts))
+
+            relevance = 0.0
+            if job_norm and normalized_term_present(blob_norm, job_norm):
+                relevance += 2.0
+            for term in normalized_terms:
+                if normalized_term_present(blob_norm, term):
+                    relevance += 1.8 if " " in term else 1.0
+
+            max_relevance = max(max_relevance, relevance)
+            recency_rank = self._experience_recency_rank(exp)
+            info_units = self._experience_information_units(exp)
+            scored.append((relevance, recency_rank, -idx, info_units, exp))
+
+        if not scored:
+            return experiences, []
+
+        if max_relevance <= 0.0:
+            scored.sort(key=lambda row: (row[1], row[2]), reverse=True)
+        else:
+            scored.sort(key=lambda row: (row[0], row[1], row[2]), reverse=True)
+        return [row[4] for row in scored], scored
+
+    def _resolve_primary_experience_count(
+        self,
+        scored_rows: List[Tuple[float, int, int, int, Dict[str, Any]]],
+    ) -> int:
+        total = len(scored_rows)
+        if total == 0:
+            return 0
+        if total <= self.MIN_PRIMARY_EXPERIENCE_COUNT:
+            return total
+
+        min_count = min(self.MIN_PRIMARY_EXPERIENCE_COUNT, total)
+        max_count = min(self.MAX_PRIMARY_EXPERIENCE_COUNT, total)
+
+        budget_count = 0
+        budget_used = 0
+        for _relevance, _recency, _position, info_units, _exp in scored_rows:
+            if budget_count >= max_count:
+                break
+            units = max(1, int(info_units or 1))
+            if budget_count < min_count:
+                budget_count += 1
+                budget_used += units
+                continue
+            if budget_used + units > self.PRIMARY_EXPERIENCE_INFO_BUDGET:
+                break
+            budget_count += 1
+            budget_used += units
+
+        if budget_count < min_count:
+            budget_count = min_count
+
+        relevant_hits = sum(
+            1
+            for relevance, _recency, _position, _info_units, _exp in scored_rows
+            if relevance >= self.PRIMARY_EXPERIENCE_RELEVANCE_THRESHOLD
+        )
+
+        if relevant_hits == 0:
+            target_count = min(max_count, self.DEFAULT_PRIMARY_EXPERIENCE_COUNT)
+        else:
+            target_count = max(min_count, min(max_count, relevant_hits))
+
+        return max(min_count, min(budget_count, target_count))
+
+    def _split_experience_for_render(
+        self,
+        experiences: List[Dict[str, Any]],
+        *,
+        job_title: str,
+        offer_terms: List[str],
+        primary_count: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        ranked, scored_rows = self._rank_experiences_for_render(
+            experiences,
+            job_title=job_title,
+            offer_terms=offer_terms,
+        )
+
+        if primary_count is None:
+            count = self._resolve_primary_experience_count(scored_rows)
+        else:
+            count = max(1, int(primary_count))
+
+        primary_items = ranked[:count]
+        additional_relevant_items = ranked[count:]
+        return primary_items, additional_relevant_items
+
+    def _build_additional_relevant_summary(
+        self,
+        additional_items: List[Dict[str, Any]],
+        formatted_data: Dict[str, Any],
+    ) -> str:
+        if not isinstance(additional_items, list) or not additional_items:
+            return ""
+
+        is_en = str((formatted_data or {}).get("language") or "").lower().startswith("en")
+
+        def _date_text(exp: Dict[str, Any]) -> str:
+            start = str(exp.get("start_date") or "").strip()
+            end = str(exp.get("end_date") or "").strip()
+            if start and end:
+                return f"{start}-{end}"
+            return start or end
+
+        def _exp_snippet(exp: Dict[str, Any]) -> str:
+            title = str(exp.get("title") or "").strip()
+            company = str(exp.get("company") or "").strip()
+            date_part = _date_text(exp)
+
+            head = title or company or ("Role" if is_en else "Role")
+            details: List[str] = []
+            if company and company != head:
+                details.append(company)
+            if date_part:
+                details.append(date_part)
+            if details:
+                return f"{head} ({', '.join(details)})"
+            return head
+
+        preview = [_exp_snippet(exp) for exp in additional_items[:4] if isinstance(exp, dict)]
+        preview = [item for item in preview if item]
+        if not preview:
+            return ""
+
+        sentence = "; ".join(preview)
+        remaining = len(additional_items) - len(preview)
+        if remaining > 0:
+            sentence += f"; +{remaining} {'more' if is_en else 'autres'}"
+
+        extras: List[str] = []
+
+        skill_names = self._collect_skill_names_for_compact_summary((formatted_data or {}).get("skills"))
+        if skill_names:
+            shown = skill_names[:3]
+            suffix = ""
+            if len(skill_names) > len(shown):
+                suffix = f" (+{len(skill_names) - len(shown)})"
+            prefix = "Additional skills: " if is_en else "Competences complementaires: "
+            extras.append(prefix + ", ".join(shown) + suffix)
+
+        edu_names = self._collect_education_labels_for_compact_summary((formatted_data or {}).get("education"))
+        if edu_names:
+            shown_edu = edu_names[:2]
+            suffix = ""
+            if len(edu_names) > len(shown_edu):
+                suffix = f" (+{len(edu_names) - len(shown_edu)})"
+            prefix = "Education: " if is_en else "Formation: "
+            extras.append(prefix + " | ".join(shown_edu) + suffix)
+
+        if extras:
+            sentence = sentence + ". " + " ".join(extras)
+
+        return sentence
+
+    def _collect_skill_names_for_compact_summary(self, skills: Any) -> List[str]:
+        if not isinstance(skills, list):
+            return []
+        names: List[str] = []
+        seen = set()
+        for block in skills:
+            items = []
+            if isinstance(block, dict):
+                items = block.get("skills_list") or block.get("items") or block.get("skills") or []
+            elif isinstance(block, str):
+                items = [block]
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if isinstance(item, dict):
+                    name = str(item.get("name") or item.get("skill") or "").strip()
+                else:
+                    name = str(item or "").strip()
+                if not name:
+                    continue
+                key = name.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                names.append(name)
+        return names
+
+    def _collect_education_labels_for_compact_summary(self, education: Any) -> List[str]:
+        if not isinstance(education, list):
+            return []
+        labels: List[str] = []
+        seen = set()
+        for entry in education:
+            if not isinstance(entry, dict):
+                continue
+            degree = str(entry.get("degree") or "").strip()
+            school = str(entry.get("institution") or "").strip()
+            if degree and school:
+                text = f"{degree} - {school}"
+            else:
+                text = degree or school
+            if not text:
+                continue
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            labels.append(text)
+        return labels
+
     def save_html(self, html_content: str, output_path: Optional[str] = None) -> str:
         """Sauvegarde le HTML."""
         if output_path is None:
@@ -450,7 +917,7 @@ class ExportManager:
                     "Ou utiliser: pip install --find-links https://github.com/Kozea/WeasyPrint/releases weasyprint",
                     "Ou temporairement: exporter en HTML puis convertir en ligne"
                 ],
-                "alternative": "Utiliser un convertisseur en ligne HTML → PDF"
+                "alternative": "Utiliser un convertisseur en ligne HTML -> PDF"
             }
         }
     
@@ -498,7 +965,7 @@ class ExportManager:
             "education": [
                 {
                     "degree": "Master en Informatique",
-                    "institution": "École Polytechnique",
+                    "institution": "Ecole Polytechnique",
                     "location": "Palaiseau",
                     "year": "2020",
                     "grade": "Mention Bien"
@@ -579,3 +1046,4 @@ class ExportManager:
                 "Escalade", "Photographie", "Voyages"
             ]
         }
+
