@@ -424,11 +424,19 @@ class ExportManager:
             return 0
 
         def parse_date_rank(raw: Any) -> int:
-            text = str(raw or "").strip().lower()
-            if not text:
+            raw_text = str(raw or "").strip()
+            text = raw_text.lower()
+            if not raw_text:
                 return 0
             if any(token in text for token in ("present", "current", "actuel", "en cours", "aujourd")):
                 return 999912
+
+            def rank_from_yyyy_mm(value: Any) -> int:
+                probe = str(value or "").strip()
+                match = re.match(r"^(?P<y>\d{4})-(?P<m>0[1-9]|1[0-2])$", probe)
+                if not match:
+                    return 0
+                return int(match.group("y")) * 100 + int(match.group("m"))
 
             month_map = {
                 "jan": 1, "janv": 1, "january": 1, "janvier": 1,
@@ -452,13 +460,49 @@ class ExportManager:
                     month = month_map[token]
                     break
 
-            mm_yyyy = re.search(r"(?P<m>\d{1,2})\s*[/\-]\s*(?P<y>\d{2,4})", text)
-            if mm_yyyy:
-                year = int(mm_yyyy.group("y"))
-                if year < 100:
-                    year = 2000 + year if year <= 50 else 1900 + year
-                month_value = max(1, min(12, int(mm_yyyy.group("m"))))
-                return year * 100 + month_value
+            # Single source of truth for numeric date formats.
+            try:
+                from ..rules.date_normalize import normalize_date_span, _normalize_single_date
+
+                ambiguous_day_first = re.search(
+                    r"\b(?P<d>0?[1-9]|1[0-2])\s*[/\-]\s*(?P<m>0?[1-9]|1[0-2])\s*[/\-]\s*(?P<y>19\d{2}|20\d{2})\b",
+                    raw_text,
+                )
+                if ambiguous_day_first:
+                    logger.warning(
+                        "RECENCY_AMBIGUOUS_DAY_FIRST: '{}' interpreted as DD/MM/YYYY (FR).",
+                        raw_text,
+                    )
+
+                start_norm, end_norm, is_current = normalize_date_span(raw_text)
+                if is_current:
+                    return 999912
+
+                for candidate in (end_norm, start_norm):
+                    rank = rank_from_yyyy_mm(candidate)
+                    if rank:
+                        return rank
+
+                iso_yyyy_mm_dd = re.search(
+                    r"\b(?P<y>19\d{2}|20\d{2})\s*[/\-]\s*(?P<m>0?[1-9]|1[0-2])\s*[/\-]\s*(?P<d>0?[1-9]|[12]\d|3[01])\b",
+                    raw_text,
+                )
+                if iso_yyyy_mm_dd:
+                    return int(iso_yyyy_mm_dd.group("y")) * 100 + int(iso_yyyy_mm_dd.group("m"))
+
+                iso_yyyy_mm = re.search(
+                    r"\b(?P<y>19\d{2}|20\d{2})\s*[/\-]\s*(?P<m>0?[1-9]|1[0-2])\b",
+                    raw_text,
+                )
+                if iso_yyyy_mm:
+                    return int(iso_yyyy_mm.group("y")) * 100 + int(iso_yyyy_mm.group("m"))
+
+                single_norm = _normalize_single_date(raw_text)
+                rank = rank_from_yyyy_mm(single_norm)
+                if rank:
+                    return rank
+            except Exception as exc:
+                logger.debug(f"Recency date_normalize fallback used: {exc}")
 
             year_match = re.search(r"(19\d{2}|20\d{2})", text)
             if year_match:
