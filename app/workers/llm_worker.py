@@ -1734,6 +1734,11 @@ class CVGenerationWorker(QThread):
         target_job_title: str = "",
         target_company: str = "",
     ) -> str:
+        try:
+            from ..utils.cv_summary_adaptation import build_minimum_profile_summary
+        except Exception:
+            build_minimum_profile_summary = None
+
         profile_data = profile_json if isinstance(profile_json, dict) else {}
         personal = profile_data.get("personal_info")
         if not isinstance(personal, dict):
@@ -1742,73 +1747,22 @@ class CVGenerationWorker(QThread):
         headline = str(personal.get("summary") or personal.get("headline") or "").strip()
         if headline and not self._text_has_review_markers(headline):
             return _trim_text(headline, 420)
-
-        exp_titles: List[str] = []
-        for entry in profile_data.get("experiences") or []:
-            if not isinstance(entry, dict):
-                continue
-            title = str(
-                entry.get("title")
-                or entry.get("position")
-                or entry.get("role")
-                or entry.get("job_title")
-                or ""
-            ).strip()
-            if title and title not in exp_titles:
-                exp_titles.append(title)
-            if len(exp_titles) >= 2:
-                break
-
-        skill_terms: List[str] = []
-        for entry in profile_data.get("skills") or []:
-            if isinstance(entry, str):
-                candidate = entry.strip()
-                if candidate and candidate not in skill_terms:
-                    skill_terms.append(candidate)
-            elif isinstance(entry, dict):
-                direct = str(
-                    entry.get("name")
-                    or entry.get("skill")
-                    or entry.get("label")
-                    or ""
-                ).strip()
-                if direct and direct not in skill_terms:
-                    skill_terms.append(direct)
-                items = entry.get("items")
-                if isinstance(items, list):
-                    for item in items:
-                        text = str(item or "").strip()
-                        if text and text not in skill_terms:
-                            skill_terms.append(text)
-                        if len(skill_terms) >= 6:
-                            break
-            if len(skill_terms) >= 6:
-                break
-
         lang = self._resolve_language_code()
-        role_text = str(target_job_title or "").strip() or ("target role" if lang == "en" else "poste cible")
-        company_text = str(target_company or "").strip()
+        if callable(build_minimum_profile_summary):
+            summary = build_minimum_profile_summary(
+                profile_data,
+                target_job_title=target_job_title,
+                language_code=lang,
+            )
+            if summary:
+                return _trim_text(summary, 420)
 
+        fallback_role = str(target_job_title or "").strip() or (
+            "technical profile" if lang == "en" else "profil technique"
+        )
         if lang == "en":
-            summary = f"Profile aligned with {role_text}"
-            if company_text:
-                summary += f" at {company_text}"
-            if exp_titles:
-                summary += f". Experience in {', '.join(exp_titles[:2])}"
-            if skill_terms:
-                summary += f". Core skills: {', '.join(skill_terms[:5])}"
-            summary += "."
-        else:
-            summary = f"Profil aligne sur le poste {role_text}"
-            if company_text:
-                summary += f" chez {company_text}"
-            if exp_titles:
-                summary += f". Experience en {', '.join(exp_titles[:2])}"
-            if skill_terms:
-                summary += f". Competences cles: {', '.join(skill_terms[:5])}"
-            summary += "."
-
-        return _trim_text(summary, 420)
+            return _trim_text(f"{fallback_role} with software project experience.", 420)
+        return _trim_text(f"{fallback_role} avec une experience sur des projets logiciels.", 420)
 
     @staticmethod
     def _normalize_language_identity(value: Any) -> str:
