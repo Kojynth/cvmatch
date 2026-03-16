@@ -211,7 +211,7 @@ class PersonalInfoSection(BaseSection):
         layout.setContentsMargins(5, 2, 5, 2)
         
         # Lien cliquable pour édition (plus d'ouverture externe)
-        link_btn = QPushButton(f'{link.get("platform", "Lien")}')
+        link_btn = QPushButton(f'{link.get("label") or link.get("platform") or "Lien"}')
         link_btn.setStyleSheet("""
             QPushButton {
                 background: transparent;
@@ -275,8 +275,9 @@ class PersonalInfoSection(BaseSection):
                 self.profile.extracted_personal_info['links'] = []
                 logger.info("🔗 Création de la liste extracted_personal_info['links']")
             
+            cleaned_label = platform.strip()
             new_link = {
-                "platform": platform.strip(),
+                "label": cleaned_label,
                 "url": url.strip()
             }
             self.profile.extracted_personal_info['links'].append(new_link)
@@ -296,7 +297,7 @@ class PersonalInfoSection(BaseSection):
         logger.info(f"✏️ Édition lien {index}: {link}")
         
         # Ouvrir le dialogue avec les données pré-remplies
-        dialog = LinkDialog(self, link.get('platform', ''), link.get('url', ''))
+        dialog = LinkDialog(self, link.get('label') or link.get('platform', ''), link.get('url', ''))
         if dialog.exec() == QDialog.Accepted:
             platform, url = dialog.get_link_data()
             
@@ -311,8 +312,9 @@ class PersonalInfoSection(BaseSection):
             
             if 0 <= index < len(links):
                 old_link = links[index].copy()
+                cleaned_label = platform.strip()
                 links[index] = {
-                    "platform": platform.strip(),
+                    "label": cleaned_label,
                     "url": url.strip()
                 }
                 logger.info(f"✏️ Lien modifié: {old_link} -> {links[index]}")

@@ -7,12 +7,18 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
+class PersonalLink(BaseModel):
+    label: str = ""
+    url: str = ""
+
+
 class PersonalInfo(BaseModel):
     full_name: str = ""
     email: str = ""
     phone: str = ""
     linkedin_url: str = ""
     location: str = ""
+    links: List[PersonalLink] = Field(default_factory=list)
 
 
 class ExperienceItem(BaseModel):

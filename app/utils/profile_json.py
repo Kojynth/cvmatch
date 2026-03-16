@@ -22,8 +22,10 @@ SCHEMA_VERSION = "profile.v1"
 PROFILE_CACHE_DIR = Path.cwd() / "logs" / "profile_json"
 PROFILE_CACHE_VERSION = 2
 
+PERSONAL_INFO_FIELDS = ["full_name", "email", "phone", "linkedin_url", "location"]
+
 SECTION_FIELDS: Dict[str, List[str]] = {
-    "personal_info": ["full_name", "email", "phone", "linkedin_url", "location"],
+    "personal_info": PERSONAL_INFO_FIELDS,
     "experiences": [
         "title",
         "company",
@@ -167,7 +169,8 @@ def load_profile_json_model() -> Dict[str, Any]:
 
 def build_empty_profile_json() -> Dict[str, Any]:
     data: Dict[str, Any] = {"schema_version": SCHEMA_VERSION}
-    data["personal_info"] = {field: "" for field in SECTION_FIELDS["personal_info"]}
+    data["personal_info"] = {field: "" for field in PERSONAL_INFO_FIELDS}
+    data["personal_info"]["links"] = []
     for section in LIST_SECTIONS:
         data[section] = []
     return data
@@ -182,10 +185,15 @@ def normalize_profile_json(data: Dict[str, Any]) -> Dict[str, Any]:
 
     personal = data.get("personal_info")
     if isinstance(personal, dict):
-        for field in SECTION_FIELDS["personal_info"]:
+        for field in PERSONAL_INFO_FIELDS:
             value = _clean_text(personal.get(field))
             if value:
                 normalized["personal_info"][field] = value
+        normalized["personal_info"]["links"] = _normalize_links(
+            personal.get("links")
+        )
+    else:
+        normalized["personal_info"]["links"] = _normalize_links(data.get("links"))
 
     for section in LIST_SECTIONS:
         raw_items = data.get(section)
@@ -216,8 +224,12 @@ def merge_profile_json(base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[st
     merged = build_empty_profile_json()
     merged["schema_version"] = overlay_norm.get("schema_version") or base_norm.get("schema_version")
 
-    for field in SECTION_FIELDS["personal_info"]:
+    for field in PERSONAL_INFO_FIELDS:
         merged["personal_info"][field] = overlay_norm["personal_info"].get(field) or base_norm["personal_info"].get(field) or ""
+    merged["personal_info"]["links"] = _merge_personal_links(
+        _normalize_links(base_norm.get("personal_info", {}).get("links")),
+        _normalize_links(overlay_norm.get("personal_info", {}).get("links")),
+    )
 
     for section in LIST_SECTIONS:
         overlay_list = overlay_norm.get(section, [])
@@ -319,8 +331,11 @@ def has_profile_json_content(data: Dict[str, Any]) -> bool:
     if not isinstance(data, dict):
         return False
     personal = data.get("personal_info", {})
-    if isinstance(personal, dict) and any(_clean_text(v) for v in personal.values()):
-        return True
+    if isinstance(personal, dict):
+        if any(_clean_text(personal.get(field)) for field in PERSONAL_INFO_FIELDS):
+            return True
+        if _normalize_links(personal.get("links")):
+            return True
     for section in LIST_SECTIONS:
         items = data.get(section)
         if section == "interests":
@@ -333,16 +348,32 @@ def has_profile_json_content(data: Dict[str, Any]) -> bool:
 
 
 def apply_profile_json_to_profile(profile: Any, data: Dict[str, Any]) -> None:
+    raw_personal = data.get("personal_info") if isinstance(data, dict) else {}
+    raw_links = None
+    if isinstance(raw_personal, dict) and "links" in raw_personal:
+        raw_links = raw_personal.get("links")
+    elif isinstance(data, dict) and "links" in data:
+        raw_links = data.get("links")
+    incoming_links = _normalize_links(raw_links)
+
     normalized = normalize_profile_json(data)
     if not hasattr(profile, "extracted_personal_info"):
         return
 
     existing_personal = getattr(profile, "extracted_personal_info", None) or {}
     merged_personal = dict(existing_personal)
-    for field in SECTION_FIELDS["personal_info"]:
+    for field in PERSONAL_INFO_FIELDS:
         value = _clean_text(normalized["personal_info"].get(field))
         if value:
             merged_personal[field] = value
+    if incoming_links:
+        merged_personal["links"] = incoming_links
+    else:
+        existing_links = _normalize_links(merged_personal.get("links"))
+        if existing_links:
+            merged_personal["links"] = existing_links
+        else:
+            merged_personal.pop("links", None)
     profile.extracted_personal_info = merged_personal
 
     attr_map = {
@@ -701,7 +732,7 @@ def _split_date_range(value: Any, *, single_date_is_end: bool = False) -> Tuple[
     return text, ""
 
 
-def _extract_personal_info(payload: Dict[str, Any]) -> Dict[str, str]:
+def _extract_personal_info(payload: Dict[str, Any]) -> Dict[str, Any]:
     candidates = [
         payload.get("personal_info"),
         payload.get("contact_info"),
@@ -715,8 +746,10 @@ def _extract_personal_info(payload: Dict[str, Any]) -> Dict[str, str]:
             personal = item
             break
 
-    data = {field: "" for field in SECTION_FIELDS["personal_info"]}
+    data: Dict[str, Any] = {field: "" for field in PERSONAL_INFO_FIELDS}
+    data["links"] = []
     if not personal:
+        data["links"] = _normalize_links(payload.get("links"))
         return data
 
     data["full_name"] = _pick_first(personal, ["full_name", "name", "fullname"])
@@ -724,6 +757,20 @@ def _extract_personal_info(payload: Dict[str, Any]) -> Dict[str, str]:
     data["phone"] = _pick_first(personal, ["phone", "telephone", "tel"])
     data["linkedin_url"] = _pick_first(personal, ["linkedin_url", "linkedin", "url", "profile_url"])
     data["location"] = _pick_first(personal, ["location", "city", "address", "city_country"])
+    data["links"] = _normalize_links(
+        personal.get("links") if isinstance(personal, dict) else payload.get("links")
+    )
+    if not data["links"]:
+        data["links"] = _normalize_links(payload.get("links"))
+    if not data["links"]:
+        fallback_links: List[Dict[str, str]] = []
+        github = _pick_first(personal, ["github_url", "github", "github_profile"])
+        portfolio = _pick_first(personal, ["portfolio_url", "portfolio", "website", "site_web"])
+        if github:
+            fallback_links.append({"label": "GitHub", "url": github})
+        if portfolio:
+            fallback_links.append({"label": "Portfolio", "url": portfolio})
+        data["links"] = _normalize_links(fallback_links)
     return data
 
 
@@ -1076,6 +1123,56 @@ def _normalize_interests(raw_items: Any) -> List[str]:
         if text:
             interests.extend(part.strip() for part in text.split(",") if part.strip())
     return _dedup_list(interests)
+
+
+def _normalize_link_url(value: Any) -> str:
+    url = _clean_text(value)
+    if not url:
+        return ""
+    lowered = url.lower()
+    if lowered.startswith(("http://", "https://")):
+        return url
+    if lowered.startswith("www."):
+        return f"https://{url}"
+    if re.match(r"^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}(?:[/?#].*)?$", lowered):
+        return f"https://{url}"
+    return url
+
+
+def _normalize_links(raw_links: Any) -> List[Dict[str, str]]:
+    links: List[Dict[str, str]] = []
+    seen = set()
+    for entry in _as_list(raw_links):
+        label = ""
+        url = ""
+        if isinstance(entry, dict):
+            label = _clean_text(
+                entry.get("label") or entry.get("platform") or entry.get("name")
+            )
+            url = _normalize_link_url(entry.get("url") or entry.get("link"))
+        else:
+            url = _normalize_link_url(entry)
+
+        if not url:
+            continue
+        key = (label.lower(), url.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        item = {"url": url}
+        if label:
+            item["label"] = label
+        links.append(item)
+    return links
+
+
+def _merge_personal_links(
+    base_links: List[Dict[str, str]],
+    overlay_links: List[Dict[str, str]],
+) -> List[Dict[str, str]]:
+    if overlay_links:
+        return _normalize_links(overlay_links + (base_links or []))
+    return _normalize_links(base_links)
 
 
 def _dedup_items(items: List[Dict[str, str]], key: str) -> List[Dict[str, str]]:

@@ -7,12 +7,18 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
+class ContactLink(BaseModel):
+    label: str = ""
+    url: str = ""
+
+
 class ContactInfo(BaseModel):
     full_name: str = ""
     email: str = ""
     phone: str = ""
     linkedin_url: str = ""
     location: str = ""
+    links: List[ContactLink] = Field(default_factory=list)
 
 
 class SkillCategory(BaseModel):

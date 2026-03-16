@@ -14,7 +14,7 @@ Aucune idée si ça fonctionne avec des offres en anglais j'ai surtout testé av
 
 ## Prérequis techniques (avant de lancer quoi que ce soit)
 
-- **Système d’exploitation** : Windows 10/11 **64-bit** (testé). Linux (non testé → peut nécessiter des ajustements).
+- **Système d’exploitation** : Windows 10/11 **64-bit** (testé). Linux testé et fonctionnel .
 - **Interface graphique** : environnement desktop requis.
 - **CPU** : x86_64 (recommandé 4 cœurs+).
 - **RAM** :
@@ -32,7 +32,7 @@ Aucune idée si ça fonctionne avec des offres en anglais j'ai surtout testé av
 - **GPU** : NVIDIA compatible CUDA. (je n'ai pas testé avec des GPU hors Nvidia faute de matériel)
   - GPU minimum la série 40xx.
 - **Pilotes NVIDIA** : à jour (pour que PyTorch puisse détecter CUDA).
-  - Le projet référence des builds PyTorch **CUDA 12.1 (cu121)** : avoir ses driver à jours NVIDIA c'est important.
+  - Le projet référence des builds PyTorch **CUDA 13.0 (cu130)** : avoir ses driver à jours NVIDIA c'est important.
 
 > Note : CVMatch peut fonctionner **sans GPU** (mode CPU), mais ce sera plus lent et certains modèles seront inadaptés et surtout vous risquez d'user plus vite votre CPU avec certains usages.
 
@@ -58,8 +58,7 @@ Pour **Windows**, utilisez les fichiers en `.bat`. Pour **Linux**, utilisez les 
 
 Notes IA :
 - Les modèles sont téléchargés dans le cache Hugging Face (par défaut `./.hf_cache/`).
-- Le **modèle LLM par défaut** configuré par l’installateur est **`Qwen/Qwen2.5-0.5B-Instruct`** (léger).
-- D’autres LLM peuvent être utilisés (ex : `mistralai/Mistral-7B-Instruct-v0.3`, `Qwen/Qwen2.5-7B-Instruct`) selon votre machine et vos réglages.
+- Plusieurs LLM peuvent être utilisés (ex : `mistralai/Mistral-7B-Instruct-v0.3`, `Qwen/Qwen2.5-7B-Instruct`) selon votre machine et vos réglages.
 
 3) **Lancer l’application**
 - **Windows** : `cvmatch.bat`

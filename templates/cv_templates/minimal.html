@@ -30,6 +30,11 @@
           {% if email %}<span class="contact-item">{{ email }}</span>{% endif %}
           {% if phone %}<span class="contact-item">{{ phone }}</span>{% endif %}
           {% if linkedin_url %}<span class="contact-item">{{ linkedin_url }}</span>{% endif %}
+          {% if links %}
+          {% for link in links %}
+          {% if link.url %}<span class="contact-item">{{ link.label }}: {{ link.url }}</span>{% endif %}
+          {% endfor %}
+          {% endif %}
           {% if location %}<span class="contact-item">{{ location }}</span>{% endif %}
         </div>
       </div>
