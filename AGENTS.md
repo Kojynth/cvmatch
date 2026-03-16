@@ -9,6 +9,12 @@ The PySide6 client lives in `app/` with controllers, views, widgets, workers, an
 ## Coding Style & Naming Conventions
 Format with Black (88 columns, 4-space indentation) via `poetry run black app cvextractor tests`. Keep modules, functions, and signals in `snake_case`, classes in `PascalCase`, constants in `UPPER_SNAKE`, and mirror Qt object names with their Python attributes. Normalise imports through `poetry run isort .` and keep mypy clean with `poetry run mypy`, adding annotations for public APIs.
 
+## CV Adaptation Invariant (Mandatory)
+When changing generation or postprocessing code (especially `app/workers/llm_worker.py` and `app/utils/cv_postprocessing.py`), preserve this invariant: keep offer adaptation creative and profile-grounded across all existing CV sections, keep deterministic minimum-schema recovery active for empty/invalid model outputs, and never introduce new factual entities (no new experience/certification records; only reformulate existing profile facts).
+
+## Sustainable File Size & Refactoring Rule (Mandatory)
+When implementing new behavior, prefer creating a new module/file instead of continuously expanding large files. If a file is already large or a change adds substantial logic, extract cohesive helpers/services into dedicated modules with clear responsibilities. Keep functions focused, avoid god-objects/god-files, and refactor opportunistically so files remain maintainable over time.
+
 ## Testing Guidelines
 Run `poetry run pytest` before every PR. Tag long flows with `@pytest.mark.slow` and skip them during quick passes via `pytest -m "not slow"`. Prototype work can live in `development/tests/`, reusing data from its `fixtures/` directory after anonymising CV samples. Generate coverage with `pytest --cov=app --cov=cvextractor --cov-report=term-missing` and share HTML output in `reports/coverage/` when reviewers need artefacts.
 
