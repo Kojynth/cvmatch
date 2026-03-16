@@ -1862,6 +1862,12 @@ def coerce_generated_cv_payload(
         offer_adaptation_fn(merged, critic_json)
         sanitize_cv_json_output(merged, language_code=language_code)
         reconcile_cv_sections_with_profile(merged, profile_json)
+        rebalance_cv_narrative(
+            merged,
+            profile_json=profile_json,
+        )
+        sanitize_cv_json_output(merged, language_code=language_code)
+        reconcile_cv_sections_with_profile(merged, profile_json)
 
     return merged
 
@@ -2004,6 +2010,12 @@ def enforce_cv_offer_adaptation(
             normalize_keyword_for_match,
             normalized_term_in_probe as normalized_term_present,
         )
+        from .cv_skill_ranking import rank_skill_blocks_by_relevance
+        from .cv_summary_adaptation import (
+            build_summary_focus_sentence,
+            is_minimum_summary_template,
+            strip_deterministic_summary_appendices,
+        )
     except Exception:
         return cv_json
 
@@ -2089,31 +2101,30 @@ def enforce_cv_offer_adaptation(
         return term
 
     # Enforce job title and company in summary
-    summary = str(cv_json.get("summary") or "").strip()
+    original_summary = str(cv_json.get("summary") or "").strip()
+    summary = strip_deterministic_summary_appendices(original_summary)
     summary_norm = normalize_keyword_for_match(summary)
     summary_additions: List[str] = []
-
-    if job_title and normalize_keyword_for_match(job_title) not in summary_norm:
-        summary_additions.append(
-            f"Target role: {job_title}." if is_en else f"Poste cible: {job_title}."
-        )
-
-    if company and normalize_keyword_for_match(company) not in summary_norm:
-        summary_additions.append(
-            f"Target company: {company}." if is_en else f"Entreprise cible: {company}."
-        )
+    summary_is_minimum = is_minimum_summary_template(summary)
 
     # Add missing aligned terms to summary
     missing_summary_terms = _prepare_terms(
         missing_summary_terms,
         limit=summary_term_limit,
     )
-    if missing_summary_terms:
-        summary_additions.append(
-            f"Offer-aligned strengths: {', '.join(missing_summary_terms)}."
-            if is_en
-            else f"Forces alignees offre: {', '.join(missing_summary_terms)}."
+    focus_sentence = ""
+    if not summary and missing_summary_terms and not summary_is_minimum:
+        focus_sentence = build_summary_focus_sentence(
+            missing_summary_terms,
+            language_code=language_code,
+            max_terms=(
+                min(4, int(summary_term_limit or 3))
+                if isinstance(summary_term_limit, int) and summary_term_limit > 0
+                else 3
+            ),
         )
+    if focus_sentence:
+        summary_additions.append(focus_sentence)
 
     if summary_additions:
         summary = (
@@ -2121,6 +2132,8 @@ def enforce_cv_offer_adaptation(
             if summary
             else " ".join(summary_additions)
         )
+        cv_json["summary"] = clean_narrative_text(summary)
+    elif summary != original_summary:
         cv_json["summary"] = clean_narrative_text(summary)
 
     # Add missing keywords to experience bullets with profile-grounded phrasing
@@ -2344,6 +2357,16 @@ def enforce_cv_offer_adaptation(
                     "Offer adaptation reinforced skills section: added=%s",
                     added_skills,
                 )
+
+    if isinstance(skills_section, list) and skills_section:
+        ranked_skills = rank_skill_blocks_by_relevance(
+            [item for item in skills_section if isinstance(item, dict)],
+            _dedup_preserve([*missing_skills_terms, *aligned_terms]),
+        )
+        if ranked_skills and ranked_skills != skills_section:
+            cv_json["skills"] = ranked_skills
+            skills_section = ranked_skills
+            logger.info("Offer adaptation reordered skills section by offer relevance.")
 
     # Add missing terms to projects section when present.
     projects_section = cv_json.get("projects")
