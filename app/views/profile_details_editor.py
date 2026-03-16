@@ -10,6 +10,7 @@ gestion des conflits CV/LinkedIn, et ajout dynamique d’éléments.
 import sys
 import json
 import os
+import copy
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
 from pathlib import Path
@@ -151,6 +152,7 @@ class PersonalInfoSection(QGroupBox):
         super().__init__()
         self.profile = profile
         self.fields = {}
+        self.link_rows: List[Dict[str, Any]] = []
         self.setup_ui()
         # Sanitize all text-bearing widgets in this section
         sanitize_widget_tree(self)
@@ -319,7 +321,110 @@ class PersonalInfoSection(QGroupBox):
                                       cv_location, linkedin_location, manual_location)
 
         outer_layout.addLayout(layout)
+
+        links_header_layout = QHBoxLayout()
+        links_label = QLabel("Liens:")
+        links_label.setStyleSheet("font-weight: bold;")
+        self.add_links_button = QPushButton("Ajouter des liens")
+        apply_button_style(self.add_links_button, "secondary")
+        self.add_links_button.clicked.connect(self._on_add_link_clicked)
+        links_header_layout.addWidget(links_label)
+        links_header_layout.addStretch()
+        links_header_layout.addWidget(self.add_links_button)
+        outer_layout.addLayout(links_header_layout)
+
+        self.links_form = QFormLayout()
+        self.links_form.setContentsMargins(0, 0, 0, 0)
+        self.links_form.setHorizontalSpacing(12)
+        self.links_form.setVerticalSpacing(8)
+        outer_layout.addLayout(self.links_form)
+
+        for link in self._extract_existing_links():
+            self._add_link_row(link.get("url", ""), emit_change=False)
+
         self.setLayout(outer_layout)
+
+    def _extract_existing_links(self) -> List[Dict[str, str]]:
+        personal_info = self.profile.extracted_personal_info or {}
+        raw_links = personal_info.get("links")
+        links: List[Dict[str, str]] = []
+        if not isinstance(raw_links, list):
+            return links
+        for entry in raw_links:
+            if isinstance(entry, dict):
+                url = str(entry.get("url") or entry.get("link") or "").strip()
+                if url:
+                    links.append({"url": url})
+            elif isinstance(entry, str) and entry.strip():
+                links.append({"url": entry.strip()})
+        return links
+
+    def _on_add_link_clicked(self):
+        self._add_link_row("", emit_change=True)
+        if self.link_rows:
+            self.link_rows[-1]["field"].setFocus()
+
+    def _add_link_row(self, url: str = "", *, emit_change: bool = False):
+        row_index = len(self.link_rows) + 1
+        label_widget = QLabel(f"Lien {row_index}:")
+        container = QWidget()
+        container_layout = QHBoxLayout()
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(8)
+
+        field = QLineEdit(url or "")
+        field.setPlaceholderText("https://github.com/votre-compte")
+        field.textChanged.connect(lambda: self.data_changed.emit())
+        container_layout.addWidget(field)
+
+        remove_button = QPushButton("Retirer")
+        apply_button_style(remove_button, "secondary")
+        remove_button.setMaximumWidth(100)
+        remove_button.clicked.connect(
+            lambda _checked=False, row_widget=container: self._remove_link_row(row_widget)
+        )
+        container_layout.addWidget(remove_button)
+
+        container.setLayout(container_layout)
+        self.links_form.addRow(label_widget, container)
+        self.link_rows.append(
+            {
+                "label": label_widget,
+                "field": field,
+                "container": container,
+            }
+        )
+        if emit_change:
+            self.data_changed.emit()
+
+    def _remove_link_row(self, container: QWidget):
+        remove_index = -1
+        for idx, row in enumerate(self.link_rows):
+            if row.get("container") is container:
+                remove_index = idx
+                break
+        if remove_index < 0:
+            return
+
+        self.links_form.removeRow(remove_index)
+        self.link_rows.pop(remove_index)
+        for idx, row in enumerate(self.link_rows, start=1):
+            row["label"].setText(f"Lien {idx}:")
+        self.data_changed.emit()
+
+    def _collect_links_data(self) -> List[Dict[str, str]]:
+        links: List[Dict[str, str]] = []
+        for idx, row in enumerate(self.link_rows, start=1):
+            url = str(row["field"].text() or "").strip()
+            if not url:
+                continue
+            links.append(
+                {
+                    "label": f"Lien {idx}",
+                    "url": url,
+                }
+            )
+        return links
 
     def create_field_with_source(self, layout: QFormLayout, label: str, field_name: str,
                                 cv_value: str, linkedin_value: str, manual_value: str):
@@ -402,6 +507,7 @@ class PersonalInfoSection(QGroupBox):
         data = {}
         for field_name, components in self.fields.items():
             data[field_name] = components['field'].text()
+        data["links"] = self._collect_links_data()
         return data
     
     def has_changes(self) -> bool:
@@ -411,6 +517,14 @@ class PersonalInfoSection(QGroupBox):
             original_value = components['manual_value']
             if current_value != original_value:
                 return True
+        original_links: List[Dict[str, str]] = []
+        for idx, link in enumerate(self._extract_existing_links(), start=1):
+            url = str(link.get("url") or "").strip()
+            if not url:
+                continue
+            original_links.append({"label": f"Lien {idx}", "url": url})
+        if self._collect_links_data() != original_links:
+            return True
         return False
 
 
@@ -2401,7 +2515,7 @@ class ProfileDetailsEditor(QScrollArea):
             'email': self.profile.email,
             'phone': self.profile.phone,
             'linkedin_url': self.profile.linkedin_url,
-            'extracted_personal_info': self.profile.extracted_personal_info.copy() if self.profile.extracted_personal_info else {},
+            'extracted_personal_info': copy.deepcopy(self.profile.extracted_personal_info or {}),
             'extracted_experiences': [exp.copy() for exp in (self.profile.extracted_experiences or [])],
             'extracted_education': [edu.copy() for edu in (self.profile.extracted_education or [])],
             'extracted_skills': [skill.copy() for skill in (self.profile.extracted_skills or [])],
@@ -2433,7 +2547,7 @@ class ProfileDetailsEditor(QScrollArea):
                         'email': fresh_profile.email,
                         'phone': fresh_profile.phone,
                         'linkedin_url': fresh_profile.linkedin_url,
-                        'extracted_personal_info': fresh_profile.extracted_personal_info.copy() if fresh_profile.extracted_personal_info else {},
+                        'extracted_personal_info': copy.deepcopy(fresh_profile.extracted_personal_info or {}),
                         'extracted_experiences': [exp.copy() for exp in (fresh_profile.extracted_experiences or [])],
                         'extracted_education': [edu.copy() for edu in (fresh_profile.extracted_education or [])],
                         'extracted_skills': [skill.copy() for skill in (fresh_profile.extracted_skills or [])],
@@ -2616,7 +2730,9 @@ class ProfileDetailsEditor(QScrollArea):
             self.profile.linkedin_url = cache_data.get('linkedin_url', self.profile.linkedin_url)
             
             # Restaurer toutes les données extraites
-            self.profile.extracted_personal_info = cache_data.get('extracted_personal_info', {})
+            self.profile.extracted_personal_info = copy.deepcopy(
+                cache_data.get('extracted_personal_info', {})
+            )
             self.profile.extracted_experiences = cache_data.get('extracted_experiences', [])
             self.profile.extracted_education = cache_data.get('extracted_education', [])
             self.profile.extracted_skills = cache_data.get('extracted_skills', [])
@@ -2655,7 +2771,9 @@ class ProfileDetailsEditor(QScrollArea):
         self.profile.linkedin_url = cache['linkedin_url']
         
         # Restaurer toutes les données extraites
-        self.profile.extracted_personal_info = cache['extracted_personal_info'].copy()
+        self.profile.extracted_personal_info = copy.deepcopy(
+            cache['extracted_personal_info']
+        )
         self.profile.extracted_experiences = [exp.copy() for exp in cache['extracted_experiences']]
         self.profile.extracted_education = [edu.copy() for edu in cache['extracted_education']]
         self.profile.extracted_skills = [skill.copy() for skill in cache['extracted_skills']]

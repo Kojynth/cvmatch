@@ -623,7 +623,11 @@ def _format_profile_detailed_data(profile: Union[UserProfile, ProfileWorkerData]
             rendered_links: List[str] = []
             for link in links[:6]:
                 if isinstance(link, dict):
-                    platform = (link.get("platform") or "Lien").strip()
+                    platform = (
+                        link.get("label")
+                        or link.get("platform")
+                        or "Lien"
+                    ).strip()
                     url = (link.get("url") or "").strip()
                     if url:
                         rendered_links.append(f"{platform}: {url}")

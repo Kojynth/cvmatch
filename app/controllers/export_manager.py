@@ -130,6 +130,7 @@ class ExportManager:
             "phone": "",
             "linkedin_url": "",
             "location": "",
+            "links": [],
             "job_title": "",
             "profile_summary": "",
             "experience": [],

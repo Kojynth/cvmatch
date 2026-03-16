@@ -5,7 +5,13 @@
     "email": "",
     "phone": "",
     "linkedin_url": "",
-    "location": ""
+    "location": "",
+    "links": [
+      {
+        "label": "",
+        "url": ""
+      }
+    ]
   },
   "experiences": [
     {

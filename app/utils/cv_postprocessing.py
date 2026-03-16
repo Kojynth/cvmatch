@@ -265,6 +265,38 @@ def clean_text_field(
     return cleaned
 
 
+def _normalize_contact_links(raw_links: Any) -> List[Dict[str, str]]:
+    links: List[Dict[str, str]] = []
+    if not isinstance(raw_links, list):
+        return links
+
+    seen = set()
+    for entry in raw_links:
+        label = ""
+        url = ""
+        if isinstance(entry, dict):
+            label = clean_text_field(entry.get("label") or entry.get("platform") or "", max_length=80)
+            url = clean_text_field(entry.get("url") or entry.get("link") or "", max_length=500)
+        elif isinstance(entry, str):
+            url = clean_text_field(entry, max_length=500)
+        if not url:
+            continue
+        if not re.match(r"^https?://", url, flags=re.IGNORECASE) and re.match(
+            r"^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}(?:[/?#].*)?$",
+            url,
+            flags=re.IGNORECASE,
+        ):
+            url = f"https://{url}"
+        if not label:
+            label = f"Lien {len(links) + 1}"
+        key = (label.lower(), url.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        links.append({"label": label, "url": url})
+    return links
+
+
 def apply_contact_fallback(
     cv_json: Dict[str, Any],
     profile_json: Dict[str, Any],
@@ -311,6 +343,14 @@ def apply_contact_fallback(
         value = personal.get(field) or fallback.get(field)
         if value:
             contact[field] = value
+
+    existing_links = _normalize_contact_links(contact.get("links"))
+    if existing_links:
+        contact["links"] = existing_links
+    else:
+        links = _normalize_contact_links(personal.get("links"))
+        if links:
+            contact["links"] = links
 
 
 def apply_target_fallback(
@@ -566,6 +606,11 @@ def sanitize_cv_json_output(
     if isinstance(contact, dict):
         for field in ("full_name", "email", "phone", "linkedin_url", "location"):
             contact[field] = clean_text_field(contact.get(field))
+        links = _normalize_contact_links(contact.get("links"))
+        if links:
+            contact["links"] = links
+        else:
+            contact.pop("links", None)
 
     cv_json["summary"] = clean_text_field(
         cv_json.get("summary") or "",
@@ -1753,6 +1798,9 @@ def coerce_generated_cv_payload(
             value = incoming_contact.get(field)
             if isinstance(value, str) and value.strip():
                 contact[field] = value.strip()
+        incoming_links = _normalize_contact_links(incoming_contact.get("links"))
+        if incoming_links:
+            contact["links"] = incoming_links
     merged["contact"] = contact
 
     # Merge list sections

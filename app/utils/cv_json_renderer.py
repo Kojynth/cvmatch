@@ -185,7 +185,26 @@ def _display_language_level(value: Any, *, is_en: bool) -> str:
 def cv_json_to_cv_data(
     cv_json: Dict[str, Any], language: Optional[str] = None
 ) -> Dict[str, Any]:
-    contact = cv_json.get("contact") or {}
+    contact = cv_json.get("contact")
+    if not isinstance(contact, dict):
+        contact = {}
+    contact_links: List[Dict[str, str]] = []
+    raw_contact_links = contact.get("links")
+    if isinstance(raw_contact_links, list):
+        for idx, entry in enumerate(raw_contact_links, start=1):
+            label = ""
+            url = ""
+            if isinstance(entry, dict):
+                label = str(
+                    entry.get("label") or entry.get("platform") or f"Lien {idx}"
+                ).strip()
+                url = str(entry.get("url") or entry.get("link") or "").strip()
+            elif isinstance(entry, str):
+                label = f"Lien {idx}"
+                url = entry.strip()
+            if not url:
+                continue
+            contact_links.append({"label": label or f"Lien {idx}", "url": url})
     lang = (language or "").strip().lower()
     is_en = lang.startswith("en")
     labels = {
@@ -297,6 +316,7 @@ def cv_json_to_cv_data(
         "phone": contact.get("phone") or "",
         "linkedin_url": contact.get("linkedin_url") or "",
         "location": contact.get("location") or "",
+        "links": contact_links,
         "job_title": cv_json.get("target_job_title") or "",
         "company": cv_json.get("target_company") or "",
         "profile_summary": cv_json.get("summary") or "",
@@ -351,6 +371,13 @@ def cv_json_to_markdown(cv_json: Dict[str, Any], language: Optional[str] = None)
         contact_lines.append(f"- {contact_labels['linkedin']}: {data['linkedin_url']}")
     if data.get("location"):
         contact_lines.append(f"- {contact_labels['location']}: {data['location']}")
+    for link in data.get("links") or []:
+        if not isinstance(link, dict):
+            continue
+        label = str(link.get("label") or "Lien").strip()
+        url = str(link.get("url") or "").strip()
+        if url:
+            contact_lines.append(f"- {label}: {url}")
     if contact_lines:
         lines.append(f"## {labels['contact']}")
         lines.extend(contact_lines)

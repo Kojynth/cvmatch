@@ -68,6 +68,37 @@ def _coerce_list(value: Any) -> List[Any]:
     return [value]
 
 
+def _normalize_contact_links(raw_links: Any) -> List[Dict[str, str]]:
+    links: List[Dict[str, str]] = []
+    seen = set()
+    for entry in _coerce_list(raw_links):
+        label = ""
+        url = ""
+        if isinstance(entry, dict):
+            label = str(
+                entry.get("label") or entry.get("platform") or entry.get("name") or ""
+            ).strip()
+            url = str(entry.get("url") or entry.get("link") or "").strip()
+        else:
+            url = str(entry or "").strip()
+        if not url:
+            continue
+        if not re.match(r"^https?://", url, flags=re.IGNORECASE) and re.match(
+            r"^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}(?:[/?#].*)?$",
+            url,
+            flags=re.IGNORECASE,
+        ):
+            url = f"https://{url}"
+        if not label:
+            label = f"Lien {len(links) + 1}"
+        key = (label.lower(), url.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        links.append({"label": label, "url": url})
+    return links
+
+
 _CORPORATE_DESCRIPTION_HINTS = (
     " est ",
     " is ",
@@ -588,27 +619,32 @@ def generate_fallback_cv_json(
     ats_keywords: List[str] = _dedup_preserve(offer_keywords)[:15]
 
     # Assemble final payload
+    contact_payload = {
+        "full_name": str(
+            personal.get("full_name") or getattr(profile_data, "name", "") or ""
+        ),
+        "email": str(
+            personal.get("email") or getattr(profile_data, "email", "") or ""
+        ),
+        "phone": str(
+            personal.get("phone") or getattr(profile_data, "phone", "") or ""
+        ),
+        "linkedin_url": str(
+            personal.get("linkedin_url")
+            or getattr(profile_data, "linkedin_url", "")
+            or ""
+        ),
+        "location": str(personal.get("location") or ""),
+    }
+    contact_links = _normalize_contact_links(personal.get("links"))
+    if contact_links:
+        contact_payload["links"] = contact_links
+
     payload = {
         "schema_version": "cv.v1",
         "target_job_title": job_title,
         "target_company": company,
-        "contact": {
-            "full_name": str(
-                personal.get("full_name") or getattr(profile_data, "name", "") or ""
-            ),
-            "email": str(
-                personal.get("email") or getattr(profile_data, "email", "") or ""
-            ),
-            "phone": str(
-                personal.get("phone") or getattr(profile_data, "phone", "") or ""
-            ),
-            "linkedin_url": str(
-                personal.get("linkedin_url")
-                or getattr(profile_data, "linkedin_url", "")
-                or ""
-            ),
-            "location": str(personal.get("location") or ""),
-        },
+        "contact": contact_payload,
         "summary": summary,
         "skills": (
             [{"category": skills_label, "items": skill_items}] if skill_items else []
