@@ -1423,7 +1423,12 @@ class CVGenerationWorker(QThread):
     ) -> Dict[str, Any]:
         if not isinstance(critic_json, dict):
             return {}
-        allowed_keys = ("missing_keywords", "must_keep_facts")
+        allowed_keys = (
+            "missing_keywords",
+            "must_keep_facts",
+            "retry_guidance",
+            "alignment_retry_active",
+        )
         sanitized = {key: critic_json.get(key) for key in allowed_keys if key in critic_json}
         must_keep = sanitized.get("must_keep_facts")
         if isinstance(must_keep, list):
@@ -1446,6 +1451,15 @@ class CVGenerationWorker(QThread):
                     continue
                 filtered.append(fact_text)
             sanitized["must_keep_facts"] = filtered
+        retry_guidance = sanitized.get("retry_guidance")
+        if retry_guidance is not None:
+            retry_text = str(retry_guidance or "").strip()
+            if retry_text:
+                sanitized["retry_guidance"] = _trim_text(retry_text, 500)
+            else:
+                sanitized.pop("retry_guidance", None)
+        if "alignment_retry_active" in sanitized:
+            sanitized["alignment_retry_active"] = bool(sanitized.get("alignment_retry_active"))
         return sanitized
 
     def _fallback_critic_json(self, *, reason: str = "") -> Dict[str, Any]:
@@ -1538,7 +1552,12 @@ class CVGenerationWorker(QThread):
             retries = max(retries, 2)
         return retries
 
-    def _non_strict_json_generation_overrides(self, role: str) -> Dict[str, Any]:
+    def _non_strict_json_generation_overrides(
+        self,
+        role: str,
+        *,
+        creative_retry: bool = False,
+    ) -> Dict[str, Any]:
         """
         Generation overrides for non-strict JSON retries.
 
@@ -1546,6 +1565,16 @@ class CVGenerationWorker(QThread):
         """
         env_value = os.getenv("CVMATCH_JSON_NON_STRICT_DETERMINISTIC")
         deterministic = self._to_bool_setting(env_value, True) if env_value is not None else True
+
+        if creative_retry and str(role or "").strip().lower() == "generator":
+            return {
+                "temperature": 0.28,
+                "do_sample": True,
+                "top_p": 0.92,
+                "top_k": 60,
+                "repetition_penalty": 1.05,
+                "max_new_tokens": 1900,
+            }
 
         if not deterministic:
             return {}
@@ -4058,6 +4087,13 @@ OUTPUT RULES:
             critic_json=critic_json,
             stage="final",
         )
+        alignment_retry_active = bool(
+            isinstance(critic_json, dict)
+            and (
+                critic_json.get("alignment_retry_active")
+                or critic_json.get("retry_guidance")
+            )
+        )
         try:
             strict_payload = generate_json_with_schema(
                 role="generator",
@@ -4090,7 +4126,10 @@ OUTPUT RULES:
                     messages["system"],
                     messages["user"],
                     progress_callback,
-                    generation_overrides=self._non_strict_json_generation_overrides("generator"),
+                    generation_overrides=self._non_strict_json_generation_overrides(
+                        "generator",
+                        creative_retry=alignment_retry_active,
+                    ),
                     role="generator",
                 )
                 payload = self._parse_json_response(raw)

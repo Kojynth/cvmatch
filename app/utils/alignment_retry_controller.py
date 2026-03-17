@@ -260,6 +260,29 @@ def build_alignment_missing_keywords(
     return dedup_preserve([item for item in merged if item])[:max(1, int(max_items))]
 
 
+def build_alignment_retry_guidance(
+    audit: Dict[str, Any],
+    *,
+    max_terms: int = 8,
+) -> str:
+    """Build a concise regeneration instruction from alignment audit gaps."""
+    missing_terms = build_alignment_missing_keywords(audit, max_items=max_terms)
+    if not missing_terms:
+        return (
+            "Coverage remains insufficient. Rebuild the CV more aggressively around the "
+            "job offer, especially in summary, experience bullets, skills, education, "
+            "certifications, and languages when facts support it."
+        )
+
+    joined_terms = ", ".join(missing_terms)
+    return (
+        "Coverage remains insufficient. Rebuild the CV more aggressively around the "
+        "job offer. Prioritize these missing offer terms across summary, experience "
+        f"bullets, skills, education, certifications, and languages when profile facts "
+        f"support them: {joined_terms}."
+    )
+
+
 def augment_critic_with_alignment_feedback(
     critic_json: Dict[str, Any],
     audit: Dict[str, Any],
@@ -297,6 +320,8 @@ def augment_critic_with_alignment_feedback(
     merged_missing.extend(alignment_missing)
 
     payload["missing_keywords"] = dedup_preserve(merged_missing)[:max_keywords]
+    payload["retry_guidance"] = build_alignment_retry_guidance(audit)
+    payload["alignment_retry_active"] = True
 
     return payload
 

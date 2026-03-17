@@ -1775,6 +1775,11 @@ def coerce_generated_cv_payload(
     Returns:
         Merged and validated CV JSON
     """
+    try:
+        from .cv_payload_diagnostics import classify_cv_payload_source
+    except Exception:
+        classify_cv_payload_source = None
+
     # Generate deterministic base
     base = fallback_generator(profile_json, "")
     if not isinstance(base, dict):
@@ -1868,6 +1873,25 @@ def coerce_generated_cv_payload(
         )
         sanitize_cv_json_output(merged, language_code=language_code)
         reconcile_cv_sections_with_profile(merged, profile_json)
+
+    if callable(classify_cv_payload_source):
+        try:
+            source, stats = classify_cv_payload_source(payload, merged)
+            logger.info(
+                "Final CV candidate source: source=%s payload_text=%s payload_lists=%s "
+                "payload_contact=%s payload_render_hints=%s payload_signals=%s "
+                "merged_signals=%s fill_ratio=%s%%",
+                source,
+                stats.get("payload_text_fields", 0),
+                stats.get("payload_list_fields", 0),
+                stats.get("payload_contact_fields", 0),
+                stats.get("payload_render_hints", 0),
+                stats.get("payload_total_signals", 0),
+                stats.get("merged_total_signals", 0),
+                stats.get("fill_ratio_pct", 0),
+            )
+        except Exception as exc:
+            logger.warning("Final CV candidate source diagnostic failed: %s", exc)
 
     return merged
 
