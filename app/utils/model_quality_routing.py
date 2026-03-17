@@ -15,9 +15,11 @@ LOW_QUALITY_WRITER_MODELS = {
 }
 
 PREFERRED_WRITER_ORDER = (
+    "qwen3-8b",
     "qwen2-7b",
     "mistral-7b",
     "ministral-8b",
+    "qwen3-14b",
     "qwen2-3b",
 )
 
@@ -46,4 +48,3 @@ def resolve_writer_quality_override(
             return candidate
 
     return None
-

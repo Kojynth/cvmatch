@@ -32,6 +32,62 @@ profiles:
         max_input_tokens: 2400
         max_new_tokens: 2200
         max_total_tokens: 5200
+  qwen3-8b:
+    display_name: "Qwen3-8B (Writer+)"
+    model_id: "Qwen/Qwen3-8B"
+    loader: "transformers"
+    quantization: "nf4"
+    min_vram_gb: 8
+    min_ram_gb: 18
+    quality_stars: 5
+    speed_rating: 2
+    description: "Alternative writer FR/EN de haute qualite pour CV et lettre."
+    tags: ["gpu", "default", "writer", "multilingual", "reasoning"]
+    context_hint: "Long context selon backend/configuration"
+    recommended_usage: "writer"
+    role_params:
+      generator:
+        temperature: 0.34
+        top_p: 0.92
+        top_k: 60
+        max_input_tokens: 2600
+        max_new_tokens: 2200
+        max_total_tokens: 5200
+      critic:
+        temperature: 0.2
+        top_p: 0.9
+        top_k: 50
+        max_input_tokens: 2800
+        max_new_tokens: 900
+        max_total_tokens: 3700
+  qwen3-14b:
+    display_name: "Qwen3-14B (Quality Max)"
+    model_id: "Qwen/Qwen3-14B"
+    loader: "transformers"
+    quantization: "nf4"
+    min_vram_gb: 16
+    min_ram_gb: 32
+    quality_stars: 5
+    speed_rating: 1
+    description: "Profil qualite maximale pour CV/lettres sur machines GPU haut de gamme."
+    tags: ["gpu", "default", "writer", "multilingual", "reasoning", "high_end"]
+    context_hint: "Long context selon backend/configuration"
+    recommended_usage: "writer_high_quality"
+    role_params:
+      generator:
+        temperature: 0.32
+        top_p: 0.9
+        top_k: 60
+        max_input_tokens: 2600
+        max_new_tokens: 2200
+        max_total_tokens: 5200
+      critic:
+        temperature: 0.18
+        top_p: 0.9
+        top_k: 50
+        max_input_tokens: 2800
+        max_new_tokens: 900
+        max_total_tokens: 3700
   mistral-7b:
     display_name: "Mistral-7B v0.3 (CV - recommande)"
     model_id: "mistralai/Mistral-7B-Instruct-v0.3"
@@ -173,14 +229,14 @@ hardware_tiers:
     label: "GPU 8-12GB"
     min_vram_gb: 8
     default_model: "qwen2-7b"
-    fallback_models: ["mistral-7b", "qwen2-3b", "qwen2-1.5b"]
+    fallback_models: ["qwen3-8b", "mistral-7b", "qwen2-3b", "qwen2-1.5b"]
   gpu_high:
     label: "GPU 16GB+"
     min_vram_gb: 16
     default_model: "qwen2-7b"
-    fallback_models: ["ministral-8b", "mistral-7b", "qwen2-3b"]
+    fallback_models: ["qwen3-8b", "ministral-8b", "mistral-7b", "qwen2-3b"]
   gpu_extreme:
     label: "GPU 24GB+"
     min_vram_gb: 24
     default_model: "ministral-8b"
-    fallback_models: ["mistral-7b", "qwen2-7b"]
+    fallback_models: ["qwen3-14b", "qwen3-8b", "mistral-7b", "qwen2-7b"]

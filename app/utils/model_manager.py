@@ -351,6 +351,8 @@ class ModelManager:
             "qwen2-1.5b": 0.5,   # Qwen3-1.7B
             "qwen2-3b": 0.7,     # Qwen3-4B
             "mistral-7b": 1.0,
+            "qwen3-8b": 1.2,     # Qwen3-8B
+            "qwen3-14b": 2.0,    # Qwen3-14B
             "qwen-7b": 1.2,
             "qwen-14b": 2.0,
             "qwen-32b": 4.0
@@ -627,6 +629,8 @@ class ModelManager:
             "mistral-7b": 16.0,   # 7B params - ATTENTION: gros modèle!
             "ministral-8b": 18.0, # 8B params
             "llama3.1-8b": 18.0,  # 8B params
+            "qwen3-8b": 18.0,     # 8B params
+            "qwen3-14b": 32.0,    # 14B params
             "qwen-7b": 16.0,      # 8B params (Qwen3-8B)
             "qwen-14b": 32.0,     # 14B params
             "qwen-32b": 64.0,     # 32B params
