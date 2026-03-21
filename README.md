@@ -4,11 +4,7 @@ CVMatch est une application desktop destinée à générer des CV et des lettres
 Le seul moment où une connexion internet est requise est au moment de l'installation des dépendances python et les modèles IA. Autrement toutes les opérations se dérouleront sur l'application
 
 # Warning
-Je n'ai pour le moment réalisé aucun test sur la version Linux donc je ne peux pas garantir son bon fonctionnement.
-Je n'ai même pas encore lancé l'application sur Linux et pour le moment je n'ai pas eu le temps de le faire.
 La doc est obsolète faut que je pense à la màj un jour.
-Aucune idée si ça fonctionne avec des offres en anglais j'ai surtout testé avec des offres en fr
-
 
 # Prérequis
 
@@ -18,7 +14,7 @@ Aucune idée si ça fonctionne avec des offres en anglais j'ai surtout testé av
 - **Interface graphique** : environnement desktop requis.
 - **CPU** : x86_64 (recommandé 4 cœurs+).
 - **RAM** :
-  - **IA CPU (LLM)** : 16–32 GB recommandés (selon le modèle).
+  - **Ram** : 16–32 GB recommandés (selon le modèle).
 - **Espace disque** :
   - **Base** : prévoir quelques GB (données runtime, logs, exports).
   - **IA** : prévoir **10–50+ GB** selon les modèles téléchargés (cache Hugging Face en `.hf_cache/`).
@@ -34,16 +30,16 @@ Aucune idée si ça fonctionne avec des offres en anglais j'ai surtout testé av
 - **Pilotes NVIDIA** : à jour (pour que PyTorch puisse détecter CUDA).
   - Le projet référence des builds PyTorch **CUDA 13.0 (cu130)** : avoir ses driver à jours NVIDIA c'est important.
 
-> Note : CVMatch peut fonctionner **sans GPU** (mode CPU), mais ce sera plus lent et certains modèles seront inadaptés et surtout vous risquez d'user plus vite votre CPU avec certains usages.
+> Note : CVMatch peut fonctionner **sans GPU** (mode CPU), mais ce sera plus lent et certains modèles seront inadaptés et surtout vous risquez d'user plus vite votre CPU avec certains usages. Attention j'ai aucune idée si CPU seul fonctionne bien ça dépendra des configs.
 
 ## Prérequis “fonctionnels” selon les features (optionnels)
 
 - **Export PDF avancé (WeasyPrint)** :
   - Sur Windows, WeasyPrint peut nécessiter des **bibliothèques natives** (Cairo/Pango/Harfbuzz, etc.).
-  - Sur Linux, j'ai pas testé sur un PC Linux pour le moment.
+  - Sur Linux, l'export de PDF fonctionne bien.
 
 # Guide d'utilisation
-
+Téléchargez la dernière release.
 Pour **Windows**, utilisez les fichiers en `.bat`. Pour **Linux**, utilisez les fichiers en `.sh`.
 
 ## Premier démarrage (recommandé)
@@ -94,7 +90,7 @@ l'application.
 - **Renseignez les informations minimales** demandées lors de l’initialisation (profil).
 - **Import (optionnel)** : CV / LinkedIn au **format PDF uniquement**.
 - Le bouton apprentissage automatique ne sert aujourd'hui à rien, je vais réfléchir à le retirer ou à le garder en fonction de comment je fais évoluer le projet
-### Page d'arriver pour tout futur lancement  post-Premier Lancement
+### Page d'arrivé pour tout futur lancement  post-Premier Lancement
 - Après import, allez dans **"Visualiser le détail"** pour **vérifier/corriger** les informations extraites, puis complétez votre profil. Relancez l'extraction avec le bouton "Extraire le CV" et "Extraire Linkedin".
 
 ## Générer un CV pour une offre
@@ -122,7 +118,7 @@ Mistral va présenter dans un court texte votre profil au début puis lister les
 
 # Développement de l'application : 
 - Moi, en développement assisté par de l'IA (à 90%+) et principal testeur
-- GPT 5.2 Codex (et les versions précédentes j'ai oublié les noms)
-- Claude Code Sonnet puis Opus 4.5
+- GPT 5.2+ Codex (et les versions précédentes j'ai oublié les noms)
+- Claude Code Sonnet puis Opus 4.5+
 - Cursor et son mode agent
   
