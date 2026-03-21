@@ -110,10 +110,6 @@ l'application.
 - Le bouton **"Activer l'apprentissage automatique"** est présent mais **n’a pas d’effet** pour le moment (fonctionnalité prévue plus tard).
 - Le bouton **"Lettre de motivation"** n’est **pas encore fonctionnel** : privilégiez **"Générer le CV" qui va générer les 2**.
 - Rajouter des vannes pendant la génération de CV pour rendre l'attente moins monotones.
-
-## Différence entre Qwen et Mistral
-Qwen a tendance à générer un CV bullet point avec une très bonne lettre de motivation.
-Mistral va présenter dans un court texte votre profil au début puis lister les points importants de votre CV mais la lettre de motivation peut être plus hasardeux des tests que j'ai réalisé.
   
 
 # Développement de l'application : 
