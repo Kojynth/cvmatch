@@ -1,5 +1,5 @@
 """
-Alignment Retry Controller Module 
+Alignment Retry Controller Module
 
 Controls the alignment retry loop for CV generation. When the initial CV
 doesn't have sufficient keyword alignment with the job offer, this module
@@ -29,12 +29,15 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 try:
     from ..logging.safe_logger import get_safe_logger
     from ..config import DEFAULT_PII_CONFIG
+
     logger = get_safe_logger(__name__, cfg=DEFAULT_PII_CONFIG)
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 # Import from existing modules
+from .cv_offer_term_routing import merge_section_term_maps, route_terms_to_sections
 from .offer_keywords_utils import dedup_preserve
 
 
@@ -54,6 +57,7 @@ MIN_RETRY_ATTEMPTS = 0
 @dataclass
 class AlignmentRetryConfig:
     """Configuration for alignment retry behavior."""
+
     # Retry limits
     max_attempts: int = DEFAULT_RETRY_ATTEMPTS
 
@@ -70,6 +74,7 @@ class AlignmentRetryConfig:
 @dataclass
 class AlignmentRetryState:
     """Tracks state during alignment retry loop."""
+
     retry_count: int = 0
     best_score: float = 0.0
     best_cv_json: Optional[Dict[str, Any]] = None
@@ -196,9 +201,15 @@ def is_alignment_sufficient(
     family_score = float(alignment_audit.get("lexical_family_score") or 0.0)
     overall_score = float(alignment_audit.get("overall_score") or 0.0)
 
-    exact_min = thresholds.get("exact_keyword_min", DEFAULT_ALIGNMENT_THRESHOLDS["exact_keyword_min"])
-    family_min = thresholds.get("lexical_family_min", DEFAULT_ALIGNMENT_THRESHOLDS["lexical_family_min"])
-    overall_min = thresholds.get("overall_min", DEFAULT_ALIGNMENT_THRESHOLDS["overall_min"])
+    exact_min = thresholds.get(
+        "exact_keyword_min", DEFAULT_ALIGNMENT_THRESHOLDS["exact_keyword_min"]
+    )
+    family_min = thresholds.get(
+        "lexical_family_min", DEFAULT_ALIGNMENT_THRESHOLDS["lexical_family_min"]
+    )
+    overall_min = thresholds.get(
+        "overall_min", DEFAULT_ALIGNMENT_THRESHOLDS["overall_min"]
+    )
 
     return (
         exact_score >= exact_min
@@ -252,12 +263,10 @@ def build_alignment_missing_keywords(
             values = families.get(family_key)
             if isinstance(values, list):
                 merged.extend(
-                    str(item).strip()
-                    for item in values[:3]
-                    if str(item).strip()
+                    str(item).strip() for item in values[:3] if str(item).strip()
                 )
 
-    return dedup_preserve([item for item in merged if item])[:max(1, int(max_items))]
+    return dedup_preserve([item for item in merged if item])[: max(1, int(max_items))]
 
 
 def build_alignment_retry_guidance(
@@ -320,6 +329,15 @@ def augment_critic_with_alignment_feedback(
     merged_missing.extend(alignment_missing)
 
     payload["missing_keywords"] = dedup_preserve(merged_missing)[:max_keywords]
+    existing_section_terms = (
+        payload.get("section_missing_keywords")
+        if isinstance(payload.get("section_missing_keywords"), dict)
+        else {}
+    )
+    payload["section_missing_keywords"] = merge_section_term_maps(
+        route_terms_to_sections(payload["missing_keywords"]),
+        existing_section_terms,
+    )
     payload["retry_guidance"] = build_alignment_retry_guidance(audit)
     payload["alignment_retry_active"] = True
 
@@ -497,9 +515,7 @@ def get_retry_summary(state: AlignmentRetryState) -> Dict[str, Any]:
         "final_score": state.best_score,
         "initial_score": state.scores_history[0] if state.scores_history else 0.0,
         "total_improvement": (
-            state.best_score - state.scores_history[0]
-            if state.scores_history
-            else 0.0
+            state.best_score - state.scores_history[0] if state.scores_history else 0.0
         ),
         "scores_history": list(state.scores_history),
         "improvements": list(state.improvements),
@@ -651,8 +667,13 @@ class AlignmentRetryController:
             logger.warning(
                 "CV alignment remains below threshold after retries: "
                 "exact=%.1f family=%.1f overall=%.1f",
-                float((state.best_alignment_audit or {}).get("exact_keyword_score") or 0.0),
-                float((state.best_alignment_audit or {}).get("lexical_family_score") or 0.0),
+                float(
+                    (state.best_alignment_audit or {}).get("exact_keyword_score") or 0.0
+                ),
+                float(
+                    (state.best_alignment_audit or {}).get("lexical_family_score")
+                    or 0.0
+                ),
                 float((state.best_alignment_audit or {}).get("overall_score") or 0.0),
             )
 

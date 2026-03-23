@@ -4,6 +4,7 @@ LLM Worker
 
 Worker pour la génération de CV.
 """
+
 import json
 import re
 import time
@@ -16,16 +17,20 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Iterable, Union, Tuple
 from PySide6.QtCore import QThread, Signal
+
 try:
     from ..logging.safe_logger import get_safe_logger
     from ..config import DEFAULT_PII_CONFIG
+
     logger = get_safe_logger(__name__, cfg=DEFAULT_PII_CONFIG)
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 # Suppress HuggingFace warnings on Windows
 import os
+
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"
@@ -35,15 +40,29 @@ from ..models.job_application import JobApplication, ApplicationStatus
 from ..models.database import get_session
 from .worker_data import ProfileWorkerData
 from typing import Union
+
 try:
     from ..utils.gpu_utils import gpu_manager
 except ImportError:
     # Mock GPU manager si unavailable
     class MockGPUManager:
         gpu_info = {"available": False}
-        def recommend_quantization(self, *args, **kwargs): return {"device": "cpu", "dtype": "float32", "load_in_8bit": False, "load_in_4bit": False, "reason": "Mock mode"}
-        def optimize_for_inference(self): pass
-        def get_memory_stats(self): return {"gpu_available": False}
+
+        def recommend_quantization(self, *args, **kwargs):
+            return {
+                "device": "cpu",
+                "dtype": "float32",
+                "load_in_8bit": False,
+                "load_in_4bit": False,
+                "reason": "Mock mode",
+            }
+
+        def optimize_for_inference(self):
+            pass
+
+        def get_memory_stats(self):
+            return {"gpu_available": False}
+
     gpu_manager = MockGPUManager()
 
 try:
@@ -51,10 +70,16 @@ try:
 except ImportError:
     # Mock optimizer si unavailable
     class MockModelOptimizer:
-        def check_hf_xet_status(self): return {"optimizations_active": False}
-        def optimize_model_download(self, model_name, progress_callback=None, force_download=False): 
-            if progress_callback: progress_callback("💠 Téléchargement standard...")
+        def check_hf_xet_status(self):
+            return {"optimizations_active": False}
+
+        def optimize_model_download(
+            self, model_name, progress_callback=None, force_download=False
+        ):
+            if progress_callback:
+                progress_callback("💠 Téléchargement standard...")
             return model_name
+
     model_optimizer = MockModelOptimizer()
 
 from ..utils.llm_worker_fallbacks import (
@@ -96,7 +121,9 @@ def _normalize_language(language: Optional[str]) -> str:
     return "fr"
 
 
-def _estimate_model_size_gb(model_name: Optional[str], model_id: Optional[str] = None) -> float:
+def _estimate_model_size_gb(
+    model_name: Optional[str], model_id: Optional[str] = None
+) -> float:
     """
     Estime la "taille" du modèle (en pratique: ordre de grandeur) à partir du nom/id.
 
@@ -111,11 +138,15 @@ def _estimate_model_size_gb(model_name: Optional[str], model_id: Optional[str] =
         return 8.0
     if any(token in haystack for token in ["7b", "mistral-7b", "mistral 7b"]):
         return 7.0
-    if any(token in haystack for token in ["4b", "3.8b", "phi-3-mini", "phi3", "mini-4k"]):
+    if any(
+        token in haystack for token in ["4b", "3.8b", "phi-3-mini", "phi3", "mini-4k"]
+    ):
         return 4.0
     if any(token in haystack for token in ["3b", "qwen3-4b", "qwen2.5-3b"]):
         return 3.0
-    if any(token in haystack for token in ["1.7b", "1.5b", "qwen3-1.7b", "qwen2.5-1.5b"]):
+    if any(
+        token in haystack for token in ["1.7b", "1.5b", "qwen3-1.7b", "qwen2.5-1.5b"]
+    ):
         return 1.5
     if any(token in haystack for token in ["1.1b", "tinyllama"]):
         return 1.1
@@ -236,7 +267,9 @@ def _persist_cover_letter_style_in_offer_analysis(
         if isinstance(style_payload.get("style_profile"), dict)
         else {}
     )
-    style_mode = str(style_payload.get("style_mode") or style_profile.get("mode") or "").strip()
+    style_mode = str(
+        style_payload.get("style_mode") or style_profile.get("mode") or ""
+    ).strip()
     if not style_mode:
         return
     analysis = offer_data.get("analysis")
@@ -245,7 +278,9 @@ def _persist_cover_letter_style_in_offer_analysis(
     analysis[COVER_LETTER_STYLE_ANALYSIS_KEY] = {
         "mode": style_mode,
         "label": str(style_profile.get("label") or ""),
-        "source": str(style_payload.get("style_source") or style_profile.get("source") or "auto"),
+        "source": str(
+            style_payload.get("style_source") or style_profile.get("source") or "auto"
+        ),
         "freeze_applied": bool(style_payload.get("freeze_applied")),
         "instruction_override": bool(style_payload.get("instruction_override")),
         "template_hint": str(style_profile.get("template_hint") or ""),
@@ -311,7 +346,14 @@ def _compact_profile_json_for_prompt(profile_json: Dict[str, Any]) -> Dict[str, 
     compacted: Dict[str, Any] = {}
     for key, value in profile_json.items():
         if key in limits and isinstance(value, list):
-            compacted[key] = [compact_item(item) if isinstance(item, dict) else truncate(item) if isinstance(item, str) else item for item in value[: limits[key]]]
+            compacted[key] = [
+                (
+                    compact_item(item)
+                    if isinstance(item, dict)
+                    else truncate(item) if isinstance(item, str) else item
+                )
+                for item in value[: limits[key]]
+            ]
         elif isinstance(value, dict):
             compacted[key] = compact_item(value)
         elif isinstance(value, list):
@@ -323,7 +365,9 @@ def _compact_profile_json_for_prompt(profile_json: Dict[str, Any]) -> Dict[str, 
     return compacted
 
 
-def _collect_candidate_keywords(profile: Union[UserProfile, ProfileWorkerData]) -> List[str]:
+def _collect_candidate_keywords(
+    profile: Union[UserProfile, ProfileWorkerData],
+) -> List[str]:
     terms: List[str] = []
 
     def add_term(value: Any) -> None:
@@ -344,7 +388,12 @@ def _collect_candidate_keywords(profile: Union[UserProfile, ProfileWorkerData]) 
     skills = getattr(profile, "extracted_skills", None) or []
     for entry in skills:
         if isinstance(entry, dict):
-            items = entry.get("items") or entry.get("skills_list") or entry.get("skills") or []
+            items = (
+                entry.get("items")
+                or entry.get("skills_list")
+                or entry.get("skills")
+                or []
+            )
             add_term(items)
         else:
             add_term(entry)
@@ -374,7 +423,9 @@ def _collect_candidate_keywords(profile: Union[UserProfile, ProfileWorkerData]) 
     return _dedup_preserve(terms)[:40]
 
 
-def _match_offer_keywords(offer_text: Optional[str], candidate_terms: List[str], max_items: int = 16) -> List[str]:
+def _match_offer_keywords(
+    offer_text: Optional[str], candidate_terms: List[str], max_items: int = 16
+) -> List[str]:
     if not offer_text:
         return []
     lowered = offer_text.lower()
@@ -506,7 +557,9 @@ def _keyword_similarity(a: str, b: str) -> float:
     tokens_a = _keyword_tokens(norm_a)
     tokens_b = _keyword_tokens(norm_b)
     if tokens_a and tokens_b:
-        overlap = len(set(tokens_a) & set(tokens_b)) / float(min(len(tokens_a), len(tokens_b)))
+        overlap = len(set(tokens_a) & set(tokens_b)) / float(
+            min(len(tokens_a), len(tokens_b))
+        )
         score = max(score, overlap)
 
     if _is_acronym_match(a, b) or _is_acronym_match(b, a):
@@ -524,7 +577,9 @@ def _build_keyword_alignment(
     if not candidate_terms or not offer_keywords:
         return {}
 
-    offer_keywords = _dedup_preserve([item for item in offer_keywords if isinstance(item, str) and item.strip()])
+    offer_keywords = _dedup_preserve(
+        [item for item in offer_keywords if isinstance(item, str) and item.strip()]
+    )
     pairs: List[Tuple[str, str, float]] = []
     for candidate in candidate_terms:
         if not isinstance(candidate, str):
@@ -569,7 +624,9 @@ def _replace_terms_in_text(text: str, mapping: Dict[str, str]) -> Tuple[str, int
         return text, 0
     updated = text
     total = 0
-    for src, dst in sorted(mapping.items(), key=lambda item: len(item[0]), reverse=True):
+    for src, dst in sorted(
+        mapping.items(), key=lambda item: len(item[0]), reverse=True
+    ):
         if not src or not dst:
             continue
         pattern = _build_term_pattern(src)
@@ -578,7 +635,9 @@ def _replace_terms_in_text(text: str, mapping: Dict[str, str]) -> Tuple[str, int
     return updated, total
 
 
-def _format_profile_detailed_data(profile: Union[UserProfile, ProfileWorkerData]) -> str:
+def _format_profile_detailed_data(
+    profile: Union[UserProfile, ProfileWorkerData],
+) -> str:
     personal_info = getattr(profile, "extracted_personal_info", None) or {}
     experiences = getattr(profile, "extracted_experiences", None) or []
     education = getattr(profile, "extracted_education", None) or []
@@ -624,9 +683,7 @@ def _format_profile_detailed_data(profile: Union[UserProfile, ProfileWorkerData]
             for link in links[:6]:
                 if isinstance(link, dict):
                     platform = (
-                        link.get("label")
-                        or link.get("platform")
-                        or "Lien"
+                        link.get("label") or link.get("platform") or "Lien"
                     ).strip()
                     url = (link.get("url") or "").strip()
                     if url:
@@ -637,7 +694,9 @@ def _format_profile_detailed_data(profile: Union[UserProfile, ProfileWorkerData]
                 lines.append("LIENS (profil detaille):")
                 lines.extend(f"- {item}" for item in rendered_links)
 
-    def add_block(title: str, items: Any, max_items: int = 8, max_item_chars: int = 280) -> None:
+    def add_block(
+        title: str, items: Any, max_items: int = 8, max_item_chars: int = 280
+    ) -> None:
         seq = _coerce_list(items)
         if not seq:
             return
@@ -647,8 +706,15 @@ def _format_profile_detailed_data(profile: Union[UserProfile, ProfileWorkerData]
             if added >= max_items:
                 break
             if isinstance(entry, dict):
-                title_value = entry.get("title") or entry.get("name") or entry.get("degree") or ""
-                company_value = entry.get("company") or entry.get("institution") or entry.get("organization") or ""
+                title_value = (
+                    entry.get("title") or entry.get("name") or entry.get("degree") or ""
+                )
+                company_value = (
+                    entry.get("company")
+                    or entry.get("institution")
+                    or entry.get("organization")
+                    or ""
+                )
                 period_value = entry.get("period") or _join_nonempty(
                     [
                         str(entry.get("start_date") or entry.get("from") or "").strip(),
@@ -658,7 +724,12 @@ def _format_profile_detailed_data(profile: Union[UserProfile, ProfileWorkerData]
                 )
                 location_value = entry.get("location") or entry.get("city") or ""
                 headline = _join_nonempty(
-                    [str(title_value), str(company_value), str(period_value), str(location_value)]
+                    [
+                        str(title_value),
+                        str(company_value),
+                        str(period_value),
+                        str(location_value),
+                    ]
                 )
                 if headline:
                     lines.append(f"- {_trim_text(headline, max_item_chars)}")
@@ -672,7 +743,9 @@ def _format_profile_detailed_data(profile: Union[UserProfile, ProfileWorkerData]
                 lines.append(f"- {_trim_text(entry, max_item_chars)}")
                 added += 1
 
-    add_block("EXPERIENCES (profil detaille)", experiences, max_items=10, max_item_chars=320)
+    add_block(
+        "EXPERIENCES (profil detaille)", experiences, max_items=10, max_item_chars=320
+    )
     add_block("FORMATION (profil detaille)", education, max_items=8, max_item_chars=260)
 
     if skills:
@@ -680,12 +753,21 @@ def _format_profile_detailed_data(profile: Union[UserProfile, ProfileWorkerData]
         if isinstance(skills, list):
             for entry in skills[:8]:
                 if isinstance(entry, dict):
-                    category = (entry.get("category") or entry.get("name") or "Competences").strip()
-                    items = entry.get("items") or entry.get("skills_list") or entry.get("skills") or []
+                    category = (
+                        entry.get("category") or entry.get("name") or "Competences"
+                    ).strip()
+                    items = (
+                        entry.get("items")
+                        or entry.get("skills_list")
+                        or entry.get("skills")
+                        or []
+                    )
                     names: List[str] = []
                     if isinstance(items, list):
                         for item in items[:16]:
-                            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                            if isinstance(item, dict) and isinstance(
+                                item.get("name"), str
+                            ):
                                 names.append(item["name"].strip())
                             elif isinstance(item, str):
                                 names.append(item.strip())
@@ -705,7 +787,9 @@ def _format_profile_detailed_data(profile: Union[UserProfile, ProfileWorkerData]
                     items = entry.get("items") or entry.get("skills_list") or []
                     if isinstance(items, list):
                         for item in items:
-                            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                            if isinstance(item, dict) and isinstance(
+                                item.get("name"), str
+                            ):
                                 flattened.append(item["name"].strip())
                             elif isinstance(item, str):
                                 flattened.append(item.strip())
@@ -717,8 +801,15 @@ def _format_profile_detailed_data(profile: Union[UserProfile, ProfileWorkerData]
             lines.append(f"- {_trim_text(soft_skills, 400)}")
 
     add_block("PROJETS (profil detaille)", projects, max_items=6, max_item_chars=260)
-    add_block("CERTIFICATIONS (profil detaille)", certifications, max_items=8, max_item_chars=200)
-    add_block("VOLONTARIAT (profil detaille)", volunteering, max_items=5, max_item_chars=240)
+    add_block(
+        "CERTIFICATIONS (profil detaille)",
+        certifications,
+        max_items=8,
+        max_item_chars=200,
+    )
+    add_block(
+        "VOLONTARIAT (profil detaille)", volunteering, max_items=5, max_item_chars=240
+    )
 
     if languages:
         lines.append("LANGUES (profil detaille):")
@@ -737,7 +828,11 @@ def _format_profile_detailed_data(profile: Union[UserProfile, ProfileWorkerData]
                     )
                     descriptor = str(level)
                     if certification:
-                        descriptor = f"{descriptor} ({certification})" if descriptor else str(certification)
+                        descriptor = (
+                            f"{descriptor} ({certification})"
+                            if descriptor
+                            else str(certification)
+                        )
                     rendered.append(_join_nonempty([str(name), descriptor], sep=": "))
                 elif isinstance(entry, str) and entry.strip():
                     rendered.append(entry.strip())
@@ -747,7 +842,9 @@ def _format_profile_detailed_data(profile: Union[UserProfile, ProfileWorkerData]
     if interests:
         lines.append("CENTRES D'INTERET (profil detaille):")
         if isinstance(interests, list):
-            rendered = [str(item).strip() for item in interests[:12] if str(item).strip()]
+            rendered = [
+                str(item).strip() for item in interests[:12] if str(item).strip()
+            ]
             if rendered:
                 lines.append(f"- {', '.join(rendered)}")
         elif isinstance(interests, str) and interests.strip():
@@ -766,7 +863,9 @@ def _format_profile_detailed_data(profile: Union[UserProfile, ProfileWorkerData]
     return "\n".join(lines).strip() + "\n"
 
 
-def _markdown_skeleton_for_template(template: Optional[str], language: Optional[str] = None) -> str:
+def _markdown_skeleton_for_template(
+    template: Optional[str], language: Optional[str] = None
+) -> str:
     key = _normalize_template_name(template)
     lang = _normalize_language(language)
 
@@ -785,7 +884,9 @@ def _markdown_skeleton_for_template(template: Optional[str], language: Optional[
             "- <Details if relevant>\n"
         )
         common_languages = "## Languages\n- <Language>: <Level>\n"
-        common_projects = "## Projects\n### <Project name>\n<1-2 sentence description>\n"
+        common_projects = (
+            "## Projects\n### <Project name>\n<1-2 sentence description>\n"
+        )
         base = (
             "# [Your First Name] [Your Last Name]\n"
             "## <Target role>\n\n"
@@ -816,7 +917,9 @@ def _markdown_skeleton_for_template(template: Optional[str], language: Optional[
             "- <Option / details si pertinent>\n"
         )
         common_languages = "## Langues\n- <Langue>: <Niveau>\n"
-        common_projects = "## Projets\n### <Nom du projet>\n<Description en 1-2 phrases>\n"
+        common_projects = (
+            "## Projets\n### <Nom du projet>\n<Description en 1-2 phrases>\n"
+        )
         base = (
             "# [Votre Prenom] [Votre Nom]\n"
             "## <Titre du poste cible>\n\n"
@@ -923,6 +1026,7 @@ class CVGenerationWorker(QThread):
     Note: Utilise ProfileWorkerData au lieu de UserProfile pour éviter
     les erreurs SQLAlchemy DetachedInstanceError dans les threads background.
     """
+
     progress_updated = Signal(str)
     generation_finished = Signal(dict)
     error_occurred = Signal(str)
@@ -962,9 +1066,12 @@ class CVGenerationWorker(QThread):
 
     def _get_runtime_memory_pressure_level(self, *, force_refresh: bool = False) -> str:
         try:
-            snapshot = self.qwen_manager._collect_memory_pressure_snapshot(
-                force_refresh=force_refresh
-            ) or {}
+            snapshot = (
+                self.qwen_manager._collect_memory_pressure_snapshot(
+                    force_refresh=force_refresh
+                )
+                or {}
+            )
             pressure = str(snapshot.get("pressure_level") or "").strip().lower()
             if pressure in {"elevated", "tight", "critical"}:
                 return pressure
@@ -975,9 +1082,9 @@ class CVGenerationWorker(QThread):
             pass
 
         try:
-            profile = self.qwen_manager._get_lowram_profile(
-                force_refresh=force_refresh
-            ) or {}
+            profile = (
+                self.qwen_manager._get_lowram_profile(force_refresh=force_refresh) or {}
+            )
             lowram = str(profile.get("level") or "normal").strip().lower()
             if lowram in {"tight", "critical"}:
                 return lowram
@@ -1030,7 +1137,9 @@ class CVGenerationWorker(QThread):
     def _memory_ready_timeout_seconds(self) -> int:
         custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
         env_value = os.getenv("CVMATCH_MEMORY_READY_TIMEOUT_S")
-        raw = env_value if env_value is not None else custom.get("memory_ready_timeout_s")
+        raw = (
+            env_value if env_value is not None else custom.get("memory_ready_timeout_s")
+        )
         try:
             return max(5, int(raw))
         except Exception:
@@ -1045,7 +1154,9 @@ class CVGenerationWorker(QThread):
         except Exception:
             return 4.0
 
-    def _ensure_stage_memory_ready(self, stage: str, stage_model_id: Optional[str], progress_callback=None) -> None:
+    def _ensure_stage_memory_ready(
+        self, stage: str, stage_model_id: Optional[str], progress_callback=None
+    ) -> None:
         stage_key = str(stage or "").strip().lower()
 
         try:
@@ -1063,7 +1174,12 @@ class CVGenerationWorker(QThread):
                     reason=f"memory_guard:{stage_key}",
                 )
             except Exception as exc:
-                logger.warning("Memory guard model apply failed for stage %s (%s): %s", stage_key, stage_model_id, exc)
+                logger.warning(
+                    "Memory guard model apply failed for stage %s (%s): %s",
+                    stage_key,
+                    stage_model_id,
+                    exc,
+                )
 
         wait_enabled = self._is_memory_ready_wait_enabled()
         timeout_s = self._memory_ready_timeout_seconds()
@@ -1076,9 +1192,13 @@ class CVGenerationWorker(QThread):
             if can_proceed:
                 return
 
-            last_error = str(error_message or "Insufficient memory to load the stage model.")
+            last_error = str(
+                error_message or "Insufficient memory to load the stage model."
+            )
             if not wait_enabled:
-                raise RuntimeError(f"Memory guard blocked stage '{stage_key}': {last_error}")
+                raise RuntimeError(
+                    f"Memory guard blocked stage '{stage_key}': {last_error}"
+                )
 
             elapsed = time.time() - started
             remaining = timeout_s - elapsed
@@ -1127,7 +1247,9 @@ class CVGenerationWorker(QThread):
         except Exception:
             return False
 
-    def _run_stage_subprocess(self, stage: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _run_stage_subprocess(
+        self, stage: str, payload: Dict[str, Any]
+    ) -> Dict[str, Any]:
         from dataclasses import asdict
 
         import uuid
@@ -1147,9 +1269,11 @@ class CVGenerationWorker(QThread):
         payload.setdefault("cv_only_regen", bool(self.cv_only_regen))
         payload.setdefault(
             "previous_generation_audit",
-            dict(self.previous_generation_audit)
-            if isinstance(self.previous_generation_audit, dict)
-            else {},
+            (
+                dict(self.previous_generation_audit)
+                if isinstance(self.previous_generation_audit, dict)
+                else {}
+            ),
         )
         try:
             stage_model_id = self._choose_stage_model_override(stage)
@@ -1219,14 +1343,18 @@ class CVGenerationWorker(QThread):
                     retry_gpu_cap_gb = 6.5
                     try:
                         total_vram_gb = float(
-                            (getattr(gpu_manager, "gpu_info", {}) or {}).get("total_memory_gb")
+                            (getattr(gpu_manager, "gpu_info", {}) or {}).get(
+                                "total_memory_gb"
+                            )
                             or 0.0
                         )
                         if total_vram_gb > 0:
                             retry_gpu_cap_gb = max(3.5, min(7.0, total_vram_gb * 0.62))
                     except Exception:
                         pass
-                    run_env.setdefault("CVMATCH_MAX_MEMORY_GPU_GB", f"{retry_gpu_cap_gb:.2f}")
+                    run_env.setdefault(
+                        "CVMATCH_MAX_MEMORY_GPU_GB", f"{retry_gpu_cap_gb:.2f}"
+                    )
                     run_env.setdefault("CVMATCH_FORCE_GPU", "0")
                     run_env.setdefault("CVMATCH_KEEP_SELECTED_STAGE_MODEL", "1")
 
@@ -1263,9 +1391,7 @@ class CVGenerationWorker(QThread):
                         details=details,
                     )
                     detail_with_diag = (
-                        f"{details} (diagnostic: {diag_path})"
-                        if diag_path
-                        else details
+                        f"{details} (diagnostic: {diag_path})" if diag_path else details
                     )
                     last_error = detail_with_diag
                     try:
@@ -1302,9 +1428,7 @@ class CVGenerationWorker(QThread):
                         details=details,
                     )
                     detail_with_diag = (
-                        f"{details} (diagnostic: {diag_path})"
-                        if diag_path
-                        else details
+                        f"{details} (diagnostic: {diag_path})" if diag_path else details
                     )
                     last_error = detail_with_diag
                     try:
@@ -1323,7 +1447,9 @@ class CVGenerationWorker(QThread):
                             details,
                         )
                         continue
-                    raise RuntimeError(f"Stage subprocess failed: {stage}: {detail_with_diag}")
+                    raise RuntimeError(
+                        f"Stage subprocess failed: {stage}: {detail_with_diag}"
+                    )
 
                 with open(output_path, "r", encoding="utf-8") as handle:
                     return json.load(handle)
@@ -1395,9 +1521,7 @@ class CVGenerationWorker(QThread):
                         fingerprint=profile_fingerprint,
                     )
                 except Exception as exc:
-                    logger.warning(
-                        "Unable to persist profile JSON cache: %s", exc
-                    )
+                    logger.warning("Unable to persist profile JSON cache: %s", exc)
             return extracted
 
         logger.warning(
@@ -1409,9 +1533,7 @@ class CVGenerationWorker(QThread):
         if not fact or not profile_text:
             return False
         tokens = [
-            token
-            for token in re.split(r"[^a-z0-9]+", fact.lower())
-            if len(token) > 3
+            token for token in re.split(r"[^a-z0-9]+", fact.lower()) if len(token) > 3
         ]
         if not tokens:
             return False
@@ -1419,17 +1541,23 @@ class CVGenerationWorker(QThread):
         return matches >= max(1, len(tokens) // 3)
 
     def _sanitize_critic_json(
-        self, critic_json: Dict[str, Any], *, profile_json: Optional[Dict[str, Any]] = None
+        self,
+        critic_json: Dict[str, Any],
+        *,
+        profile_json: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         if not isinstance(critic_json, dict):
             return {}
         allowed_keys = (
             "missing_keywords",
             "must_keep_facts",
+            "section_missing_keywords",
             "retry_guidance",
             "alignment_retry_active",
         )
-        sanitized = {key: critic_json.get(key) for key in allowed_keys if key in critic_json}
+        sanitized = {
+            key: critic_json.get(key) for key in allowed_keys if key in critic_json
+        }
         must_keep = sanitized.get("must_keep_facts")
         if isinstance(must_keep, list):
             profile_text = ""
@@ -1458,8 +1586,39 @@ class CVGenerationWorker(QThread):
                 sanitized["retry_guidance"] = _trim_text(retry_text, 500)
             else:
                 sanitized.pop("retry_guidance", None)
+        section_missing = sanitized.get("section_missing_keywords")
+        if isinstance(section_missing, dict):
+            cleaned_sections: Dict[str, List[str]] = {}
+            for key in (
+                "summary",
+                "experience",
+                "skills",
+                "projects",
+                "education",
+                "certifications",
+                "languages",
+            ):
+                values = section_missing.get(key)
+                if not isinstance(values, list):
+                    continue
+                cleaned_values: List[str] = []
+                for raw in values:
+                    text = str(raw or "").strip()
+                    if not text:
+                        continue
+                    cleaned_values.append(_trim_text(text, 120))
+                if cleaned_values:
+                    cleaned_sections[key] = _dedup_preserve(cleaned_values)[:20]
+            if cleaned_sections:
+                sanitized["section_missing_keywords"] = cleaned_sections
+            else:
+                sanitized.pop("section_missing_keywords", None)
+        elif "section_missing_keywords" in sanitized:
+            sanitized.pop("section_missing_keywords", None)
         if "alignment_retry_active" in sanitized:
-            sanitized["alignment_retry_active"] = bool(sanitized.get("alignment_retry_active"))
+            sanitized["alignment_retry_active"] = bool(
+                sanitized.get("alignment_retry_active")
+            )
         return sanitized
 
     def _fallback_critic_json(self, *, reason: str = "") -> Dict[str, Any]:
@@ -1533,7 +1692,9 @@ class CVGenerationWorker(QThread):
             model = getattr(self.qwen_manager, "_model", None)
             device_map = getattr(model, "hf_device_map", None)
             if isinstance(device_map, dict) and device_map:
-                normalizer = getattr(self.qwen_manager, "_normalize_device_target", None)
+                normalizer = getattr(
+                    self.qwen_manager, "_normalize_device_target", None
+                )
                 for value in device_map.values():
                     resolved = normalizer(value) if callable(normalizer) else None
                     if resolved is None:
@@ -1564,7 +1725,9 @@ class CVGenerationWorker(QThread):
         Goal: maximize JSON determinism when LMFE strict mode is unavailable.
         """
         env_value = os.getenv("CVMATCH_JSON_NON_STRICT_DETERMINISTIC")
-        deterministic = self._to_bool_setting(env_value, True) if env_value is not None else True
+        deterministic = (
+            self._to_bool_setting(env_value, True) if env_value is not None else True
+        )
 
         if creative_retry and str(role or "").strip().lower() == "generator":
             return {
@@ -1671,7 +1834,9 @@ class CVGenerationWorker(QThread):
             return ""
 
     @staticmethod
-    def _compose_fallback_reason(*, strict_error: Any = "", retry_error: Any = "") -> str:
+    def _compose_fallback_reason(
+        *, strict_error: Any = "", retry_error: Any = ""
+    ) -> str:
         strict_text = str(strict_error or "").strip()
         retry_text = str(retry_error or "").strip()
         if strict_text and retry_text:
@@ -1738,7 +1903,9 @@ class CVGenerationWorker(QThread):
             draft_summary = cv_json_draft.get("summary") or ""
         if draft_summary and not self._summary_needs_rewrite(draft_summary):
             cv_json_final["summary"] = draft_summary
-            logger.warning("Final summary looked like review text; reverted to draft summary.")
+            logger.warning(
+                "Final summary looked like review text; reverted to draft summary."
+            )
         else:
             cv_json_final["summary"] = ""
             logger.warning("Final summary looked like review text; cleared summary.")
@@ -1773,7 +1940,9 @@ class CVGenerationWorker(QThread):
         if not isinstance(personal, dict):
             personal = {}
 
-        headline = str(personal.get("summary") or personal.get("headline") or "").strip()
+        headline = str(
+            personal.get("summary") or personal.get("headline") or ""
+        ).strip()
         if headline and not self._text_has_review_markers(headline):
             return _trim_text(headline, 420)
         lang = self._resolve_language_code()
@@ -1791,7 +1960,9 @@ class CVGenerationWorker(QThread):
         )
         if lang == "en":
             return _trim_text(f"{fallback_role} with software project experience.", 420)
-        return _trim_text(f"{fallback_role} avec une experience sur des projets logiciels.", 420)
+        return _trim_text(
+            f"{fallback_role} avec une experience sur des projets logiciels.", 420
+        )
 
     @staticmethod
     def _normalize_language_identity(value: Any) -> str:
@@ -1985,7 +2156,9 @@ class CVGenerationWorker(QThread):
                     profile_map[key]["level"] = level
                 if certification and not profile_map[key].get("certification"):
                     profile_map[key]["certification"] = certification
-                if language and len(language) > len(profile_map[key].get("language") or ""):
+                if language and len(language) > len(
+                    profile_map[key].get("language") or ""
+                ):
                     profile_map[key]["language"] = language
 
         merged: List[Dict[str, str]] = []
@@ -2012,7 +2185,9 @@ class CVGenerationWorker(QThread):
                 profile_entry = profile_map[key]
                 profile_level = profile_entry.get("level") or ""
                 profile_certification = profile_entry.get("certification") or ""
-                if profile_level and (not level or self._is_generic_language_level(raw_level)):
+                if profile_level and (
+                    not level or self._is_generic_language_level(raw_level)
+                ):
                     selected_level = profile_level
                 else:
                     selected_level = level or profile_level
@@ -2070,9 +2245,8 @@ class CVGenerationWorker(QThread):
             contact = {}
             base["contact"] = contact
         if not str(contact.get("full_name") or "").strip():
-            contact["full_name"] = (
-                str(self.profile_data.name or "").strip()
-                or ("Candidate" if lang == "en" else "Candidat")
+            contact["full_name"] = str(self.profile_data.name or "").strip() or (
+                "Candidate" if lang == "en" else "Candidat"
             )
 
         summary = str(base.get("summary") or "").strip()
@@ -2165,19 +2339,27 @@ class CVGenerationWorker(QThread):
             if isinstance(self.offer_data, dict):
                 base["target_job_title"] = str(
                     self.offer_data.get("job_title")
-                    or ((self.offer_data.get("analysis") or {}).get("title") if isinstance(self.offer_data.get("analysis"), dict) else "")
+                    or (
+                        (self.offer_data.get("analysis") or {}).get("title")
+                        if isinstance(self.offer_data.get("analysis"), dict)
+                        else ""
+                    )
                     or ""
                 ).strip()
         if not str(base.get("target_company") or "").strip():
             if isinstance(self.offer_data, dict):
-                base["target_company"] = str(self.offer_data.get("company") or "").strip()
+                base["target_company"] = str(
+                    self.offer_data.get("company") or ""
+                ).strip()
 
         summary = base.get("summary")
         if not isinstance(summary, str):
             summary = "" if summary is None else str(summary)
         summary = summary.strip()
         if not summary:
-            summary = str(personal.get("summary") or personal.get("headline") or "").strip()
+            summary = str(
+                personal.get("summary") or personal.get("headline") or ""
+            ).strip()
         base["summary"] = summary
 
         for list_key in ("skills", "experience", "education"):
@@ -2194,7 +2376,9 @@ class CVGenerationWorker(QThread):
             if value is not None and not isinstance(value, list):
                 base[optional_list_key] = []
             elif isinstance(value, list):
-                base[optional_list_key] = [item for item in value if isinstance(item, dict)]
+                base[optional_list_key] = [
+                    item for item in value if isinstance(item, dict)
+                ]
 
         base["languages"] = self._merge_languages_with_profile(
             base.get("languages") or [],
@@ -2249,9 +2433,17 @@ class CVGenerationWorker(QThread):
         )
 
     def _resolve_language_code(self) -> str:
-        analysis = self.offer_data.get("analysis") if isinstance(self.offer_data, dict) else None
-        analysis_language = analysis.get("language") if isinstance(analysis, dict) else None
-        offer_text = self.offer_data.get("text") if isinstance(self.offer_data, dict) else None
+        analysis = (
+            self.offer_data.get("analysis")
+            if isinstance(self.offer_data, dict)
+            else None
+        )
+        analysis_language = (
+            analysis.get("language") if isinstance(analysis, dict) else None
+        )
+        offer_text = (
+            self.offer_data.get("text") if isinstance(self.offer_data, dict) else None
+        )
         detected = _detect_language_from_text(offer_text)
         preferred = getattr(self.profile_data, "preferred_language", None)
 
@@ -2266,9 +2458,11 @@ class CVGenerationWorker(QThread):
         if preferred:
             return _normalize_language(preferred)
         return "fr"
+
     # Stage model routing
     def _is_stage_model_routing_enabled(self) -> bool:
         from ..utils.stage_model_routing import is_stage_model_routing_enabled
+
         return is_stage_model_routing_enabled()
 
     def _choose_stage_model_override(self, stage: str) -> Optional[str]:
@@ -2293,9 +2487,10 @@ class CVGenerationWorker(QThread):
         pressure = self._get_runtime_memory_pressure_level(force_refresh=True)
         snapshot: Dict[str, Any] = {}
         try:
-            snapshot = self.qwen_manager._collect_memory_pressure_snapshot(
-                force_refresh=True
-            ) or {}
+            snapshot = (
+                self.qwen_manager._collect_memory_pressure_snapshot(force_refresh=True)
+                or {}
+            )
         except Exception:
             snapshot = {}
         try:
@@ -2310,8 +2505,12 @@ class CVGenerationWorker(QThread):
         base_config = StageModelConfig.from_env_and_custom(custom)
         routing_config = StageModelConfig(
             enabled=base_config.enabled,
-            keep_selected_model=(True if lock_selected_model else base_config.keep_selected_model),
-            prefer_small_extractor=(bool(base_config.prefer_small_extractor) and not lock_selected_model),
+            keep_selected_model=(
+                True if lock_selected_model else base_config.keep_selected_model
+            ),
+            prefer_small_extractor=(
+                bool(base_config.prefer_small_extractor) and not lock_selected_model
+            ),
             extractor_model_id=base_config.extractor_model_id,
             writer_model_id=base_config.writer_model_id,
             lowram_level=lowram_level,
@@ -2323,7 +2522,11 @@ class CVGenerationWorker(QThread):
             current_model_id=current,
         )
 
-        if lock_selected_model and resolution.requires_switch and not resolution.is_explicit:
+        if (
+            lock_selected_model
+            and resolution.requires_switch
+            and not resolution.is_explicit
+        ):
             logger.info(
                 "Stage override ignored (keep selected model): stage=%s target=%s current=%s",
                 stage,
@@ -2359,7 +2562,9 @@ class CVGenerationWorker(QThread):
 
                 preferred = []
 
-                env_pref = str(os.getenv("CVMATCH_WRITER_LOWRAM_MODEL_ID") or "").strip()
+                env_pref = str(
+                    os.getenv("CVMATCH_WRITER_LOWRAM_MODEL_ID") or ""
+                ).strip()
                 if env_pref:
                     preferred.append(env_pref)
 
@@ -2376,7 +2581,9 @@ class CVGenerationWorker(QThread):
                     if not candidate_key or candidate_key == current_key:
                         continue
                     if candidate_key in available:
-                        if not self._is_model_within_size_cap(candidate_key, max_model_size_b):
+                        if not self._is_model_within_size_cap(
+                            candidate_key, max_model_size_b
+                        ):
                             continue
                         return candidate_key
             except Exception:
@@ -2433,6 +2640,7 @@ class CVGenerationWorker(QThread):
         self, cv_json: dict, stage: str = ""
     ) -> dict:
         from ..utils.language_policy import normalize_language_code
+
         lang = normalize_language_code(self._resolve_language_code())
         if isinstance(cv_json, dict) and cv_json.get("language") != lang:
             cv_json = dict(cv_json)
@@ -2445,6 +2653,7 @@ class CVGenerationWorker(QThread):
     ) -> dict:
         try:
             from ..utils.cv_postprocessing import coerce_generated_cv_payload
+
             profile_json = getattr(self, "_pipeline_profile_json", {}) or {}
             if not isinstance(profile_json, dict) or not profile_json:
                 try:
@@ -2457,7 +2666,9 @@ class CVGenerationWorker(QThread):
                     profile_json = {}
             personal_info = self._build_profile_payload().get("personal_info", {})
 
-            def safe_fallback_generator(pj: Dict[str, Any], reason: str) -> Dict[str, Any]:
+            def safe_fallback_generator(
+                pj: Dict[str, Any], reason: str
+            ) -> Dict[str, Any]:
                 source_profile = pj if isinstance(pj, dict) else {}
                 # Keep deterministic structural postprocessing alive without any content fallback.
                 return self._ensure_required_cv_fields(
@@ -2471,12 +2682,16 @@ class CVGenerationWorker(QThread):
                 profile_json=profile_json,
                 fallback_generator=safe_fallback_generator,
                 critic_json=critic_json,
-                job_title=str(
-                    self.offer_data.get("job_title") or ""
-                ) if isinstance(self.offer_data, dict) else "",
-                company=str(
-                    self.offer_data.get("company") or ""
-                ) if isinstance(self.offer_data, dict) else "",
+                job_title=(
+                    str(self.offer_data.get("job_title") or "")
+                    if isinstance(self.offer_data, dict)
+                    else ""
+                ),
+                company=(
+                    str(self.offer_data.get("company") or "")
+                    if isinstance(self.offer_data, dict)
+                    else ""
+                ),
                 profile_name=personal_info.get("full_name", ""),
                 profile_email=personal_info.get("email", ""),
                 profile_phone=personal_info.get("phone", ""),
@@ -2485,6 +2700,7 @@ class CVGenerationWorker(QThread):
                 keyword_alignment_fn=lambda candidate, review: self._apply_keyword_alignment(
                     candidate,
                     critic_json=review,
+                    profile_json=profile_json,
                 ),
                 offer_adaptation_fn=lambda candidate, review: self._apply_offer_adaptation(
                     candidate,
@@ -2509,6 +2725,8 @@ class CVGenerationWorker(QThread):
             )
 
             probe_parts: List[str] = []
+            section_probes: Dict[str, str] = {}
+
             def _collect_text_fragments(value: Any) -> None:
                 if isinstance(value, str):
                     probe_parts.append(value)
@@ -2526,11 +2744,26 @@ class CVGenerationWorker(QThread):
                     val = cv_json.get(field)
                     if isinstance(val, str):
                         probe_parts.append(val)
-                for section_key in ("skills", "ats_keywords", "experience", "projects"):
+                for section_key in (
+                    "skills",
+                    "ats_keywords",
+                    "experience",
+                    "projects",
+                    "education",
+                    "certifications",
+                    "languages",
+                ):
                     items = cv_json.get(section_key)
                     if isinstance(items, list):
+                        section_fragments: List[str] = []
                         for item in items:
+                            before = len(probe_parts)
                             _collect_text_fragments(item)
+                            if len(probe_parts) > before:
+                                section_fragments.extend(probe_parts[before:])
+                        section_probes[section_key] = normalize_keyword_for_match(
+                            " ".join(section_fragments)
+                        )
             normalized_probe = normalize_keyword_for_match(" ".join(probe_parts))
 
             offer_kw = self._collect_offer_keywords_only(critic_json=critic_json)
@@ -2538,7 +2771,11 @@ class CVGenerationWorker(QThread):
 
             offer_kw_json = self._get_offer_keywords_json() or {}
             keyword_families: Dict[str, List[str]] = {}
-            families_raw = offer_kw_json.get("keyword_families") if isinstance(offer_kw_json, dict) else None
+            families_raw = (
+                offer_kw_json.get("keyword_families")
+                if isinstance(offer_kw_json, dict)
+                else None
+            )
             if isinstance(families_raw, dict):
                 for fam_key, fam_terms in families_raw.items():
                     if isinstance(fam_terms, list):
@@ -2566,19 +2803,38 @@ class CVGenerationWorker(QThread):
             def _term_present(probe: str, term: str) -> bool:
                 return normalized_term_present(probe, term) if term else False
 
-            return build_alignment_audit(
+            audit = build_alignment_audit(
                 normalized_probe=normalized_probe,
                 required_exact_terms=required_exact_terms,
                 keyword_families=keyword_families,
                 thresholds=thresholds,
                 term_present_fn=_term_present,
             )
+            section_exact_scores: Dict[str, float] = {}
+            if required_exact_terms:
+                for section_key, probe in section_probes.items():
+                    if not probe:
+                        section_exact_scores[section_key] = 0.0
+                        continue
+                    present = sum(
+                        1
+                        for term in required_exact_terms
+                        if term and _term_present(probe, term)
+                    )
+                    section_exact_scores[section_key] = round(
+                        (present / float(len(required_exact_terms))) * 100.0,
+                        1,
+                    )
+            if section_exact_scores:
+                audit["section_exact_scores"] = section_exact_scores
+            return audit
         except Exception as exc:
             logger.warning("_score_cv_offer_alignment failed: %s", exc)
             return {"overall_score": 0.0, "sufficient": True, "error": str(exc)}
 
     def _get_alignment_retry_attempts(self) -> int:
         from ..utils.alignment_retry_controller import get_alignment_retry_attempts
+
         return get_alignment_retry_attempts()
 
     def _augment_critic_with_alignment_feedback(
@@ -2587,16 +2843,16 @@ class CVGenerationWorker(QThread):
         from ..utils.alignment_retry_controller import (
             augment_critic_with_alignment_feedback,
         )
+
         return augment_critic_with_alignment_feedback(critic_json, alignment_audit)
 
     # Cover letter methods
-    def _ensure_cover_letter_language_consistency(
-        self, letter: str, lang: str
-    ) -> str:
+    def _ensure_cover_letter_language_consistency(self, letter: str, lang: str) -> str:
         try:
             from ..utils.cover_letter_pipeline import (
                 ensure_cover_letter_language_consistency,
             )
+
             return ensure_cover_letter_language_consistency(letter, lang)
         except Exception as exc:
             logger.warning("Cover letter language check failed: %s", exc)
@@ -2607,6 +2863,7 @@ class CVGenerationWorker(QThread):
     ) -> bool:
         try:
             from ..utils.cover_letter_rules import is_cover_letter_structure_coherent
+
             lang = language_code or self._resolve_language_code()
             return is_cover_letter_structure_coherent(letter, language_code=lang)
         except Exception as exc:
@@ -2626,6 +2883,7 @@ class CVGenerationWorker(QThread):
     ) -> str:
         try:
             from ..utils.cover_letter_pipeline import build_cover_letter_rewrite_prompt
+
             base_prompt = self.build_cover_letter_prompt()
             prompt = build_cover_letter_rewrite_prompt(
                 base_prompt=base_prompt,
@@ -2640,6 +2898,7 @@ class CVGenerationWorker(QThread):
 
     def _should_run_cover_letter_critic_stage(self) -> bool:
         return bool(getattr(self, "cover_letter_critic_enabled", False))
+
     def _text_has_review_markers(self, text: str) -> bool:
         if not text:
             return False
@@ -2715,7 +2974,9 @@ class CVGenerationWorker(QThread):
     def _sanitize_cv_json_output(self, cv_json: Dict[str, Any]) -> None:
         if not isinstance(cv_json, dict):
             return
-        fallback_category = "Skills" if self._resolve_language_code() == "en" else "Competences"
+        fallback_category = (
+            "Skills" if self._resolve_language_code() == "en" else "Competences"
+        )
 
         def clean_text(value: Any) -> str:
             if not isinstance(value, str):
@@ -2755,8 +3016,7 @@ class CVGenerationWorker(QThread):
             cleaned_items = _dedup_preserve(cleaned_items)
             if cleaned_items:
                 cleaned_skills.append(
-                    {"category": label or fallback_category,
-                     "items": cleaned_items}
+                    {"category": label or fallback_category, "items": cleaned_items}
                 )
         cv_json["skills"] = cleaned_skills
 
@@ -2806,10 +3066,20 @@ class CVGenerationWorker(QThread):
                 if text:
                     details.append(text)
             cleaned_entry["details"] = _dedup_preserve(details)
-            if not any(
-                cleaned_entry.get(field)
-                for field in ("school", "degree", "field_of_study", "start_date", "end_date", "location")
-            ) and not cleaned_entry["details"]:
+            if (
+                not any(
+                    cleaned_entry.get(field)
+                    for field in (
+                        "school",
+                        "degree",
+                        "field_of_study",
+                        "start_date",
+                        "end_date",
+                        "location",
+                    )
+                )
+                and not cleaned_entry["details"]
+            ):
                 continue
             cleaned_education.append(cleaned_entry)
         cv_json["education"] = cleaned_education
@@ -2908,13 +3178,17 @@ class CVGenerationWorker(QThread):
                 if isinstance(value, list):
                     keywords.extend(str(item) for item in value)
                 elif isinstance(value, str):
-                    keywords.extend(part.strip() for part in value.split(",") if part.strip())
+                    keywords.extend(
+                        part.strip() for part in value.split(",") if part.strip()
+                    )
             job_title = offer_keywords.get("job_title") or ""
             if job_title:
                 keywords.extend(part for part in job_title.split() if part)
         else:
             analysis = (
-                self.offer_data.get("analysis") if isinstance(self.offer_data, dict) else None
+                self.offer_data.get("analysis")
+                if isinstance(self.offer_data, dict)
+                else None
             )
             if isinstance(analysis, dict):
                 for key in (
@@ -2931,18 +3205,26 @@ class CVGenerationWorker(QThread):
                     if isinstance(value, list):
                         keywords.extend(str(item) for item in value)
                     elif isinstance(value, str):
-                        keywords.extend(part.strip() for part in value.split(",") if part.strip())
+                        keywords.extend(
+                            part.strip() for part in value.split(",") if part.strip()
+                        )
 
         if critic_json and isinstance(critic_json, dict):
             missing = critic_json.get("missing_keywords")
             if isinstance(missing, list):
                 keywords.extend(str(item) for item in missing)
 
-        job_title = self.offer_data.get("job_title") if isinstance(self.offer_data, dict) else ""
+        job_title = (
+            self.offer_data.get("job_title")
+            if isinstance(self.offer_data, dict)
+            else ""
+        )
         if job_title:
             keywords.extend(part for part in job_title.split() if part)
 
-        return _dedup_preserve([k for k in keywords if isinstance(k, str) and k.strip()])[:60]
+        return _dedup_preserve(
+            [k for k in keywords if isinstance(k, str) and k.strip()]
+        )[:60]
 
     @staticmethod
     def _normalize_skill_text_for_role_detection(value: Any) -> str:
@@ -3019,11 +3301,18 @@ class CVGenerationWorker(QThread):
         skills = getattr(self.profile_data, "extracted_skills", None) or []
         for entry in skills:
             if isinstance(entry, dict):
-                add_term(entry.get("items") or entry.get("skills_list") or entry.get("skills") or [])
+                add_term(
+                    entry.get("items")
+                    or entry.get("skills_list")
+                    or entry.get("skills")
+                    or []
+                )
             else:
                 add_term(entry)
 
-        certifications = getattr(self.profile_data, "extracted_certifications", None) or []
+        certifications = (
+            getattr(self.profile_data, "extracted_certifications", None) or []
+        )
         for entry in certifications:
             if isinstance(entry, dict):
                 add_term(entry.get("name"))
@@ -3090,32 +3379,112 @@ class CVGenerationWorker(QThread):
         cv_json: Dict[str, Any],
         *,
         critic_json: Optional[Dict[str, Any]] = None,
+        profile_json: Optional[Dict[str, Any]] = None,
     ) -> None:
         if not isinstance(cv_json, dict):
             return
+        try:
+            from ..utils.cv_offer_term_routing import route_terms_to_sections
+            from ..utils.cv_skill_recovery import (
+                build_skill_blocks_from_profile,
+                skills_section_low_signal,
+            )
+        except Exception:
+            route_terms_to_sections = None
+            build_skill_blocks_from_profile = None
+            skills_section_low_signal = None
         offer_keywords = self._collect_offer_keywords_only(critic_json)
         if not offer_keywords:
             return
         candidate_terms = _collect_candidate_keywords(self.profile_data)
         mapping = _build_keyword_alignment(candidate_terms, offer_keywords)
+        critic_missing: List[str] = []
+        if isinstance(critic_json, dict):
+            raw_missing = critic_json.get("missing_keywords")
+            if isinstance(raw_missing, list):
+                for item in raw_missing:
+                    text = str(item or "").strip()
+                    if text:
+                        critic_missing.append(text)
         profile_skill_terms = self._collect_profile_skill_terms()
         language_code = self._resolve_language_code()
         fallback_category = "Skills" if language_code == "en" else "Competences"
         offer_norm = {_normalize_keyword_for_match(item) for item in offer_keywords}
-        if not mapping:
-            self._update_ats_keywords(cv_json, offer_keywords)
-            fallback_items = self._build_fallback_skill_items(
+        critic_skill_candidates = _dedup_preserve(
+            [
+                clean
+                for clean in (
+                    self._sanitize_skill_item_text(term) for term in critic_missing
+                )
+                if clean
+            ]
+        )
+        offer_skill_candidates = _dedup_preserve(
+            [
+                clean
+                for clean in (
+                    self._sanitize_skill_item_text(term) for term in offer_keywords
+                )
+                if clean
+            ]
+        )
+        routed_skill_candidates: List[str] = []
+        if callable(route_terms_to_sections):
+            routed_skill_terms = list(
+                route_terms_to_sections([*critic_missing, *offer_keywords]).get(
+                    "skills"
+                )
+                or []
+            )
+            routed_skill_candidates = _dedup_preserve(
                 [
-                    term
-                    for term in profile_skill_terms
-                    if _normalize_keyword_for_match(term) in offer_norm
+                    clean
+                    for clean in (
+                        self._sanitize_skill_item_text(term)
+                        for term in routed_skill_terms
+                    )
+                    if clean
                 ]
             )
-            if fallback_items and not cv_json.get("skills"):
+        profile_payload = profile_json if isinstance(profile_json, dict) else {}
+
+        def _recover_skills(extra_terms: Iterable[str]) -> bool:
+            if not callable(build_skill_blocks_from_profile) or not profile_payload:
+                return False
+            recovered = build_skill_blocks_from_profile(
+                profile_payload,
+                offer_terms=offer_keywords,
+                extra_terms=list(extra_terms),
+                language_code=language_code,
+            )
+            if recovered:
+                cv_json["skills"] = recovered
+                return True
+            return False
+
+        if not mapping:
+            self._update_ats_keywords(cv_json, offer_keywords)
+            matched_profile_skill_terms = [
+                term
+                for term in profile_skill_terms
+                if _normalize_keyword_for_match(term) in offer_norm
+            ]
+            recovered = _recover_skills(
+                [
+                    *routed_skill_candidates,
+                    *critic_skill_candidates,
+                    *offer_skill_candidates,
+                    *matched_profile_skill_terms,
+                ]
+            )
+            fallback_items = self._build_fallback_skill_items(
+                matched_profile_skill_terms
+            )
+            if not recovered and fallback_items and not cv_json.get("skills"):
                 cv_json["skills"] = [
                     {"category": fallback_category, "items": fallback_items[:8]}
                 ]
-            elif not fallback_items:
+            elif not recovered and not fallback_items:
                 logger.info(
                     "Keyword alignment skipped: no high-signal fallback skills available."
                 )
@@ -3128,7 +3497,10 @@ class CVGenerationWorker(QThread):
             cv_json["summary"], count = _replace_terms_in_text(summary, mapping)
             replacements += count
 
-        skills_present = False
+        skills_present = not (
+            callable(skills_section_low_signal)
+            and skills_section_low_signal(cv_json.get("skills"))
+        )
         for category in cv_json.get("skills", []) or []:
             if not isinstance(category, dict):
                 continue
@@ -3148,7 +3520,11 @@ class CVGenerationWorker(QThread):
                     if cleaned_updated:
                         updated_items.append(cleaned_updated)
                 category["items"] = _dedup_preserve(
-                    [item for item in updated_items if isinstance(item, str) and item.strip()]
+                    [
+                        item
+                        for item in updated_items
+                        if isinstance(item, str) and item.strip()
+                    ]
                 )
                 if category["items"]:
                     skills_present = True
@@ -3205,10 +3581,22 @@ class CVGenerationWorker(QThread):
                     replacements += count
                     updated_details.append(updated)
                 edu["details"] = _dedup_preserve(
-                    [item for item in updated_details if isinstance(item, str) and item.strip()]
+                    [
+                        item
+                        for item in updated_details
+                        if isinstance(item, str) and item.strip()
+                    ]
                 )
 
         if not skills_present:
+            recovered = _recover_skills(
+                [
+                    *list(mapping.values()),
+                    *routed_skill_candidates,
+                    *critic_skill_candidates,
+                    *offer_skill_candidates,
+                ]
+            )
             fallback_items = self._build_fallback_skill_items(list(mapping.values()))
             if not fallback_items:
                 fallback_items = self._build_fallback_skill_items(
@@ -3218,11 +3606,11 @@ class CVGenerationWorker(QThread):
                         if _normalize_keyword_for_match(term) in offer_norm
                     ]
                 )
-            if fallback_items:
+            if not recovered and fallback_items:
                 cv_json["skills"] = [
                     {"category": fallback_category, "items": fallback_items[:8]}
                 ]
-            else:
+            elif not recovered:
                 logger.info(
                     "Skipping low-signal skill fallback: no usable skill set met minimum quality."
                 )
@@ -3245,6 +3633,10 @@ class CVGenerationWorker(QThread):
             return
         try:
             from ..utils.cv_postprocessing import enforce_cv_offer_adaptation
+            from ..utils.cv_offer_term_routing import (
+                merge_section_term_maps,
+                route_terms_to_sections,
+            )
             from ..utils.keyword_alignment import (
                 normalize_keyword_for_match,
                 normalized_term_in_probe as normalized_term_present,
@@ -3261,6 +3653,29 @@ class CVGenerationWorker(QThread):
                     text = str(item or "").strip()
                     if text:
                         critic_missing.append(text)
+        critic_section_missing: Dict[str, List[str]] = {}
+        if isinstance(critic_json, dict):
+            raw_section_missing = critic_json.get("section_missing_keywords")
+            if isinstance(raw_section_missing, dict):
+                for key in (
+                    "summary",
+                    "experience",
+                    "skills",
+                    "projects",
+                    "education",
+                    "certifications",
+                    "languages",
+                ):
+                    values = raw_section_missing.get(key)
+                    if not isinstance(values, list):
+                        continue
+                    cleaned_values = []
+                    for item in values:
+                        text = str(item or "").strip()
+                        if text:
+                            cleaned_values.append(text)
+                    if cleaned_values:
+                        critic_section_missing[key] = _dedup_preserve(cleaned_values)
         critic_missing = _dedup_preserve(critic_missing)
         critic_skill_candidates = _dedup_preserve(
             [
@@ -3384,6 +3799,21 @@ class CVGenerationWorker(QThread):
             )
             return present / float(len(normalized_terms))
 
+        routed_terms = merge_section_term_maps(
+            route_terms_to_sections(critic_missing),
+            route_terms_to_sections(offer_keywords),
+            critic_section_missing,
+        )
+        routed_skill_candidates = _dedup_preserve(
+            [
+                clean
+                for clean in (
+                    self._sanitize_skill_item_text(term)
+                    for term in routed_terms.get("skills", [])
+                )
+                if clean
+            ]
+        )
         reference_terms = critic_missing if critic_missing else offer_keywords
         combined_probe = " ".join(
             part for part in section_probes.values() if part
@@ -3392,27 +3822,35 @@ class CVGenerationWorker(QThread):
         missing_ratio = max(0.0, 1.0 - reference_coverage)
 
         # Creative adaptation policy: do not cap adaptation term count.
-        # Guardrails against factual invention stay enforced downstream.
-        missing_summary_terms = missing_terms(critic_missing, summary_probe)
-        missing_experience_terms = missing_terms(critic_missing, experience_probe)
+        # Section routing decides where missing offer terms should land.
+        missing_summary_terms = missing_terms(
+            routed_terms.get("summary") or critic_missing or offer_keywords,
+            summary_probe,
+        )
+        missing_experience_terms = missing_terms(
+            routed_terms.get("experience") or critic_missing or offer_keywords,
+            experience_probe,
+        )
         missing_skills_terms = missing_terms(
-            critic_skill_candidates,
+            routed_skill_candidates
+            or critic_skill_candidates
+            or offer_skill_candidates,
             section_probes["skills"],
         )
         missing_projects_terms = missing_terms(
-            critic_missing,
+            routed_terms.get("projects") or critic_missing or offer_keywords,
             section_probes["projects"],
         )
         missing_education_terms = missing_terms(
-            critic_missing,
+            routed_terms.get("education"),
             section_probes["education"],
         )
         missing_certification_terms = missing_terms(
-            critic_missing,
+            routed_terms.get("certifications"),
             section_probes["certifications"],
         )
         missing_language_terms = missing_terms(
-            critic_missing,
+            routed_terms.get("languages"),
             section_probes["languages"],
         )
 
@@ -3434,31 +3872,33 @@ class CVGenerationWorker(QThread):
             )
         if not missing_projects_terms:
             missing_projects_terms = missing_terms(
-                offer_keywords,
+                routed_terms.get("projects") or offer_keywords,
                 section_probes["projects"],
             )
         if not missing_education_terms:
             missing_education_terms = missing_terms(
-                offer_keywords,
+                routed_terms.get("education"),
                 section_probes["education"],
             )
         if not missing_certification_terms:
             missing_certification_terms = missing_terms(
-                offer_keywords,
+                routed_terms.get("certifications"),
                 section_probes["certifications"],
             )
         if not missing_language_terms:
             missing_language_terms = missing_terms(
-                offer_keywords,
+                routed_terms.get("languages"),
                 section_probes["languages"],
             )
+
+        missing_education_terms_postprocess: List[str] = []
 
         if (
             not missing_summary_terms
             and not missing_experience_terms
             and not missing_skills_terms
             and not missing_projects_terms
-            and not missing_education_terms
+            and not missing_education_terms_postprocess
             and not missing_certification_terms
             and not missing_language_terms
         ):
@@ -3466,18 +3906,22 @@ class CVGenerationWorker(QThread):
 
         enforce_cv_offer_adaptation(
             cv_json,
-            job_title=str(self.offer_data.get("job_title") or "")
-            if isinstance(self.offer_data, dict)
-            else "",
-            company=str(self.offer_data.get("company") or "")
-            if isinstance(self.offer_data, dict)
-            else "",
+            job_title=(
+                str(self.offer_data.get("job_title") or "")
+                if isinstance(self.offer_data, dict)
+                else ""
+            ),
+            company=(
+                str(self.offer_data.get("company") or "")
+                if isinstance(self.offer_data, dict)
+                else ""
+            ),
             aligned_terms=offer_keywords,
             missing_summary_terms=missing_summary_terms,
             missing_experience_terms=missing_experience_terms,
             missing_skills_terms=missing_skills_terms,
             missing_projects_terms=missing_projects_terms,
-            missing_education_terms=missing_education_terms,
+            missing_education_terms=missing_education_terms_postprocess,
             missing_certification_terms=missing_certification_terms,
             missing_language_terms=missing_language_terms,
             summary_term_limit=None,
@@ -3499,7 +3943,7 @@ class CVGenerationWorker(QThread):
         ).strip()
         updated_coverage = coverage_ratio(reference_terms, updated_combined_probe)
         logger.info(
-            "Offer adaptation enforced from critic: summary=%s experience=%s skills=%s projects=%s education=%s certifications=%s languages=%s coverage=%.2f->%.2f missing_ratio=%.2f",
+            "Offer adaptation enforced from critic: summary=%s experience=%s skills=%s projects=%s education_guidance=%s certifications=%s languages=%s coverage=%.2f->%.2f missing_ratio=%.2f",
             len(missing_summary_terms),
             len(missing_experience_terms),
             len(missing_skills_terms),
@@ -3515,7 +3959,9 @@ class CVGenerationWorker(QThread):
     def _collect_offer_keywords(self) -> List[str]:
         keywords: List[str] = []
         analysis = (
-            self.offer_data.get("analysis") if isinstance(self.offer_data, dict) else None
+            self.offer_data.get("analysis")
+            if isinstance(self.offer_data, dict)
+            else None
         )
         if isinstance(analysis, dict):
             for key in (
@@ -3535,14 +3981,20 @@ class CVGenerationWorker(QThread):
                 elif isinstance(value, str):
                     keywords.extend(part.strip() for part in value.split(","))
 
-        job_title = self.offer_data.get("job_title") if isinstance(self.offer_data, dict) else ""
+        job_title = (
+            self.offer_data.get("job_title")
+            if isinstance(self.offer_data, dict)
+            else ""
+        )
         if job_title:
             keywords.extend(part for part in job_title.split() if part)
 
         candidate_terms = _collect_candidate_keywords(self.profile_data)
         keywords.extend(candidate_terms)
 
-        return _dedup_preserve([k for k in keywords if isinstance(k, str) and k.strip()])[:60]
+        return _dedup_preserve(
+            [k for k in keywords if isinstance(k, str) and k.strip()]
+        )[:60]
 
     def _prepare_offer_text(self, *, max_chars: int) -> str:
         offer_text = extract_offer_text_from_offer_data(
@@ -3591,7 +4043,9 @@ class CVGenerationWorker(QThread):
         return None
 
     def _merge_offer_keywords(self, offer_keywords: Dict[str, Any]) -> None:
-        if not isinstance(self.offer_data, dict) or not isinstance(offer_keywords, dict):
+        if not isinstance(self.offer_data, dict) or not isinstance(
+            offer_keywords, dict
+        ):
             return
         analysis = self.offer_data.get("analysis")
         if not isinstance(analysis, dict):
@@ -3605,7 +4059,9 @@ class CVGenerationWorker(QThread):
             if isinstance(existing, list):
                 items.extend(str(item) for item in existing)
             elif isinstance(existing, str):
-                items.extend(part.strip() for part in existing.split(",") if part.strip())
+                items.extend(
+                    part.strip() for part in existing.split(",") if part.strip()
+                )
             if isinstance(value, list):
                 items.extend(str(item) for item in value)
             elif isinstance(value, str):
@@ -3673,8 +4129,12 @@ JOB_OFFER_TEXT:
         critic_json: Optional[Dict[str, Any]] = None,
         stage: str,
     ) -> Dict[str, str]:
+        from ..utils.cv_offer_term_routing import format_section_keyword_guidance
+
         offer_keywords = self._get_offer_keywords_json()
-        offer_text = self._prepare_offer_text(max_chars=2000 if offer_keywords else 3000)
+        offer_text = self._prepare_offer_text(
+            max_chars=2000 if offer_keywords else 3000
+        )
         job_title = self.offer_data.get("job_title") or ""
         company = self.offer_data.get("company") or ""
         language_code = self._resolve_language_code()
@@ -3689,7 +4149,10 @@ JOB_OFFER_TEXT:
 
         system_prompt = (
             "You are a CV generator. Return JSON only that matches the schema. "
-            "Use only facts from PROFILE_JSON. Do not invent data. "
+            "PROFILE_JSON is the primary anchor for identity, background, chronology, and contact data. "
+            "You may extrapolate plausible details or compact new entries when the profile is incomplete, "
+            "but they must stay coherent with the candidate background and target role. "
+            "Never contradict explicit facts from PROFILE_JSON or alter identity/contact facts. "
             "Use empty strings for unknown scalar fields and empty lists for missing sections. "
             "All text must be in LANGUAGE; do not mix languages. "
             "Select the most relevant items for the job offer. "
@@ -3709,7 +4172,9 @@ JOB_OFFER_TEXT:
                 f"{_trim_text(matched_keywords_text, 400)}"
             )
 
+        critic_payload: Dict[str, Any] = {}
         critic_block = ""
+        section_guidance_block = ""
         if critic_json:
             critic_payload = self._sanitize_critic_json(
                 critic_json, profile_json=profile_json
@@ -3719,6 +4184,16 @@ JOB_OFFER_TEXT:
                     "\n\nCRITIC_JSON (feedback to apply):\n"
                     f"{_trim_text(json.dumps(critic_payload, indent=2, ensure_ascii=False), 2000)}"
                 )
+                section_guidance = format_section_keyword_guidance(
+                    critic_payload.get("section_missing_keywords") or {},
+                    language_code=language_code,
+                    max_terms_per_section=8,
+                )
+                if section_guidance:
+                    section_guidance_block = (
+                        "\n\nSECTION_KEYWORD_GUIDANCE (route these offer terms to the best sections):\n"
+                        f"{_trim_text(section_guidance, 900)}"
+                    )
 
         user_instruction_block = ""
         user_instruction = str(self.user_instruction or "").strip()
@@ -3745,17 +4220,19 @@ PROFILE_JSON (source of truth):
 {offer_keywords_block}
 {matched_keywords_block}
 {critic_block}
+{section_guidance_block}
 {user_instruction_block}
 
 OUTPUT RULES:
 - Return JSON only.
 - Keep required sections even if empty lists.
 - Align content with job offer (keywords, order, relevance).
-- Do not add facts not present in PROFILE_JSON.
+- PROFILE_JSON remains the main factual anchor, but if it is sparse you may synthesize concise, plausible details or compact entries that stay coherent with it and with the target role.
 - contact fields must be copied from PROFILE_JSON.personal_info when available.
 - target_company and target_job_title should reflect the offer; use empty strings if missing.
 - Never use placeholders (no [A COMPLETER], [TO COMPLETE], or bracketed tokens).
 - Skills items must be short noun phrases (no sentences, no "candidate should/must").
+- Keep a dedicated skills section when the profile or offer implies technical, functional, or transferable skills.
 - ats_keywords must be a list of strings from the job offer or OFFER_KEYWORDS_JSON.
 - If OFFER_KEYWORDS_JSON is present, prioritize it for relevance and ATS terms.
 - render_hints.notes can be freeform guidance for rendering.
@@ -3763,6 +4240,8 @@ OUTPUT RULES:
 - Do not include review or instruction text in any field (no critique, no "this CV needs", no "should").
 - Summary must be candidate-focused (role, strengths, impact). Do not describe employer mission/history.
 - If MATCHED_KEYWORDS is present, ensure those terms appear in summary/skills/experience when relevant.
+- Route operational tasks and delivery verbs to experience or projects, not to education.
+- Keep education focused on diploma, coursework, thesis, labs, training, or academic specialization.
 - If PROFILE_JSON text is in another language, translate it to LANGUAGE (keep proper nouns, tools, company names).
 - Avoid repetition:
   - Never repeat the same sentence, clause, or employer description twice.
@@ -3774,6 +4253,7 @@ OUTPUT RULES:
 - If USER_REGEN_INSTRUCTION is present, apply it as editorial guidance while preserving factual constraints.
 - Never copy USER_REGEN_INSTRUCTION text verbatim into CV fields.
 - Never output instruction meta-text (for example "please update", "this CV needs", uppercase emphasis markers).
+- When inventing or extrapolating, prefer believable specificity over generic filler; keep chronology and level of seniority coherent.
 - Keep output focused but informative:
   - experience <= 5 items, highlights <= 4 each.
   - skills <= 5 categories, items <= 10 each.
@@ -3787,6 +4267,7 @@ OUTPUT RULES:
         if stage == "final":
             user_prompt += (
                 "\n\nRevise using CRITIC_JSON guidance. "
+                "Use SECTION_KEYWORD_GUIDANCE to redistribute missing offer terms into the most appropriate sections. "
                 "Include must_keep_facts, but also use other relevant facts from PROFILE_JSON. "
                 "Do not include critique or instructions in any field."
             )
@@ -3850,7 +4331,9 @@ OUTPUT RULES:
                 logger=logger,
             )
 
-        def _second_pass_if_needed(payload: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
+        def _second_pass_if_needed(
+            payload: Dict[str, Any], *, reason: str
+        ) -> Dict[str, Any]:
             retry_payload = run_offer_keywords_second_pass(
                 base_messages=messages,
                 current_payload=payload if isinstance(payload, dict) else {},
@@ -3887,12 +4370,16 @@ OUTPUT RULES:
                     messages["system"],
                     messages["user"],
                     progress_callback,
-                    generation_overrides=self._non_strict_json_generation_overrides("offer_critic"),
+                    generation_overrides=self._non_strict_json_generation_overrides(
+                        "offer_critic"
+                    ),
                     role="offer_critic",
                 )
                 payload = self._parse_json_response(raw)
                 if not payload:
-                    retry_reason = self._consume_qwen_runtime_error() or "non-strict empty output"
+                    retry_reason = (
+                        self._consume_qwen_runtime_error() or "non-strict empty output"
+                    )
                     fallback_reason = self._compose_fallback_reason(
                         strict_error=exc,
                         retry_error=retry_reason,
@@ -3984,12 +4471,16 @@ OUTPUT RULES:
                     messages["system"],
                     messages["user"],
                     progress_callback,
-                    generation_overrides=self._non_strict_json_generation_overrides("generator"),
+                    generation_overrides=self._non_strict_json_generation_overrides(
+                        "generator"
+                    ),
                     role="generator",
                 )
                 payload = self._parse_json_response(raw)
                 if not payload:
-                    retry_reason = self._consume_qwen_runtime_error() or "non-strict empty output"
+                    retry_reason = (
+                        self._consume_qwen_runtime_error() or "non-strict empty output"
+                    )
                     recovered = self._coerce_minimum_cv_json_payload(
                         {},
                         profile_json=profile_json,
@@ -4019,7 +4510,9 @@ OUTPUT RULES:
                 try:
                     parsed = CVJSON.model_validate(payload)
                 except ValidationError as val_exc:
-                    logger.warning("Non-strict CVJSON draft validation failed: %s", val_exc)
+                    logger.warning(
+                        "Non-strict CVJSON draft validation failed: %s", val_exc
+                    )
                     recovered = self._coerce_minimum_cv_json_payload(
                         payload,
                         profile_json=profile_json,
@@ -4134,7 +4627,9 @@ OUTPUT RULES:
                 )
                 payload = self._parse_json_response(raw)
                 if not payload:
-                    retry_reason = self._consume_qwen_runtime_error() or "non-strict empty output"
+                    retry_reason = (
+                        self._consume_qwen_runtime_error() or "non-strict empty output"
+                    )
                     recovered = self._coerce_minimum_cv_json_payload(
                         {},
                         profile_json=profile_json,
@@ -4164,7 +4659,9 @@ OUTPUT RULES:
                 try:
                     parsed = CVJSON.model_validate(payload)
                 except ValidationError as val_exc:
-                    logger.warning("Non-strict CVJSON final validation failed: %s", val_exc)
+                    logger.warning(
+                        "Non-strict CVJSON final validation failed: %s", val_exc
+                    )
                     recovered = self._coerce_minimum_cv_json_payload(
                         payload,
                         profile_json=profile_json,
@@ -4247,7 +4744,9 @@ OUTPUT RULES:
                     messages["system"],
                     messages["user"],
                     progress_callback,
-                    generation_overrides=self._non_strict_json_generation_overrides("critic"),
+                    generation_overrides=self._non_strict_json_generation_overrides(
+                        "critic"
+                    ),
                     role="critic",
                 )
                 payload = self._parse_json_response(raw)
@@ -4274,7 +4773,9 @@ OUTPUT RULES:
                             retry_error=val_exc,
                         )
                         return self._fallback_critic_json(reason=fallback_reason)
-                retry_reason = self._consume_qwen_runtime_error() or "non-strict empty output"
+                retry_reason = (
+                    self._consume_qwen_runtime_error() or "non-strict empty output"
+                )
                 fallback_reason = self._compose_fallback_reason(
                     strict_error=exc,
                     retry_error=retry_reason,
@@ -4295,7 +4796,9 @@ OUTPUT RULES:
         """Run the CV generation pipeline via PipelineOrchestrator."""
         try:
             profile_json = self._build_profile_json()
-            self._pipeline_profile_json = profile_json if isinstance(profile_json, dict) else {}
+            self._pipeline_profile_json = (
+                profile_json if isinstance(profile_json, dict) else {}
+            )
             existing_snapshot = self._load_application_snapshot()
 
             orchestrator, state = build_default_pipeline(
@@ -4355,9 +4858,7 @@ OUTPUT RULES:
         except Exception as exc:
             logger.error("CVGenerationWorker.run failed: %s", exc)
             try:
-                self.qwen_manager._record_failure(
-                    f"pipeline_error: {str(exc)[:240]}"
-                )
+                self.qwen_manager._record_failure(f"pipeline_error: {str(exc)[:240]}")
             except Exception:
                 pass
             try:
@@ -4374,7 +4875,9 @@ OUTPUT RULES:
         for result in reversed(phase_results):
             if result is None:
                 continue
-            status_name = str(getattr(getattr(result, "status", None), "name", "")).upper()
+            status_name = str(
+                getattr(getattr(result, "status", None), "name", "")
+            ).upper()
             if status_name != "FAILED":
                 continue
             return (
@@ -4394,16 +4897,34 @@ OUTPUT RULES:
         adaptive_custom = custom.get("adaptive_subprocess_recovery")
         adaptive_env = os.getenv("CVMATCH_ADAPTIVE_SUBPROCESS_RECOVERY")
         if adaptive_env is not None:
-            adaptive_enabled = adaptive_env.strip().lower() in ("1", "true", "yes", "y", "on")
+            adaptive_enabled = adaptive_env.strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "y",
+                "on",
+            )
         elif adaptive_custom is not None:
-            adaptive_enabled = str(adaptive_custom).strip().lower() in ("1", "true", "yes", "y", "on")
+            adaptive_enabled = str(adaptive_custom).strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "y",
+                "on",
+            )
         else:
             adaptive_enabled = True
         if adaptive_enabled:
             return False
 
         env_toggle = os.getenv("CVMATCH_RETRY_SUBPROCESS_ON_MEMORY_ERROR")
-        if env_toggle is not None and env_toggle.strip().lower() in ("0", "false", "no", "n", "off"):
+        if env_toggle is not None and env_toggle.strip().lower() in (
+            "0",
+            "false",
+            "no",
+            "n",
+            "off",
+        ):
             return False
 
         phase_name, failure_error = self._extract_failed_phase_error(phase_results)
@@ -4451,11 +4972,25 @@ OUTPUT RULES:
             "model_version": self.profile_data.model_version,
             "model_used": getattr(self.qwen_manager, "current_model_id", "unknown"),
             "gpu_used": gpu_manager.gpu_info["available"],
-            "degraded_mode": state.is_degraded() if hasattr(state, "is_degraded") else False,
+            "degraded_mode": (
+                state.is_degraded() if hasattr(state, "is_degraded") else False
+            ),
             "degraded_reasons": getattr(state, "degraded_reasons", []),
-            "alignment_audit": dict(state.alignment_audit) if isinstance(getattr(state, "alignment_audit", None), dict) else {},
-            "cover_letter_review": dict(state.cover_letter_review) if isinstance(getattr(state, "cover_letter_review", None), dict) else {},
-            "generation_audit": dict(state.generation_audit) if isinstance(getattr(state, "generation_audit", None), dict) else {},
+            "alignment_audit": (
+                dict(state.alignment_audit)
+                if isinstance(getattr(state, "alignment_audit", None), dict)
+                else {}
+            ),
+            "cover_letter_review": (
+                dict(state.cover_letter_review)
+                if isinstance(getattr(state, "cover_letter_review", None), dict)
+                else {}
+            ),
+            "generation_audit": (
+                dict(state.generation_audit)
+                if isinstance(getattr(state, "generation_audit", None), dict)
+                else {}
+            ),
         }
 
     def _load_application_snapshot(self) -> dict:
@@ -4465,10 +5000,15 @@ OUTPUT RULES:
         try:
             from ..models.database import get_session
             from ..models.job_application import JobApplication
+
             with get_session() as session:
                 app = session.get(JobApplication, self.application_id)
                 if app:
-                    offer_analysis = app.offer_analysis if isinstance(app.offer_analysis, dict) else {}
+                    offer_analysis = (
+                        app.offer_analysis
+                        if isinstance(app.offer_analysis, dict)
+                        else {}
+                    )
                     generation_audit = (
                         offer_analysis.get("generation_audit")
                         if isinstance(offer_analysis.get("generation_audit"), dict)
@@ -4477,9 +5017,13 @@ OUTPUT RULES:
                     return {
                         "cv_json_draft": app.cv_json_draft or {},
                         "cv_json_final": app.cv_json_final or {},
-                        "cv_markdown": app.final_cv_markdown or app.generated_cv_markdown or "",
+                        "cv_markdown": app.final_cv_markdown
+                        or app.generated_cv_markdown
+                        or "",
                         "cv_html": app.final_cv_html or app.generated_cv_html or "",
-                        "cover_letter": app.final_cover_letter or app.generated_cover_letter or "",
+                        "cover_letter": app.final_cover_letter
+                        or app.generated_cover_letter
+                        or "",
                         "generation_audit": generation_audit,
                     }
         except Exception as exc:
@@ -4536,7 +5080,9 @@ OUTPUT RULES:
     def build_cover_letter_prompt(self) -> str:
         """Build cover-letter prompt via style policy module."""
         if not self._offer_analysis_hydrated:
-            _hydrate_offer_analysis_from_application(self.offer_data, self.application_id)
+            _hydrate_offer_analysis_from_application(
+                self.offer_data, self.application_id
+            )
             self._offer_analysis_hydrated = True
         profile_block = _format_profile_detailed_data(self.profile_data)
         style_payload = build_cover_letter_generation_payload(
@@ -4615,9 +5161,9 @@ OUTPUT RULES:
                     self.offer_data["analysis"] = dict(offer_analysis_payload)
                 application = JobApplication(
                     profile_id=self.profile_data.id,
-                    job_title=self.offer_data['job_title'],
-                    company=self.offer_data['company'],
-                    offer_text=self.offer_data['text'],
+                    job_title=self.offer_data["job_title"],
+                    company=self.offer_data["company"],
+                    offer_text=self.offer_data["text"],
                     offer_analysis=offer_analysis_payload,
                     template_used=self.template,
                     model_version_used=self.profile_data.model_version,
@@ -4628,13 +5174,13 @@ OUTPUT RULES:
                     critic_json=critic_json,
                     cv_json_draft=stored_cv_json_draft,
                     cv_json_final=cv_json_final,
-                    status=ApplicationStatus.DRAFT
+                    status=ApplicationStatus.DRAFT,
                 )
             else:
                 application.profile_id = self.profile_data.id
-                application.job_title = self.offer_data['job_title']
-                application.company = self.offer_data['company']
-                application.offer_text = self.offer_data['text']
+                application.job_title = self.offer_data["job_title"]
+                application.company = self.offer_data["company"]
+                application.offer_text = self.offer_data["text"]
                 existing_analysis = (
                     dict(application.offer_analysis)
                     if isinstance(application.offer_analysis, dict)
@@ -4666,9 +5212,12 @@ OUTPUT RULES:
         try:
             with get_session() as session:
                 from sqlmodel import text
+
                 session.execute(
-                    text("UPDATE userprofile SET total_cvs_generated = total_cvs_generated + 1 WHERE id = :pid"),
-                    {"pid": self.profile_data.id}
+                    text(
+                        "UPDATE userprofile SET total_cvs_generated = total_cvs_generated + 1 WHERE id = :pid"
+                    ),
+                    {"pid": self.profile_data.id},
                 )
                 session.commit()
                 logger.debug(f"Stats profil {self.profile_data.id} mises Ã  jour")
@@ -4677,12 +5226,14 @@ OUTPUT RULES:
 
         return application
 
+
 class CoverLetterGenerationWorker(QThread):
     """Worker pour générer une lettre de motivation en arrière-plan.
 
     Note: Utilise ProfileWorkerData au lieu de UserProfile pour éviter
     les erreurs SQLAlchemy DetachedInstanceError dans les threads background.
     """
+
     progress_updated = Signal(str)
     generation_finished = Signal(dict)
     error_occurred = Signal(str)
@@ -4700,7 +5251,9 @@ class CoverLetterGenerationWorker(QThread):
         self.profile_data = profile_data
         self.offer_data = offer_data
         self.template = template
-        self.application_id = application_id if isinstance(application_id, int) else None
+        self.application_id = (
+            application_id if isinstance(application_id, int) else None
+        )
         self.user_instruction = str(user_instruction or "").strip()
         self.previous_generation_audit = (
             dict(previous_generation_audit)
@@ -4725,7 +5278,7 @@ class CoverLetterGenerationWorker(QThread):
                 self.qwen_manager.last_model_resolution_note = None
 
             # Étape 1: Chargement du modèle
-            model_name = getattr(self.qwen_manager, 'current_model_id', 'IA')
+            model_name = getattr(self.qwen_manager, "current_model_id", "IA")
             progress_callback(f"💠 Initialisation du modèle {model_name}...")
             self.qwen_manager.load_model(progress_callback, allow_fallback=False)
 
@@ -4735,10 +5288,12 @@ class CoverLetterGenerationWorker(QThread):
 
             # Ã‰tape 3: GÃ©nÃ©ration de la lettre
             progress_callback("💬 Génération de la lettre de motivation...")
-            cover_letter = self.qwen_manager.generate_cover_letter(prompt, progress_callback)
+            cover_letter = self.qwen_manager.generate_cover_letter(
+                prompt, progress_callback
+            )
 
-            generation_audit, cover_letter_review = self._build_cover_letter_generation_audit(
-                cover_letter
+            generation_audit, cover_letter_review = (
+                self._build_cover_letter_generation_audit(cover_letter)
             )
 
             # Ã‰tape 4: Sauvegarde
@@ -4759,7 +5314,7 @@ class CoverLetterGenerationWorker(QThread):
                 "cover_letter": cover_letter,
                 "template": self.template,
                 "model_version": self.profile_data.model_version,
-                "model_used": getattr(self.qwen_manager, 'current_model_id', 'unknown'),
+                "model_used": getattr(self.qwen_manager, "current_model_id", "unknown"),
                 "gpu_used": gpu_manager.gpu_info["available"],
                 "generation_audit": generation_audit,
                 "cover_letter_review": cover_letter_review,
@@ -4767,7 +5322,9 @@ class CoverLetterGenerationWorker(QThread):
                     generation_audit.get("breakdown", {}).get("cv")
                     if isinstance(generation_audit, dict)
                     and isinstance(generation_audit.get("breakdown"), dict)
-                    and isinstance(generation_audit.get("breakdown", {}).get("cv"), dict)
+                    and isinstance(
+                        generation_audit.get("breakdown", {}).get("cv"), dict
+                    )
                     else {}
                 ),
             }
@@ -4787,7 +5344,9 @@ class CoverLetterGenerationWorker(QThread):
     def build_letter_prompt(self) -> str:
         """Build cover-letter prompt via style policy module."""
         if not self._offer_analysis_hydrated:
-            _hydrate_offer_analysis_from_application(self.offer_data, self.application_id)
+            _hydrate_offer_analysis_from_application(
+                self.offer_data, self.application_id
+            )
             self._offer_analysis_hydrated = True
         profile_block = _format_profile_detailed_data(self.profile_data)
         style_payload = build_cover_letter_generation_payload(
@@ -4810,8 +5369,14 @@ class CoverLetterGenerationWorker(QThread):
         return str(style_payload.get("prompt") or "")
 
     def _resolve_letter_language_code(self) -> str:
-        analysis = self.offer_data.get("analysis") if isinstance(self.offer_data, dict) else None
-        analysis_language = analysis.get("language") if isinstance(analysis, dict) else None
+        analysis = (
+            self.offer_data.get("analysis")
+            if isinstance(self.offer_data, dict)
+            else None
+        )
+        analysis_language = (
+            analysis.get("language") if isinstance(analysis, dict) else None
+        )
         if isinstance(analysis_language, str) and analysis_language.strip():
             return _normalize_language(analysis_language)
         preferred = getattr(self.profile_data, "preferred_language", None)
@@ -4840,14 +5405,18 @@ class CoverLetterGenerationWorker(QThread):
         structure_ok = True
         try:
             from ..utils.cover_letter_rules import is_cover_letter_structure_coherent
+
             structure_ok = bool(
-                is_cover_letter_structure_coherent(cover_letter or "", language_code=language_code)
+                is_cover_letter_structure_coherent(
+                    cover_letter or "", language_code=language_code
+                )
             )
         except Exception:
             structure_ok = True
 
         try:
             from ..utils.cover_letter_pipeline import build_generation_audit_for_letter
+
             generation_audit = build_generation_audit_for_letter(
                 letter_score=letter_score,
                 structure_ok=structure_ok,
@@ -4870,7 +5439,11 @@ class CoverLetterGenerationWorker(QThread):
                 },
             }
 
-        breakdown = generation_audit.get("breakdown") if isinstance(generation_audit, dict) else {}
+        breakdown = (
+            generation_audit.get("breakdown")
+            if isinstance(generation_audit, dict)
+            else {}
+        )
         letter_block = breakdown.get("letter") if isinstance(breakdown, dict) else {}
         cover_letter_review = (
             dict(letter_block)
@@ -4949,14 +5522,14 @@ class CoverLetterGenerationWorker(QThread):
 
         application = JobApplication(
             profile_id=self.profile_data.id,
-            job_title=self.offer_data['job_title'],
-            company=self.offer_data['company'],
-            offer_text=self.offer_data['text'],
+            job_title=self.offer_data["job_title"],
+            company=self.offer_data["company"],
+            offer_text=self.offer_data["text"],
             offer_analysis=offer_analysis_payload,
             template_used=self.template,
             model_version_used=self.profile_data.model_version,
             generated_cover_letter=cover_letter,
-            status=ApplicationStatus.DRAFT
+            status=ApplicationStatus.DRAFT,
         )
 
         with get_session() as session:
@@ -4973,6 +5546,7 @@ class FineTuningWorker(QThread):
     Note: Utilise ProfileWorkerData au lieu de UserProfile pour éviter
     les erreurs SQLAlchemy DetachedInstanceError dans les threads background.
     """
+
     progress_updated = Signal(str, int)  # message, pourcentage
     finished = Signal(str)  # chemin du modèle
     error_occurred = Signal(str)
@@ -4984,7 +5558,9 @@ class FineTuningWorker(QThread):
     def run(self):
         """Lance le fine-tuning (placeholder pour version future)."""
         try:
-            self.progress_updated.emit("💠 Préparation des données d'entraînement...", 10)
+            self.progress_updated.emit(
+                "💠 Préparation des données d'entraînement...", 10
+            )
             time.sleep(2)
 
             self.progress_updated.emit("🔍 Configuration du modèle...", 30)
@@ -4998,18 +5574,32 @@ class FineTuningWorker(QThread):
 
             # Mise à jour des métadonnées du profil via SQL direct (évite DetachedInstanceError)
             from datetime import datetime
-            new_version = "v" + str(int(self.profile_data.model_version.replace("v", "")) + 1) if "v" in self.profile_data.model_version else "v1"
+
+            new_version = (
+                "v" + str(int(self.profile_data.model_version.replace("v", "")) + 1)
+                if "v" in self.profile_data.model_version
+                else "v1"
+            )
 
             try:
                 with get_session() as session:
                     from sqlmodel import text
+
                     session.execute(
-                        text("UPDATE userprofile SET last_fine_tuning = :ts, model_version = :ver WHERE id = :pid"),
-                        {"ts": datetime.now(), "ver": new_version, "pid": self.profile_data.id}
+                        text(
+                            "UPDATE userprofile SET last_fine_tuning = :ts, model_version = :ver WHERE id = :pid"
+                        ),
+                        {
+                            "ts": datetime.now(),
+                            "ver": new_version,
+                            "pid": self.profile_data.id,
+                        },
                     )
                     session.commit()
             except Exception as e:
-                logger.warning(f"Impossible de mettre à jour les métadonnées du profil: {e}")
+                logger.warning(
+                    f"Impossible de mettre à jour les métadonnées du profil: {e}"
+                )
 
             model_path = f"models/qwen2.5-32b-{self.profile_data.name.lower().replace(' ', '_')}-{new_version}/"
 

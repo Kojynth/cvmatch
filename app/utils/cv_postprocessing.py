@@ -1,5 +1,5 @@
 """
-CV Postprocessing Module 
+CV Postprocessing Module
 
 Centralized CV JSON postprocessing utilities.
 Extracted from CVGenerationWorker in llm_worker.py.
@@ -24,9 +24,11 @@ from .cv_text_quality import clean_narrative_text
 try:
     from ..logging.safe_logger import get_safe_logger
     from ..config import DEFAULT_PII_CONFIG
+
     logger = get_safe_logger(__name__, cfg=DEFAULT_PII_CONFIG)
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 
@@ -174,7 +176,7 @@ def _trim_text(value: Any, max_chars: int) -> str:
         return ""
     if len(text) <= max_chars:
         return text
-    return text[:max_chars - 1].rstrip() + "…"
+    return text[: max_chars - 1].rstrip() + "…"
 
 
 def text_has_review_markers(text: str) -> bool:
@@ -275,8 +277,12 @@ def _normalize_contact_links(raw_links: Any) -> List[Dict[str, str]]:
         label = ""
         url = ""
         if isinstance(entry, dict):
-            label = clean_text_field(entry.get("label") or entry.get("platform") or "", max_length=80)
-            url = clean_text_field(entry.get("url") or entry.get("link") or "", max_length=500)
+            label = clean_text_field(
+                entry.get("label") or entry.get("platform") or "", max_length=80
+            )
+            url = clean_text_field(
+                entry.get("url") or entry.get("link") or "", max_length=500
+            )
         elif isinstance(entry, str):
             url = clean_text_field(entry, max_length=500)
         if not url:
@@ -412,7 +418,9 @@ def repair_summary_if_needed(
 
     if draft_summary and not summary_needs_rewrite(draft_summary):
         cv_json_final["summary"] = draft_summary
-        logger.warning("Final summary looked like review text; reverted to draft summary.")
+        logger.warning(
+            "Final summary looked like review text; reverted to draft summary."
+        )
     else:
         cv_json_final["summary"] = ""
         logger.warning("Final summary looked like review text; cleared summary.")
@@ -435,6 +443,7 @@ def sanitize_cv_json_output(
         return
 
     fallback_category = "Skills" if language_code == "en" else "Competences"
+
     def normalize_text_for_match(value: Any) -> str:
         text = str(value or "").strip().casefold()
         if not text:
@@ -458,7 +467,9 @@ def sanitize_cv_json_output(
         text = re.sub(r"\s+", " ", text).strip()
         return text
 
-    target_job_title_norm = normalize_text_for_match(cv_json.get("target_job_title") or "")
+    target_job_title_norm = normalize_text_for_match(
+        cv_json.get("target_job_title") or ""
+    )
     target_job_title_role_norm = normalize_text_for_role_detection(
         cv_json.get("target_job_title") or ""
     )
@@ -477,7 +488,9 @@ def sanitize_cv_json_output(
         if label_token_set.issubset(target_job_title_token_set):
             return any(tok in ROLE_LIKE_SKILL_TOKENS for tok in label_token_set)
         if target_job_title_token_set.issubset(label_token_set):
-            return any(tok in ROLE_LIKE_SKILL_TOKENS for tok in target_job_title_token_set)
+            return any(
+                tok in ROLE_LIKE_SKILL_TOKENS for tok in target_job_title_token_set
+            )
         return False
 
     def is_role_like_phrase(tokens: Sequence[str]) -> bool:
@@ -485,14 +498,18 @@ def sanitize_cv_json_output(
         if not normalized_tokens:
             return False
 
-        role_tokens = [tok for tok in normalized_tokens if tok in ROLE_LIKE_SKILL_TOKENS]
+        role_tokens = [
+            tok for tok in normalized_tokens if tok in ROLE_LIKE_SKILL_TOKENS
+        ]
         if not role_tokens:
             return False
 
         # Ignore tiny glue tokens introduced by punctuation variants:
         # "Ingenieur(e)" -> ["ingenieur", "e"].
         non_role_long_tokens = [
-            tok for tok in normalized_tokens if tok not in ROLE_LIKE_SKILL_TOKENS and len(tok) > 2
+            tok
+            for tok in normalized_tokens
+            if tok not in ROLE_LIKE_SKILL_TOKENS and len(tok) > 2
         ]
         if not non_role_long_tokens and len(normalized_tokens) <= 4:
             return True
@@ -522,8 +539,7 @@ def sanitize_cv_json_output(
         tokens = [tok for tok in label_role_norm.split() if tok]
         role_like = False
         if target_job_title_norm and (
-            label_norm == target_job_title_norm
-            or has_role_like_title_overlap(tokens)
+            label_norm == target_job_title_norm or has_role_like_title_overlap(tokens)
         ):
             role_like = True
         elif is_role_like_phrase(tokens):
@@ -559,7 +575,9 @@ def sanitize_cv_json_output(
             if "," in part:
                 subparts = [value.strip(" ,:-") for value in part.split(",")]
                 subparts = [value for value in subparts if value]
-                if len(subparts) >= 2 and all(0 < len(value.split()) <= 4 for value in subparts):
+                if len(subparts) >= 2 and all(
+                    0 < len(value.split()) <= 4 for value in subparts
+                ):
                     chunks.extend(subparts)
                     continue
             chunks.append(part)
@@ -576,8 +594,7 @@ def sanitize_cv_json_output(
             dotted_tech = bool(DOTTED_TECH_SKILL_PATTERN.fullmatch(compact))
             # Keep dotted technology names, but reject sentence-like forms.
             if not dotted_tech and (
-                re.search(r"\.\s", compact)
-                or compact.endswith(".")
+                re.search(r"\.\s", compact) or compact.endswith(".")
             ):
                 return False
         if SKILL_SENTENCE_NOISE_PATTERN.search(text):
@@ -616,7 +633,9 @@ def sanitize_cv_json_output(
         cv_json.get("summary") or "",
         dedupe_narrative=True,
     )
-    cv_json["target_job_title"] = clean_text_field(cv_json.get("target_job_title") or "")
+    cv_json["target_job_title"] = clean_text_field(
+        cv_json.get("target_job_title") or ""
+    )
     cv_json["target_company"] = clean_text_field(cv_json.get("target_company") or "")
 
     # Clean skills
@@ -651,17 +670,24 @@ def sanitize_cv_json_output(
                 cleaned_items.append(text)
         cleaned_items = _dedup_preserve(cleaned_items)
         if cleaned_items:
-            cleaned_skills.append({
-                "category": label or fallback_category,
-                "items": cleaned_items,
-            })
+            cleaned_skills.append(
+                {
+                    "category": label or fallback_category,
+                    "items": cleaned_items,
+                }
+            )
     merged_skills: List[Dict[str, Any]] = []
     skills_index: Dict[str, int] = {}
     for block in cleaned_skills:
-        category_label = str(block.get("category") or fallback_category).strip() or fallback_category
-        category_key = normalize_text_for_match(category_label) or category_label.lower()
+        category_label = (
+            str(block.get("category") or fallback_category).strip() or fallback_category
+        )
+        category_key = (
+            normalize_text_for_match(category_label) or category_label.lower()
+        )
         items = [
-            item for item in (block.get("items") or [])
+            item
+            for item in (block.get("items") or [])
             if isinstance(item, str) and item.strip()
         ]
         if not items:
@@ -677,9 +703,7 @@ def sanitize_cv_json_output(
             continue
         idx = skills_index[category_key]
         existing_items = merged_skills[idx].get("items") or []
-        merged_skills[idx]["items"] = _dedup_preserve(
-            [*existing_items, *items]
-        )
+        merged_skills[idx]["items"] = _dedup_preserve([*existing_items, *items])
 
     cv_json["skills"] = merged_skills
 
@@ -731,10 +755,20 @@ def sanitize_cv_json_output(
                 if text:
                     details.append(text)
         cleaned_entry["details"] = _dedup_preserve(details)
-        if any(
-            cleaned_entry.get(f)
-            for f in ("school", "degree", "field_of_study", "start_date", "end_date", "location")
-        ) or cleaned_entry["details"]:
+        if (
+            any(
+                cleaned_entry.get(f)
+                for f in (
+                    "school",
+                    "degree",
+                    "field_of_study",
+                    "start_date",
+                    "end_date",
+                    "location",
+                )
+            )
+            or cleaned_entry["details"]
+        ):
             cleaned_education.append(cleaned_entry)
     cv_json["education"] = cleaned_education
 
@@ -840,7 +874,9 @@ def _token_overlap(left: str, right: str) -> float:
     right_tokens = {tok for tok in _normalize_for_match(right).split() if len(tok) > 2}
     if not left_tokens or not right_tokens:
         return 0.0
-    return len(left_tokens & right_tokens) / float(max(len(left_tokens), len(right_tokens)))
+    return len(left_tokens & right_tokens) / float(
+        max(len(left_tokens), len(right_tokens))
+    )
 
 
 def _text_similarity(left: str, right: str) -> float:
@@ -928,9 +964,7 @@ def _looks_like_company_description(text: str, company: str = "") -> bool:
     corporate_hits = sum(
         1 for marker in _CORPORATE_DESCRIPTION_HINTS if marker in normalized
     )
-    action_hits = sum(
-        1 for marker in _ACTION_EXPERIENCE_HINTS if marker in normalized
-    )
+    action_hits = sum(1 for marker in _ACTION_EXPERIENCE_HINTS if marker in normalized)
 
     company_as_subject = False
     if company_norm:
@@ -1001,7 +1035,14 @@ def _extract_profile_experiences(profile_json: Dict[str, Any]) -> List[Dict[str,
         }
         if not any(
             row.get(field)
-            for field in ("title", "company", "start_date", "end_date", "location", "description")
+            for field in (
+                "title",
+                "company",
+                "start_date",
+                "end_date",
+                "location",
+                "description",
+            )
         ):
             continue
         row["_title_norm"] = _normalize_for_match(row["title"])
@@ -1012,7 +1053,9 @@ def _extract_profile_experiences(profile_json: Dict[str, Any]) -> List[Dict[str,
     return rows
 
 
-def _score_profile_experience_match(entry: Dict[str, Any], profile_entry: Dict[str, Any]) -> float:
+def _score_profile_experience_match(
+    entry: Dict[str, Any], profile_entry: Dict[str, Any]
+) -> float:
     score = 0.0
 
     title_norm = _normalize_for_match(entry.get("title"))
@@ -1045,7 +1088,9 @@ def _score_profile_experience_match(entry: Dict[str, Any], profile_entry: Dict[s
     return score
 
 
-def _reconcile_experience_section(cv_json: Dict[str, Any], profile_json: Dict[str, Any]) -> None:
+def _reconcile_experience_section(
+    cv_json: Dict[str, Any], profile_json: Dict[str, Any]
+) -> None:
     if not isinstance(cv_json, dict):
         return
     experience_entries = cv_json.get("experience")
@@ -1093,7 +1138,11 @@ def _reconcile_experience_section(cv_json: Dict[str, Any], profile_json: Dict[st
                 best_score = score
                 best_idx = idx
 
-        matched_profile = profile_experiences[best_idx] if best_idx >= 0 and best_score >= 0.45 else None
+        matched_profile = (
+            profile_experiences[best_idx]
+            if best_idx >= 0 and best_score >= 0.45
+            else None
+        )
         expected_description = ""
         if matched_profile:
             expected_description = matched_profile.get("description") or ""
@@ -1120,7 +1169,10 @@ def _reconcile_experience_section(cv_json: Dict[str, Any], profile_json: Dict[st
                         continue
                     other_description = other.get("description") or ""
                     if other_description:
-                        other_overlap = max(other_overlap, _token_overlap(current_summary, other_description))
+                        other_overlap = max(
+                            other_overlap,
+                            _token_overlap(current_summary, other_description),
+                        )
                     other_company_norm = other.get("_company_norm", "")
                     if other_company_norm and other_company_norm in summary_norm:
                         other_company_hit = True
@@ -1146,7 +1198,10 @@ def _reconcile_experience_section(cv_json: Dict[str, Any], profile_json: Dict[st
                         continue
                     other_description = other.get("description") or ""
                     if other_description:
-                        other_overlap = max(other_overlap, _token_overlap(highlight_blob, other_description))
+                        other_overlap = max(
+                            other_overlap,
+                            _token_overlap(highlight_blob, other_description),
+                        )
                 if other_overlap >= 0.42 and other_overlap > (expected_overlap + 0.12):
                     highlights = extract_experience_highlights(expected_description)
 
@@ -1171,14 +1226,28 @@ def _reconcile_experience_section(cv_json: Dict[str, Any], profile_json: Dict[st
         entry["summary"] = _trim_text(summary_text, 420)
         entry["highlights"] = _dedup_preserve(cleaned_highlights)[:4]
 
-        if any(
-            entry.get(field) for field in ("title", "company", "start_date", "end_date", "location", "summary")
-        ) or entry["highlights"]:
+        if (
+            any(
+                entry.get(field)
+                for field in (
+                    "title",
+                    "company",
+                    "start_date",
+                    "end_date",
+                    "location",
+                    "summary",
+                )
+            )
+            or entry["highlights"]
+        ):
             reconciled.append(entry)
 
     cv_json["experience"] = reconciled
     if reassigned_count:
-        logger.warning("Experience reconciliation fixed %s likely misassigned summaries.", reassigned_count)
+        logger.warning(
+            "Experience reconciliation fixed %s likely misassigned summaries.",
+            reassigned_count,
+        )
 
 
 def _extract_profile_education(profile_json: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1194,12 +1263,16 @@ def _extract_profile_education(profile_json: Dict[str, Any]) -> List[Dict[str, A
         if isinstance(raw_details, list):
             for value in raw_details:
                 if isinstance(value, str):
-                    text = clean_text_field(value, check_review_markers=False, dedupe_narrative=True)
+                    text = clean_text_field(
+                        value, check_review_markers=False, dedupe_narrative=True
+                    )
                     if text:
                         details.append(text)
         description_text = item.get("description")
         if isinstance(description_text, str) and description_text.strip():
-            text = clean_text_field(description_text, check_review_markers=False, dedupe_narrative=True)
+            text = clean_text_field(
+                description_text, check_review_markers=False, dedupe_narrative=True
+            )
             if text:
                 details.append(text)
         grade_text = item.get("grade")
@@ -1207,18 +1280,40 @@ def _extract_profile_education(profile_json: Dict[str, Any]) -> List[Dict[str, A
             details.append(grade_text.strip())
 
         row = {
-            "school": clean_text_field(item.get("school") or "", check_review_markers=False),
-            "degree": clean_text_field(item.get("degree") or "", check_review_markers=False),
-            "field_of_study": clean_text_field(item.get("field_of_study") or "", check_review_markers=False),
-            "start_date": clean_text_field(item.get("start_date") or "", check_review_markers=False),
-            "end_date": clean_text_field(item.get("end_date") or "", check_review_markers=False),
-            "location": clean_text_field(item.get("location") or "", check_review_markers=False),
+            "school": clean_text_field(
+                item.get("school") or "", check_review_markers=False
+            ),
+            "degree": clean_text_field(
+                item.get("degree") or "", check_review_markers=False
+            ),
+            "field_of_study": clean_text_field(
+                item.get("field_of_study") or "", check_review_markers=False
+            ),
+            "start_date": clean_text_field(
+                item.get("start_date") or "", check_review_markers=False
+            ),
+            "end_date": clean_text_field(
+                item.get("end_date") or "", check_review_markers=False
+            ),
+            "location": clean_text_field(
+                item.get("location") or "", check_review_markers=False
+            ),
             "details": _dedup_preserve(details)[:4],
         }
-        if not any(
-            row.get(field)
-            for field in ("school", "degree", "field_of_study", "start_date", "end_date", "location")
-        ) and not row["details"]:
+        if (
+            not any(
+                row.get(field)
+                for field in (
+                    "school",
+                    "degree",
+                    "field_of_study",
+                    "start_date",
+                    "end_date",
+                    "location",
+                )
+            )
+            and not row["details"]
+        ):
             continue
         row["_school_norm"] = _normalize_for_match(row["school"])
         row["_degree_norm"] = _normalize_for_match(row["degree"])
@@ -1229,7 +1324,9 @@ def _extract_profile_education(profile_json: Dict[str, Any]) -> List[Dict[str, A
     return rows
 
 
-def _score_profile_education_match(entry: Dict[str, Any], profile_entry: Dict[str, Any]) -> float:
+def _score_profile_education_match(
+    entry: Dict[str, Any], profile_entry: Dict[str, Any]
+) -> float:
     score = 0.0
 
     school_norm = _normalize_for_match(entry.get("school"))
@@ -1275,7 +1372,9 @@ def _education_identity(entry: Dict[str, Any]) -> str:
     return _normalize_for_match(entry.get("field_of_study"))
 
 
-def _reconcile_education_section(cv_json: Dict[str, Any], profile_json: Dict[str, Any]) -> None:
+def _reconcile_education_section(
+    cv_json: Dict[str, Any], profile_json: Dict[str, Any]
+) -> None:
     if not isinstance(cv_json, dict):
         return
     current_entries = cv_json.get("education")
@@ -1322,16 +1421,35 @@ def _reconcile_education_section(cv_json: Dict[str, Any], profile_json: Dict[str
         if best_idx >= 0 and best_score >= 0.45:
             used_profile_indices.add(best_idx)
             matched = profile_education[best_idx]
-            for field in ("school", "degree", "field_of_study", "start_date", "end_date", "location"):
+            for field in (
+                "school",
+                "degree",
+                "field_of_study",
+                "start_date",
+                "end_date",
+                "location",
+            ):
                 if not entry.get(field) and matched.get(field):
                     entry[field] = matched[field]
-            merged_details = _dedup_preserve((entry.get("details") or []) + (matched.get("details") or []))
+            merged_details = _dedup_preserve(
+                (entry.get("details") or []) + (matched.get("details") or [])
+            )
             entry["details"] = merged_details[:4]
 
-        if any(
-            entry.get(field)
-            for field in ("school", "degree", "field_of_study", "start_date", "end_date", "location")
-        ) or entry["details"]:
+        if (
+            any(
+                entry.get(field)
+                for field in (
+                    "school",
+                    "degree",
+                    "field_of_study",
+                    "start_date",
+                    "end_date",
+                    "location",
+                )
+            )
+            or entry["details"]
+        ):
             reconciled.append(entry)
 
     for idx, profile_entry in enumerate(profile_education):
@@ -1346,10 +1464,20 @@ def _reconcile_education_section(cv_json: Dict[str, Any], profile_json: Dict[str
             "location": profile_entry.get("location") or "",
             "details": profile_entry.get("details") or [],
         }
-        if any(
-            addition.get(field)
-            for field in ("school", "degree", "field_of_study", "start_date", "end_date", "location")
-        ) or addition["details"]:
+        if (
+            any(
+                addition.get(field)
+                for field in (
+                    "school",
+                    "degree",
+                    "field_of_study",
+                    "start_date",
+                    "end_date",
+                    "location",
+                )
+            )
+            or addition["details"]
+        ):
             reconciled.append(addition)
             appended_count += 1
 
@@ -1365,7 +1493,10 @@ def _reconcile_education_section(cv_json: Dict[str, Any], profile_json: Dict[str
 
     cv_json["education"] = deduped
     if appended_count:
-        logger.warning("Education reconciliation appended %s missing profile entries.", appended_count)
+        logger.warning(
+            "Education reconciliation appended %s missing profile entries.",
+            appended_count,
+        )
 
 
 def _extract_profile_languages(profile_json: Dict[str, Any]) -> List[Dict[str, str]]:
@@ -1397,7 +1528,9 @@ def _extract_profile_languages(profile_json: Dict[str, Any]) -> List[Dict[str, s
     return rows
 
 
-def _reconcile_languages_section(cv_json: Dict[str, Any], profile_json: Dict[str, Any]) -> None:
+def _reconcile_languages_section(
+    cv_json: Dict[str, Any], profile_json: Dict[str, Any]
+) -> None:
     if not isinstance(cv_json, dict):
         return
     current_entries = cv_json.get("languages")
@@ -1425,7 +1558,9 @@ def _reconcile_languages_section(cv_json: Dict[str, Any], profile_json: Dict[str
         if not existing.get("certification") and entry.get("certification"):
             existing["certification"] = entry["certification"]
         if len(entry.get("language") or "") > len(existing.get("language") or ""):
-            existing["language"] = entry.get("language") or existing.get("language") or ""
+            existing["language"] = (
+                entry.get("language") or existing.get("language") or ""
+            )
 
     reconciled: List[Dict[str, str]] = []
     seen: set = set()
@@ -1434,14 +1569,18 @@ def _reconcile_languages_section(cv_json: Dict[str, Any], profile_json: Dict[str
     for raw_entry in current_entries:
         if not isinstance(raw_entry, dict):
             continue
-        language = clean_text_field(raw_entry.get("language") or raw_entry.get("name") or "")
+        language = clean_text_field(
+            raw_entry.get("language") or raw_entry.get("name") or ""
+        )
         if not language:
             continue
         key = _normalize_for_match(language)
         if not key or key in seen:
             continue
 
-        level = clean_text_field(raw_entry.get("level") or raw_entry.get("proficiency") or "")
+        level = clean_text_field(
+            raw_entry.get("level") or raw_entry.get("proficiency") or ""
+        )
         certification = clean_text_field(
             raw_entry.get("certification")
             or raw_entry.get("certificate")
@@ -1481,10 +1620,15 @@ def _reconcile_languages_section(cv_json: Dict[str, Any], profile_json: Dict[str
 
     cv_json["languages"] = reconciled[:4]
     if appended_count:
-        logger.warning("Language reconciliation appended %s missing profile entries.", appended_count)
+        logger.warning(
+            "Language reconciliation appended %s missing profile entries.",
+            appended_count,
+        )
 
 
-def reconcile_cv_sections_with_profile(cv_json: Dict[str, Any], profile_json: Dict[str, Any]) -> None:
+def reconcile_cv_sections_with_profile(
+    cv_json: Dict[str, Any], profile_json: Dict[str, Any]
+) -> None:
     if not isinstance(cv_json, dict) or not isinstance(profile_json, dict):
         return
     _reconcile_experience_section(cv_json, profile_json)
@@ -1620,7 +1764,9 @@ def rebalance_cv_narrative(
 
     seeded_count = _seed_experience_from_profile(cv_json, profile_json)
     if seeded_count:
-        logger.info("Experience section rebuilt from profile data: entries=%s", seeded_count)
+        logger.info(
+            "Experience section rebuilt from profile data: entries=%s", seeded_count
+        )
 
     experience_entries = cv_json.get("experience")
     if not isinstance(experience_entries, list):
@@ -1638,7 +1784,11 @@ def rebalance_cv_narrative(
         if entry_summary and (len(entry_summary) > 300 or len(entry_sentences) > 3):
             kept = entry_sentences[:2]
             entry_overflow = entry_sentences[2:]
-            entry_summary = _trim_text(" ".join(kept), 280) if kept else _trim_text(entry_summary, 280)
+            entry_summary = (
+                _trim_text(" ".join(kept), 280)
+                if kept
+                else _trim_text(entry_summary, 280)
+            )
         else:
             entry_summary = _trim_text(entry_summary, 280)
 
@@ -1653,7 +1803,11 @@ def rebalance_cv_narrative(
         highlights = _dedup_preserve(highlights)
 
         matched_profile = _best_profile_match(entry, profile_experiences)
-        profile_description = matched_profile.get("description") if isinstance(matched_profile, dict) else ""
+        profile_description = (
+            matched_profile.get("description")
+            if isinstance(matched_profile, dict)
+            else ""
+        )
 
         if not entry_summary and profile_description:
             entry_summary = _select_action_summary(
@@ -1666,7 +1820,9 @@ def rebalance_cv_narrative(
         highlight_candidates: List[str] = []
         highlight_candidates.extend(entry_overflow)
         if profile_description:
-            highlight_candidates.extend(extract_experience_highlights(profile_description))
+            highlight_candidates.extend(
+                extract_experience_highlights(profile_description)
+            )
         if not highlight_candidates and entry_sentences:
             highlight_candidates.extend(entry_sentences[1:])
 
@@ -1694,7 +1850,9 @@ def rebalance_cv_narrative(
             highlights = _dedup_preserve(highlights)
 
         original_highlights = entry.get("highlights")
-        original_count = len(original_highlights) if isinstance(original_highlights, list) else 0
+        original_count = (
+            len(original_highlights) if isinstance(original_highlights, list) else 0
+        )
         if highlights:
             synthesized_highlights += max(0, len(highlights) - original_count)
 
@@ -1710,7 +1868,9 @@ def rebalance_cv_narrative(
                     entry[field] = matched_profile.get(field)
 
     if summary_overflow and experience_entries:
-        first = experience_entries[0] if isinstance(experience_entries[0], dict) else None
+        first = (
+            experience_entries[0] if isinstance(experience_entries[0], dict) else None
+        )
         if isinstance(first, dict):
             first_highlights = first.get("highlights")
             if not isinstance(first_highlights, list):
@@ -1719,7 +1879,9 @@ def rebalance_cv_narrative(
                 text = clean_narrative_text(sentence)
                 if not text:
                     continue
-                if first.get("summary") and _is_same_narrative(first.get("summary"), text):
+                if first.get("summary") and _is_same_narrative(
+                    first.get("summary"), text
+                ):
                     continue
                 first_highlights.append(text)
             first["highlights"] = _dedup_preserve(first_highlights)[:4]
@@ -1749,8 +1911,12 @@ def coerce_generated_cv_payload(
     profile_phone: str = "",
     profile_linkedin: str = "",
     language_code: str = "fr",
-    keyword_alignment_fn: Optional[Callable[[Dict[str, Any], Optional[Dict[str, Any]]], None]] = None,
-    offer_adaptation_fn: Optional[Callable[[Dict[str, Any], Optional[Dict[str, Any]]], None]] = None,
+    keyword_alignment_fn: Optional[
+        Callable[[Dict[str, Any], Optional[Dict[str, Any]]], None]
+    ] = None,
+    offer_adaptation_fn: Optional[
+        Callable[[Dict[str, Any], Optional[Dict[str, Any]]], None]
+    ] = None,
 ) -> Dict[str, Any]:
     """Merge partial/invalid generated payload onto a valid skeleton.
 
@@ -1797,7 +1963,11 @@ def coerce_generated_cv_payload(
 
     # Merge contact
     incoming_contact = payload.get("contact")
-    contact = dict(merged.get("contact") or {}) if isinstance(merged.get("contact"), dict) else {}
+    contact = (
+        dict(merged.get("contact") or {})
+        if isinstance(merged.get("contact"), dict)
+        else {}
+    )
     if isinstance(incoming_contact, dict):
         for field in ("full_name", "email", "phone", "linkedin_url", "location"):
             value = incoming_contact.get(field)
@@ -2021,7 +2191,9 @@ def enforce_cv_offer_adaptation(
         return cv_json
 
     initial_experience_count = (
-        len(cv_json.get("experience")) if isinstance(cv_json.get("experience"), list) else None
+        len(cv_json.get("experience"))
+        if isinstance(cv_json.get("experience"), list)
+        else None
     )
     initial_certification_count = (
         len(cv_json.get("certifications"))
@@ -2050,7 +2222,9 @@ def enforce_cv_offer_adaptation(
     missing_certification_terms = list(missing_certification_terms or [])
     missing_language_terms = list(missing_language_terms or [])
 
-    def _prepare_terms(raw_terms: List[Any], *, limit: Optional[int] = None) -> List[str]:
+    def _prepare_terms(
+        raw_terms: List[Any], *, limit: Optional[int] = None
+    ) -> List[str]:
         terms = _dedup_preserve(
             [str(term or "").strip() for term in raw_terms if str(term or "").strip()]
         )
@@ -2180,7 +2354,9 @@ def enforce_cv_offer_adaptation(
                         parts.append(item)
             return " ".join(parts)
 
-        def choose_target_entry(term_norm: str) -> Tuple[Dict[str, Any], Optional[Dict[str, str]]]:
+        def choose_target_entry(
+            term_norm: str,
+        ) -> Tuple[Dict[str, Any], Optional[Dict[str, str]]]:
             best_idx = 0
             best_score = -1.0
             best_profile: Optional[Dict[str, str]] = None
@@ -2201,7 +2377,9 @@ def enforce_cv_offer_adaptation(
                     profile_desc_norm = normalize_keyword_for_match(
                         matched_profile.get("description") or ""
                     )
-                    if term_norm and normalized_term_present(profile_desc_norm, term_norm):
+                    if term_norm and normalized_term_present(
+                        profile_desc_norm, term_norm
+                    ):
                         score += 2.5
                 if score > best_score:
                     best_score = score
@@ -2237,13 +2415,17 @@ def enforce_cv_offer_adaptation(
                 text = clean_narrative_text(candidate)
                 if not text:
                     continue
-                if _looks_like_company_description(text, str(entry.get("company") or "")):
+                if _looks_like_company_description(
+                    text, str(entry.get("company") or "")
+                ):
                     continue
                 base = text.rstrip(" .")
                 break
 
             if base:
-                if normalized_term_present(normalize_keyword_for_match(base), keyword_norm):
+                if normalized_term_present(
+                    normalize_keyword_for_match(base), keyword_norm
+                ):
                     bullet = f"{base}."
                 else:
                     tail = (
@@ -2255,16 +2437,14 @@ def enforce_cv_offer_adaptation(
             else:
                 role_hint = clean_text_field(entry.get("title") or "")
                 if is_en:
-                    bullet = (
-                        f"Applied {keyword_text} in delivery tasks aligned with {role_hint or 'project requirements'}."
-                    )
+                    bullet = f"Applied {keyword_text} in delivery tasks aligned with {role_hint or 'project requirements'}."
                 else:
-                    bullet = (
-                        f"Mise en oeuvre de {keyword_text} dans des activites de livraison alignees sur {role_hint or 'les exigences projet'}."
-                    )
+                    bullet = f"Mise en oeuvre de {keyword_text} dans des activites de livraison alignees sur {role_hint or 'les exigences projet'}."
 
             bullet = clean_narrative_text(_trim_text(bullet, 240))
-            if not normalized_term_present(normalize_keyword_for_match(bullet), keyword_norm):
+            if not normalized_term_present(
+                normalize_keyword_for_match(bullet), keyword_norm
+            ):
                 bullet = clean_narrative_text(
                     _trim_text(
                         f"{bullet.rstrip('.')} ({keyword_text}).",
@@ -2322,6 +2502,7 @@ def enforce_cv_offer_adaptation(
     if isinstance(skills_section, list) and missing_skills_terms:
         skills_entries = [item for item in skills_section if isinstance(item, dict)]
         if skills_entries:
+
             def skills_probe() -> str:
                 parts: List[str] = []
                 for block in skills_entries:
@@ -2371,7 +2552,14 @@ def enforce_cv_offer_adaptation(
                 if not isinstance(items, list):
                     items = []
                 target["items"] = _dedup_preserve(
-                    [clean_term, *[item for item in items if isinstance(item, str) and item.strip()]]
+                    [
+                        clean_term,
+                        *[
+                            item
+                            for item in items
+                            if isinstance(item, str) and item.strip()
+                        ],
+                    ]
                 )[:10]
                 current_probe = skills_probe()
                 added_skills += 1
@@ -2397,6 +2585,7 @@ def enforce_cv_offer_adaptation(
     if isinstance(projects_section, list) and missing_projects_terms:
         project_entries = [item for item in projects_section if isinstance(item, dict)]
         if project_entries:
+
             def project_probe() -> str:
                 parts: List[str] = []
                 for entry in project_entries:
@@ -2459,7 +2648,11 @@ def enforce_cv_offer_adaptation(
                     )
                     target["description"] = clean_narrative_text(
                         _trim_text(
-                            f"{description} {sentence}".strip() if description else sentence,
+                            (
+                                f"{description} {sentence}".strip()
+                                if description
+                                else sentence
+                            ),
                             320,
                         )
                     )
@@ -2475,68 +2668,9 @@ def enforce_cv_offer_adaptation(
                     added_projects,
                 )
 
-    # Add missing terms to education details when present.
-    education_section = cv_json.get("education")
-    if isinstance(education_section, list) and missing_education_terms:
-        education_entries = [item for item in education_section if isinstance(item, dict)]
-        if education_entries:
-            def education_probe() -> str:
-                parts: List[str] = []
-                for entry in education_entries:
-                    for key in ("school", "degree", "field_of_study"):
-                        value = entry.get(key)
-                        if isinstance(value, str) and value.strip():
-                            parts.append(value)
-                    details = entry.get("details")
-                    if isinstance(details, list):
-                        for value in details:
-                            if isinstance(value, str) and value.strip():
-                                parts.append(value)
-                return normalize_keyword_for_match(" ".join(parts))
-
-            current_probe = education_probe()
-            added_education = 0
-            education_terms = _prepare_terms(missing_education_terms)
-
-            for term in education_terms:
-                term_norm = normalize_keyword_for_match(term)
-                if not term_norm:
-                    continue
-                if normalized_term_present(current_probe, term_norm):
-                    continue
-
-                target = education_entries[0]
-                best_score = -1.0
-                for entry in education_entries:
-                    score = 0.0
-                    if entry.get("field_of_study"):
-                        score += 2.0
-                    details = entry.get("details")
-                    if isinstance(details, list):
-                        score += min(2.0, 0.5 * len(details))
-                    if score > best_score:
-                        best_score = score
-                        target = entry
-
-                details = target.get("details")
-                if not isinstance(details, list):
-                    details = []
-                bullet = (
-                    f"Advanced coursework aligned with {term}."
-                    if is_en
-                    else f"Approfondissement aligne sur {term}."
-                )
-                target["details"] = _dedup_preserve(
-                    [bullet, *[item for item in details if isinstance(item, str) and item.strip()]]
-                )[:6]
-                added_education += 1
-                current_probe = education_probe()
-
-            if added_education:
-                logger.info(
-                    "Offer adaptation reinforced education section: added=%s",
-                    added_education,
-                )
+    # Education remains generation-led. Deterministic keyword injection is
+    # intentionally disabled here to avoid synthetic bullets such as
+    # "Approfondissement aligne sur ...".
 
     # Certifications adaptation: keep factual fields unchanged and store extra
     # offer emphasis as render hints.
@@ -2546,6 +2680,7 @@ def enforce_cv_offer_adaptation(
             item for item in certifications_section if isinstance(item, dict)
         ]
         if certification_entries:
+
             def cert_probe() -> str:
                 parts: List[str] = []
                 for entry in certification_entries:
@@ -2585,8 +2720,11 @@ def enforce_cv_offer_adaptation(
     # Reorder languages by offer relevance when language section is present.
     languages_section = cv_json.get("languages")
     if isinstance(languages_section, list) and languages_section:
-        language_entries = [item for item in languages_section if isinstance(item, dict)]
+        language_entries = [
+            item for item in languages_section if isinstance(item, dict)
+        ]
         if language_entries:
+
             def normalize_language_token(value: Any) -> str:
                 raw = str(value or "").strip().casefold()
                 if not raw:
@@ -2658,9 +2796,15 @@ def enforce_cv_offer_adaptation(
                         )
 
     # Guardrail: keep experience/certification entry cardinality stable.
-    if initial_experience_count is not None and isinstance(cv_json.get("experience"), list):
+    if initial_experience_count is not None and isinstance(
+        cv_json.get("experience"), list
+    ):
         cv_json["experience"] = cv_json["experience"][:initial_experience_count]
-    if initial_certification_count is not None and isinstance(cv_json.get("certifications"), list):
-        cv_json["certifications"] = cv_json["certifications"][:initial_certification_count]
+    if initial_certification_count is not None and isinstance(
+        cv_json.get("certifications"), list
+    ):
+        cv_json["certifications"] = cv_json["certifications"][
+            :initial_certification_count
+        ]
 
     return cv_json

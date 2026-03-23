@@ -53,3 +53,12 @@ When adding a new model to the selectable list, treat it as a cross-layer change
 
 ## History Preview Photo Consistency Rule (Mandatory)
 For CVs opened from history, keep profile photo rendering consistent across preview and PDF export paths. If `photo_base64` is available, do not blindly prioritize legacy `raw_html` that lacks an embedded profile photo; prefer a template-rendered HTML path (or equivalent safe regeneration) so the preview and exported PDF both display the same profile image. Any change touching history data mapping, preview HTML selection, or export entrypoints must include a targeted regression check on the exact flow: History -> open CV -> Exporter en PDF preview.
+
+## Offer Term Routing Precision Rule (Mandatory)
+When adjusting offer-term routing logic (`app/utils/cv_offer_term_routing.py`) or skill recovery (`app/utils/cv_skill_recovery.py`), avoid over-routing concise skill compounds to `experience` only because they start with an action-like token. Keep noun compounds such as `test automation` in `skills` unless strong experience-object evidence is present. Handle ambiguous tokens with context-sensitive rules: uppercase `IT` must remain a technical term (skills context) and must not be auto-classified as a language alias for Italian. Any routing change must include targeted regression checks for at least: `test automation`, `IT`, `it`, and one explicit experience phrase (for example `manage team`).
+
+## Education Adaptation Non-Injection Rule (Mandatory)
+In CV offer adaptation (`app/utils/cv_postprocessing.py`), keep education enrichment generation-led and do not reintroduce deterministic synthetic bullets in `education.details` from `missing_education_terms`. Missing education terms may guide model generation, but postprocessing must not force appended sentences such as generic "aligned with ..." phrases. If adaptation behavior changes, update and keep regression tests aligned with this invariant.
+
+## Rules-Only Minimal Edit Rule (Mandatory)
+When the user asks to add rules only, or to modify existing rules without rewriting the file, apply strict minimal edits: append only the requested rule(s) or update only the explicitly requested rule block(s). Do not overwrite, reorder, delete, or rephrase unrelated sections of `AGENTS.md`.
