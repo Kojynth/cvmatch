@@ -44,3 +44,21 @@ Use `PYTORCH_ALLOC_CONF`, not `PYTORCH_CUDA_ALLOC_CONF`, in startup scripts and 
 
 ## Validation Rule (Mandatory)
 Before merging cross-layer data-contract changes, run at minimum syntax validation on touched Python files and one targeted functional pass for profile save, JSON export or import, CV generation, and export rendering. If full `pytest` is not feasible locally, document the exact skipped scope in the PR.
+
+## Post-Fix Coherence Rule (Mandatory)
+After fixing a bug, perform an explicit coherence pass across all coupled layers touched by the fix (registry entries, selectors, routing and fallback logic, memory or size heuristics, strict JSON parsing paths, and stage orchestration). Do not stop at the local patch: verify that identifiers, thresholds, and assumptions stay aligned end-to-end, then run at least one targeted functional check reproducing the original failure path and confirming it does not reappear.
+
+## Model Addition Coherence Rule (Mandatory)
+When adding a new model to the selectable list, treat it as a cross-layer change and update all impacted contracts in one pass: registry profile (`config/model_registry.yaml`) with consistent `model_id`, `loader`, `quantization`, `min_vram_gb`, `min_ram_gb`, `quality_stars`, and dropdown tag policy; hardware tier defaults and fallbacks; writer-quality routing preferences; runtime estimation maps (size, RAM, and time) used by model manager and memory planning; and stage/fallback assumptions that depend on model-size pattern matching. Before enabling the model in UI selection, verify backend compatibility with the current loading path (for example `AutoModelForCausalLM` plus tokenizer path); if architecture is not compatible, do not expose it as selectable until a dedicated loader path is implemented. Validate with at least one targeted end-to-end check proving the model appears in selectors and resolves coherently through routing and validation logic.
+
+## History Preview Photo Consistency Rule (Mandatory)
+For CVs opened from history, keep profile photo rendering consistent across preview and PDF export paths. If `photo_base64` is available, do not blindly prioritize legacy `raw_html` that lacks an embedded profile photo; prefer a template-rendered HTML path (or equivalent safe regeneration) so the preview and exported PDF both display the same profile image. Any change touching history data mapping, preview HTML selection, or export entrypoints must include a targeted regression check on the exact flow: History -> open CV -> Exporter en PDF preview.
+
+## Offer Term Routing Precision Rule (Mandatory)
+When adjusting offer-term routing logic (`app/utils/cv_offer_term_routing.py`) or skill recovery (`app/utils/cv_skill_recovery.py`), avoid over-routing concise skill compounds to `experience` only because they start with an action-like token. Keep noun compounds such as `test automation` in `skills` unless strong experience-object evidence is present. Handle ambiguous tokens with context-sensitive rules: uppercase `IT` must remain a technical term (skills context) and must not be auto-classified as a language alias for Italian. Any routing change must include targeted regression checks for at least: `test automation`, `IT`, `it`, and one explicit experience phrase (for example `manage team`).
+
+## Education Adaptation Non-Injection Rule (Mandatory)
+In CV offer adaptation (`app/utils/cv_postprocessing.py`), keep education enrichment generation-led and do not reintroduce deterministic synthetic bullets in `education.details` from `missing_education_terms`. Missing education terms may guide model generation, but postprocessing must not force appended sentences such as generic "aligned with ..." phrases. If adaptation behavior changes, update and keep regression tests aligned with this invariant.
+
+## Rules-Only Minimal Edit Rule (Mandatory)
+When the user asks to add rules only, or to modify existing rules without rewriting the file, apply strict minimal edits: append only the requested rule(s) or update only the explicitly requested rule block(s). Do not overwrite, reorder, delete, or rephrase unrelated sections of `AGENTS.md`.

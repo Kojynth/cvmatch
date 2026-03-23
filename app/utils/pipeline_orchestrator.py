@@ -715,6 +715,17 @@ class FinalCVPhase:
                         bool(candidate_audit.get("sufficient")),
                     )
 
+                    if (
+                        candidate_final == state.cv_json_final
+                        and candidate_audit == state.alignment_audit
+                    ):
+                        logger.warning(
+                            "Alignment retry converged to identical candidate at attempt %s/%s; stopping early.",
+                            retry_count,
+                            retry_budget,
+                        )
+                        break
+
                     current_score = float(state.alignment_audit.get("overall_score") or 0.0)
                     candidate_score = float(candidate_audit.get("overall_score") or 0.0)
                     if bool(candidate_audit.get("sufficient")) or candidate_score >= current_score:

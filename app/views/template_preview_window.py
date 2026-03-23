@@ -9,6 +9,7 @@ Fenêtre de prévisualisation des templates de CV avec sélection et export PDF.
 import os
 import sys
 import html as html_lib
+import re
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, Optional
@@ -2021,6 +2022,49 @@ class TemplatePreviewWindow(QMainWindow):
 
         return normalized or skills
 
+    @staticmethod
+    def _raw_html_has_embedded_profile_photo(raw_html: Any) -> bool:
+        """Detect an embedded base64 profile photo in legacy/raw HTML."""
+        text = str(raw_html or "")
+        if not text:
+            return False
+
+        img_with_profile_class = re.search(
+            r"<img[^>]*class\s*=\s*['\"][^'\"]*profile-photo[^'\"]*['\"][^>]*>",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not img_with_profile_class:
+            return False
+
+        tag = img_with_profile_class.group(0)
+        src_match = re.search(
+            r"src\s*=\s*['\"]([^'\"]+)['\"]",
+            tag,
+            flags=re.IGNORECASE,
+        )
+        if not src_match:
+            return False
+
+        src = str(src_match.group(1) or "").strip().lower()
+        return src.startswith("data:image/")
+
+    def _should_bypass_raw_html_for_photo(self, raw_html: Any) -> bool:
+        """Decide whether preview should regenerate HTML to restore missing photo."""
+        photo_b64 = str(self.cv_data.get("photo_base64") or "").strip()
+        if not photo_b64:
+            return False
+        if self._raw_html_has_embedded_profile_photo(raw_html):
+            return False
+
+        # We can only regenerate a reliable template preview when we have
+        # enough structured content (or can recover it from raw markdown).
+        if self._has_structured_content():
+            return True
+        if self._try_parse_raw_content() and self._has_structured_content():
+            return True
+        return False
+
     def _try_parse_raw_content(self) -> bool:
         raw_content = self.cv_data.get("raw_content")
         if not raw_content or not isinstance(raw_content, str):
@@ -2091,8 +2135,13 @@ class TemplatePreviewWindow(QMainWindow):
         try:
             raw_html = self.cv_data.get("raw_html")
             if raw_html:
-                logger.info(f"CV preview: raw_html used (len={len(raw_html)})")
-                return raw_html
+                if self._should_bypass_raw_html_for_photo(raw_html):
+                    logger.info(
+                        "CV preview: raw_html bypassed to restore profile photo from structured data."
+                    )
+                else:
+                    logger.info(f"CV preview: raw_html used (len={len(raw_html)})")
+                    return raw_html
 
             raw_content = self.cv_data.get("raw_content")
             self._try_parse_raw_content()
