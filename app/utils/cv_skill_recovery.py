@@ -7,6 +7,12 @@ import unicodedata
 from typing import Any, Dict, Iterable, List
 
 from .cv_offer_term_routing import route_term_to_section
+from .cv_skill_evidence import (
+    classify_skill_bucket,
+    collect_supported_skill_terms,
+    looks_like_noise_skill_term,
+    skills_section_has_supported_signal,
+)
 from .cv_skill_ranking import rank_skill_blocks_by_relevance
 from .keyword_alignment import normalize_keyword_for_match
 
@@ -86,6 +92,8 @@ def _clean_skill_candidate(value: Any) -> str:
     norm = normalize_keyword_for_match(cleaned)
     if not norm or norm in _GENERIC_SKILL_LABELS:
         return ""
+    if looks_like_noise_skill_term(cleaned):
+        return ""
 
     role_norm = _normalize_role_text(cleaned)
     tokens = [tok for tok in role_norm.split() if tok]
@@ -99,7 +107,10 @@ def _clean_skill_candidate(value: Any) -> str:
     return cleaned
 
 
-def skills_section_low_signal(skills_section: Any) -> bool:
+def skills_section_low_signal(
+    skills_section: Any,
+    profile_json: Dict[str, Any] | None = None,
+) -> bool:
     if not isinstance(skills_section, list) or not skills_section:
         return True
     valid_items = 0
@@ -112,7 +123,17 @@ def skills_section_low_signal(skills_section: Any) -> bool:
         for item in items:
             if _clean_skill_candidate(str(item or "")):
                 valid_items += 1
-    return valid_items < 2
+    if valid_items < 2:
+        return True
+    if isinstance(profile_json, dict) and profile_json:
+        supported, unsupported = skills_section_has_supported_signal(
+            skills_section, profile_json
+        )
+        if supported < 2:
+            return True
+        if unsupported >= max(2, supported):
+            return True
+    return False
 
 
 def _extend_candidates(output: List[str], value: Any) -> None:
@@ -168,10 +189,9 @@ def build_skill_blocks_from_profile(
         else:
             _extend_candidates(soft_candidates, entry)
 
-    for raw in extra_terms or []:
-        cleaned = _clean_skill_candidate(str(raw or ""))
-        if cleaned:
-            technical_candidates.append(cleaned)
+    supported_extra_terms = collect_supported_skill_terms(extra_terms, profile)
+    technical_candidates.extend(supported_extra_terms.get("technical") or [])
+    soft_candidates.extend(supported_extra_terms.get("soft") or [])
 
     technical_items = _dedup_preserve(technical_candidates)[
         : max(1, int(max_items_per_block))
@@ -202,6 +222,16 @@ def build_skill_blocks_from_profile(
 
     if not blocks:
         return []
+
+    if supported_extra_terms.get("soft"):
+        blocks.sort(
+            key=lambda block: (
+                0
+                if classify_skill_bucket(" ".join(block.get("items") or []))
+                == "technical"
+                else 1
+            )
+        )
 
     ranked = rank_skill_blocks_by_relevance(blocks, list(offer_terms or []))
     return ranked if ranked else blocks
