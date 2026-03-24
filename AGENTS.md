@@ -62,3 +62,6 @@ In CV offer adaptation (`app/utils/cv_postprocessing.py`), keep education enrich
 
 ## Rules-Only Minimal Edit Rule (Mandatory)
 When the user asks to add rules only, or to modify existing rules without rewriting the file, apply strict minimal edits: append only the requested rule(s) or update only the explicitly requested rule block(s). Do not overwrite, reorder, delete, or rephrase unrelated sections of `AGENTS.md`.
+
+## Canonical Profile Keys Rule (Mandatory)
+When reading profile JSON for generation, postprocessing, or evidence checks, use canonical schema keys first (for example `experiences`, `education`, `skills`, `projects`) and only then optional legacy aliases as explicit fallback. Never rely on a legacy alias as the primary key. For cross-layer changes, verify key coherence between schema mapping (`app/utils/profile_json.py`) and all consumers (`app/workers/llm_worker.py`, `app/utils/cv_postprocessing.py`, `app/utils/cv_skill_recovery.py`, and related helpers) in the same change.

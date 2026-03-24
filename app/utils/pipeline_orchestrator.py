@@ -1004,7 +1004,14 @@ class CoverLetterPhase:
             return
         except Exception as exc:
             logger.warning("Cover letter language check failed: %s", exc)
-            if not allow_rewrite or not self._critique_and_rewrite:
+            if not allow_rewrite:
+                # Non-fatal fallback for final validation: keep generated text.
+                logger.warning(
+                    "Cover letter language check degraded to fallback (context=%s).",
+                    context,
+                )
+                return
+            if not self._critique_and_rewrite:
                 raise RuntimeError(str(exc)) from exc
 
         state.emit_progress("[LETTER] Language mismatch detected, rewriting...")
