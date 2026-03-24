@@ -1,5 +1,5 @@
 """
-Cover Letter Pipeline Utilities 
+Cover Letter Pipeline Utilities
 
 Centralized cover letter generation, validation, and scoring logic.
 This module extracts cover letter-related processing from CVGenerationWorker
@@ -28,14 +28,17 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 try:
     from ..logging.safe_logger import get_safe_logger
     from ..config import DEFAULT_PII_CONFIG
+
     logger = get_safe_logger(__name__, cfg=DEFAULT_PII_CONFIG)
 except ImportError:
     import logging
+
     logger = logging.getLogger(__name__)
 
 # Import from existing utility modules
 from .cover_letter_rules import is_cover_letter_structure_coherent
 from .language_policy import (
+    detect_language_from_text_default,
     is_mixed_or_mismatched_language,
     normalize_language_code as normalize_language,
 )
@@ -55,9 +58,11 @@ from .generation_audit import build_generation_audit
 # Data Classes
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class CoverLetterValidationResult:
     """Result of cover letter validation."""
+
     is_valid: bool
     language_ok: bool
     structure_ok: bool
@@ -68,6 +73,7 @@ class CoverLetterValidationResult:
 @dataclass
 class CoverLetterReviewPayload:
     """Sanitized cover letter review payload."""
+
     should_improve: bool
     structure_ok: bool
     relevance_score: int
@@ -80,6 +86,7 @@ class CoverLetterReviewPayload:
 # ---------------------------------------------------------------------------
 # Text Helpers
 # ---------------------------------------------------------------------------
+
 
 def _trim_text(text: Optional[str], max_chars: int) -> str:
     """Trim text to max_chars, appending '...' if truncated."""
@@ -94,6 +101,7 @@ def _trim_text(text: Optional[str], max_chars: int) -> str:
 # ---------------------------------------------------------------------------
 # Language Validation
 # ---------------------------------------------------------------------------
+
 
 def ensure_cover_letter_language_consistency(
     text: str,
@@ -123,7 +131,7 @@ def ensure_cover_letter_language_consistency(
 
     # Use provided functions or fall back to defaults
     norm_fn = normalize_language_fn or normalize_language
-    detect_fn = detect_language_fn or (lambda t: "fr")  # Default to French
+    detect_fn = detect_language_fn or detect_language_from_text_default
 
     normalized_target = norm_fn(target_language)
 
@@ -166,6 +174,7 @@ def check_cover_letter_structure(
 # Relevance Scoring
 # ---------------------------------------------------------------------------
 
+
 def estimate_cover_letter_relevance_score(
     text: str,
     offer_data: Optional[Dict[str, Any]],
@@ -201,11 +210,7 @@ def estimate_cover_letter_relevance_score(
         return 0
 
     # Extract offer terms
-    analysis = (
-        offer_data.get("analysis", {})
-        if isinstance(offer_data, dict)
-        else {}
-    )
+    analysis = offer_data.get("analysis", {}) if isinstance(offer_data, dict) else {}
     offer_terms = collect_offer_keywords_from_source(
         analysis if isinstance(analysis, dict) else None,
         keys=DEFAULT_ANALYSIS_KEY_FIELDS,
@@ -249,6 +254,7 @@ def estimate_cover_letter_relevance_score(
 # ---------------------------------------------------------------------------
 # Review Sanitization
 # ---------------------------------------------------------------------------
+
 
 def sanitize_cover_letter_review(
     payload: Any,
@@ -329,6 +335,7 @@ def sanitize_cover_letter_review(
 # Generation Audit Building
 # ---------------------------------------------------------------------------
 
+
 def build_generation_audit_for_letter(
     *,
     letter_score: int,
@@ -394,6 +401,7 @@ def build_generation_audit_for_letter(
 # Prompt Building
 # ---------------------------------------------------------------------------
 
+
 def build_cover_letter_critic_messages(
     *,
     cover_letter: str,
@@ -431,9 +439,7 @@ def build_cover_letter_critic_messages(
         else "N/A"
     )
 
-    candidate_terms_text = ", ".join(
-        str(term) for term in (candidate_terms or [])[:30]
-    )
+    candidate_terms_text = ", ".join(str(term) for term in (candidate_terms or [])[:30])
 
     system_prompt = (
         "You are a strict cover letter reviewer for ATS relevance and structure quality. "
@@ -559,6 +565,7 @@ TASK:
 # Validation Orchestration
 # ---------------------------------------------------------------------------
 
+
 def validate_cover_letter(
     text: str,
     offer_data: Optional[Dict[str, Any]],
@@ -595,7 +602,7 @@ def validate_cover_letter(
         )
 
     norm_fn = normalize_language_fn or normalize_language
-    detect_fn = detect_language_fn or (lambda t: "fr")
+    detect_fn = detect_language_fn or detect_language_from_text_default
     normalized_lang = norm_fn(language_code)
 
     # Check language consistency
@@ -609,7 +616,9 @@ def validate_cover_letter(
         issues.append(f"Language mismatch detected (target={normalized_lang}).")
 
     # Check structure
-    structure_ok = is_cover_letter_structure_coherent(letter, language_code=normalized_lang)
+    structure_ok = is_cover_letter_structure_coherent(
+        letter, language_code=normalized_lang
+    )
     if not structure_ok:
         issues.append("Cover letter structure is incoherent.")
 
@@ -665,7 +674,9 @@ def should_rewrite_cover_letter(
     detect_fn = detect_language_fn or (lambda t: "fr")
     normalized_lang = norm_fn(language_code)
 
-    structure_ok = is_cover_letter_structure_coherent(text, language_code=normalized_lang)
+    structure_ok = is_cover_letter_structure_coherent(
+        text, language_code=normalized_lang
+    )
     if not structure_ok:
         return True
 

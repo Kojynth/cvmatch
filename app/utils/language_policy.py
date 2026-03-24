@@ -50,6 +50,11 @@ def detect_language_from_text_default(text: Optional[str]) -> str:
         "responsabilites",
         "developpement",
         "qualite",
+        "objet",
+        "madame",
+        "monsieur",
+        "cordialement",
+        "bonjour",
     }
     en_tokens = {
         "the",
@@ -64,12 +69,18 @@ def detect_language_from_text_default(text: Optional[str]) -> str:
         "company",
         "team",
         "apply",
+        "best",
         "candidate",
         "development",
         "engineering",
         "job",
         "we",
         "you",
+        "dear",
+        "sincerely",
+        "regards",
+        "subject",
+        "hello",
     }
 
     fr_score = sum(1 for token in tokens if token in fr_tokens)
