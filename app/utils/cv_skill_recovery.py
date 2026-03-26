@@ -11,6 +11,7 @@ from .cv_skill_evidence import (
     classify_skill_bucket,
     collect_supported_skill_terms,
     looks_like_noise_skill_term,
+    should_keep_skill_term,
     skills_section_has_supported_signal,
 )
 from .cv_skill_ranking import rank_skill_blocks_by_relevance
@@ -72,7 +73,10 @@ def _normalize_role_text(value: Any) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _clean_skill_candidate(value: Any) -> str:
+def _clean_skill_candidate(
+    value: Any,
+    profile_json: Dict[str, Any] | None = None,
+) -> str:
     if not isinstance(value, str):
         return ""
     cleaned = re.sub(r"\s+", " ", value).strip(" ,;:-")
@@ -101,7 +105,7 @@ def _clean_skill_candidate(value: Any) -> str:
         return ""
     if len(tokens) <= 3 and all(tok in _ROLE_LIKE_SKILL_TOKENS for tok in tokens):
         return ""
-    if route_term_to_section(cleaned) != "skills":
+    if not should_keep_skill_term(cleaned, profile_json):
         return ""
 
     return cleaned
@@ -126,29 +130,33 @@ def skills_section_low_signal(
     if valid_items < 2:
         return True
     if isinstance(profile_json, dict) and profile_json:
-        supported, unsupported = skills_section_has_supported_signal(
+        supported, plausible, hard_unsupported = skills_section_has_supported_signal(
             skills_section, profile_json
         )
-        if supported < 2:
+        if supported + plausible < 2:
             return True
-        if unsupported >= max(2, supported):
+        if hard_unsupported > max(2, supported + plausible):
             return True
     return False
 
 
-def _extend_candidates(output: List[str], value: Any) -> None:
+def _extend_candidates(
+    output: List[str],
+    value: Any,
+    profile_json: Dict[str, Any] | None = None,
+) -> None:
     if isinstance(value, str):
-        cleaned = _clean_skill_candidate(value)
+        cleaned = _clean_skill_candidate(value, profile_json)
         if cleaned:
             output.append(cleaned)
         return
     if isinstance(value, list):
         for item in value:
-            _extend_candidates(output, item)
+            _extend_candidates(output, item, profile_json)
         return
     if isinstance(value, dict):
         for key in ("name", "skill", "label", "technology", "tool"):
-            _extend_candidates(output, value.get(key))
+            _extend_candidates(output, value.get(key), profile_json)
         return
 
 
@@ -166,28 +174,28 @@ def build_skill_blocks_from_profile(
 
     for entry in profile.get("skills") or []:
         if isinstance(entry, dict):
-            _extend_candidates(technical_candidates, entry.get("name"))
-            _extend_candidates(technical_candidates, entry.get("skill"))
-            _extend_candidates(technical_candidates, entry.get("items"))
+            _extend_candidates(technical_candidates, entry.get("name"), profile)
+            _extend_candidates(technical_candidates, entry.get("skill"), profile)
+            _extend_candidates(technical_candidates, entry.get("items"), profile)
         else:
-            _extend_candidates(technical_candidates, entry)
+            _extend_candidates(technical_candidates, entry, profile)
 
     for entry in profile.get("projects") or []:
         if not isinstance(entry, dict):
             continue
-        _extend_candidates(technical_candidates, entry.get("technologies"))
-        _extend_candidates(technical_candidates, entry.get("tech_stack"))
+        _extend_candidates(technical_candidates, entry.get("technologies"), profile)
+        _extend_candidates(technical_candidates, entry.get("tech_stack"), profile)
 
     for entry in profile.get("certifications") or []:
         if isinstance(entry, dict):
-            _extend_candidates(technical_candidates, entry.get("name"))
+            _extend_candidates(technical_candidates, entry.get("name"), profile)
 
     for entry in profile.get("soft_skills") or []:
         if isinstance(entry, dict):
-            _extend_candidates(soft_candidates, entry.get("name"))
-            _extend_candidates(soft_candidates, entry.get("items"))
+            _extend_candidates(soft_candidates, entry.get("name"), profile)
+            _extend_candidates(soft_candidates, entry.get("items"), profile)
         else:
-            _extend_candidates(soft_candidates, entry)
+            _extend_candidates(soft_candidates, entry, profile)
 
     supported_extra_terms = collect_supported_skill_terms(extra_terms, profile)
     technical_candidates.extend(supported_extra_terms.get("technical") or [])

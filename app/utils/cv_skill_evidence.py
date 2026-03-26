@@ -98,6 +98,24 @@ _SOFT_SKILL_HINTS = {
     "teamwork",
 }
 
+_AMBIGUOUS_SINGLE_WORD_SKILL_TERMS = {
+    "analysis",
+    "analyse",
+    "analytics",
+    "automation",
+    "conception",
+    "design",
+    "integration",
+    "ivvq",
+    "qa",
+    "qualification",
+    "quality",
+    "test",
+    "testing",
+    "validation",
+    "verification",
+}
+
 
 def _dedup_preserve(items: Iterable[Any]) -> List[str]:
     output: List[str] = []
@@ -137,6 +155,13 @@ def classify_skill_bucket(term: Any) -> str:
     if any(hint in norm for hint in _SOFT_SKILL_HINTS):
         return "soft"
     return "technical"
+
+
+def _normalized_skill_tokens(term: Any) -> List[str]:
+    norm = normalize_keyword_for_match(term)
+    if not norm:
+        return []
+    return [token for token in norm.split() if token]
 
 
 def _tokenize_for_support(term: Any) -> List[str]:
@@ -247,13 +272,36 @@ def skill_term_supported_by_profile(term: Any, profile_json: Dict[str, Any]) -> 
     return shared >= required
 
 
+def should_keep_skill_term(
+    term: Any,
+    profile_json: Dict[str, Any] | None = None,
+) -> bool:
+    if looks_like_noise_skill_term(term):
+        return False
+    if route_term_to_section(term) == "skills":
+        return True
+
+    tokens = _normalized_skill_tokens(term)
+    if len(tokens) != 1:
+        return False
+
+    token = tokens[0]
+    if token in _AMBIGUOUS_SINGLE_WORD_SKILL_TERMS:
+        return True
+
+    if isinstance(profile_json, dict) and profile_json:
+        return skill_term_supported_by_profile(term, profile_json)
+
+    return False
+
+
 def collect_supported_skill_terms(
     terms: Iterable[Any],
     profile_json: Dict[str, Any],
 ) -> Dict[str, List[str]]:
     buckets: Dict[str, List[str]] = {"technical": [], "soft": []}
     for raw in _dedup_preserve(terms):
-        if route_term_to_section(raw) != "skills":
+        if not should_keep_skill_term(raw, profile_json):
             continue
         if not skill_term_supported_by_profile(raw, profile_json):
             continue
@@ -267,11 +315,12 @@ def collect_supported_skill_terms(
 def skills_section_has_supported_signal(
     skills_section: Any,
     profile_json: Dict[str, Any],
-) -> Tuple[int, int]:
+) -> Tuple[int, int, int]:
     supported = 0
-    unsupported = 0
+    plausible = 0
+    hard_unsupported = 0
     if not isinstance(skills_section, list):
-        return supported, unsupported
+        return supported, plausible, hard_unsupported
     for block in skills_section:
         if not isinstance(block, dict):
             continue
@@ -279,10 +328,10 @@ def skills_section_has_supported_signal(
             text = str(item or "").strip()
             if not text:
                 continue
-            if route_term_to_section(
-                text
-            ) == "skills" and skill_term_supported_by_profile(text, profile_json):
+            if skill_term_supported_by_profile(text, profile_json):
                 supported += 1
+            elif should_keep_skill_term(text, profile_json):
+                plausible += 1
             else:
-                unsupported += 1
-    return supported, unsupported
+                hard_unsupported += 1
+    return supported, plausible, hard_unsupported

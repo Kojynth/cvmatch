@@ -3384,7 +3384,10 @@ class CVGenerationWorker(QThread):
                 route_term_to_section,
                 route_terms_to_sections,
             )
-            from ..utils.cv_skill_evidence import looks_like_noise_skill_term
+            from ..utils.cv_skill_evidence import (
+                looks_like_noise_skill_term,
+                should_keep_skill_term,
+            )
             from ..utils.cv_skill_recovery import (
                 build_skill_blocks_from_profile,
                 skills_section_low_signal,
@@ -3393,6 +3396,7 @@ class CVGenerationWorker(QThread):
             route_term_to_section = None
             route_terms_to_sections = None
             looks_like_noise_skill_term = None
+            should_keep_skill_term = None
             build_skill_blocks_from_profile = None
             skills_section_low_signal = None
         offer_keywords = self._collect_offer_keywords_only(critic_json)
@@ -3526,8 +3530,14 @@ class CVGenerationWorker(QThread):
                         looks_like_noise_skill_term
                     ) and looks_like_noise_skill_term(cleaned_updated):
                         continue
-                    if callable(route_term_to_section) and (
-                        route_term_to_section(cleaned_updated) != "skills"
+                    if callable(should_keep_skill_term) and (
+                        not should_keep_skill_term(cleaned_updated, profile_payload)
+                    ):
+                        continue
+                    if (
+                        not callable(should_keep_skill_term)
+                        and callable(route_term_to_section)
+                        and (route_term_to_section(cleaned_updated) != "skills")
                     ):
                         continue
                     updated_items.append(cleaned_updated)
