@@ -158,6 +158,31 @@ _EXPERIENCE_ACTION_PREFIXES = {
     "validation",
 }
 
+_EXPERIENCE_NOMINAL_HEADS = {
+    "conception",
+    "execution",
+    "maintenance",
+    "participation",
+    "preparation",
+    "redaction",
+    "satisfaction",
+}
+
+_EXPERIENCE_LINK_TOKENS = {
+    "a",
+    "au",
+    "aux",
+    "de",
+    "des",
+    "du",
+    "et",
+    "for",
+    "of",
+    "pour",
+    "sur",
+    "to",
+}
+
 _EXPERIENCE_OBJECT_TOKENS = {
     "team",
     "teams",
@@ -262,6 +287,16 @@ def _looks_like_experience_action(term: str) -> bool:
         if len(tokens) == 2:
             return second in _EXPERIENCE_OBJECT_TOKENS
         return True
+    if first in _EXPERIENCE_NOMINAL_HEADS:
+        # Keep isolated noun labels like "maintenance" as skills, but route
+        # full activity phrases such as "preparation des tests" to experience.
+        if len(tokens) <= 1:
+            return False
+        if any(token in _EXPERIENCE_LINK_TOKENS for token in tokens[1:3]):
+            return len(tokens) >= 3
+        if any(token in _EXPERIENCE_OBJECT_TOKENS for token in tokens[1:]):
+            return len(tokens) >= 3
+        return len(tokens) >= 4
     if any(token in _EXPERIENCE_ACTION_PREFIXES for token in tokens[:2]):
         # Avoid over-routing very short compounds into experience.
         return len(tokens) >= 3

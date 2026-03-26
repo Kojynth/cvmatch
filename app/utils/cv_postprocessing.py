@@ -2202,6 +2202,11 @@ def enforce_cv_offer_adaptation(
     )
 
     try:
+        from .cv_offer_term_routing import route_term_to_section
+        from .cv_skill_evidence import (
+            classify_skill_bucket,
+            collect_supported_skill_terms,
+        )
         from .keyword_alignment import (
             normalize_keyword_for_match,
             normalized_term_in_probe as normalized_term_present,
@@ -2502,6 +2507,75 @@ def enforce_cv_offer_adaptation(
     if isinstance(skills_section, list) and missing_skills_terms:
         skills_entries = [item for item in skills_section if isinstance(item, dict)]
         if skills_entries:
+            supported_skill_terms: Dict[str, List[str]] = {
+                "technical": [],
+                "soft": [],
+            }
+            if isinstance(profile_json, dict) and profile_json:
+                supported_skill_terms = collect_supported_skill_terms(
+                    missing_skills_terms, profile_json
+                )
+            else:
+                for term in _prepare_terms(missing_skills_terms):
+                    clean_term = _sanitize_adapted_skill_term(term)
+                    if not clean_term:
+                        continue
+                    term_norm = normalize_keyword_for_match(clean_term)
+                    if not term_norm:
+                        continue
+                    if route_term_to_section(clean_term) != "skills":
+                        continue
+                    bucket = classify_skill_bucket(clean_term)
+                    supported_skill_terms.setdefault(bucket, []).append(clean_term)
+                for bucket, values in list(supported_skill_terms.items()):
+                    supported_skill_terms[bucket] = _dedup_preserve(values)
+
+            def _skill_block_bucket(block: Dict[str, Any]) -> str:
+                category_norm = normalize_keyword_for_match(block.get("category"))
+                if any(
+                    marker in category_norm
+                    for marker in (
+                        "soft",
+                        "qualite",
+                        "qualites",
+                        "behavior",
+                        "behaviour",
+                        "interpersonal",
+                    )
+                ):
+                    return "soft"
+                return "technical"
+
+            def _select_skill_block(bucket: str) -> Dict[str, Any]:
+                target = None
+                target_len = 10_000
+                for block in skills_entries:
+                    if _skill_block_bucket(block) != bucket:
+                        continue
+                    items = block.get("items")
+                    if not isinstance(items, list):
+                        continue
+                    items_len = len(items)
+                    if items_len < target_len:
+                        target = block
+                        target_len = items_len
+                if target is not None:
+                    return target
+                if bucket == "soft":
+                    target = {
+                        "category": "Soft Skills" if is_en else "Qualites",
+                        "items": [],
+                    }
+                else:
+                    target = {
+                        "category": (
+                            "Technical Skills" if is_en else "Competences techniques"
+                        ),
+                        "items": [],
+                    }
+                skills_section.append(target)
+                skills_entries.append(target)
+                return target
 
             def skills_probe() -> str:
                 parts: List[str] = []
@@ -2518,51 +2592,34 @@ def enforce_cv_offer_adaptation(
 
             current_probe = skills_probe()
             added_skills = 0
-            skill_terms = _prepare_terms(missing_skills_terms)
-
-            for term in skill_terms:
-                clean_term = _sanitize_adapted_skill_term(term)
-                if not clean_term:
-                    continue
-                term_norm = normalize_keyword_for_match(clean_term)
-                if not term_norm:
-                    continue
-                if normalized_term_present(current_probe, term_norm):
-                    continue
-
-                target = None
-                target_len = 10_000
-                for block in skills_entries:
-                    items = block.get("items")
-                    if not isinstance(items, list):
+            for bucket in ("technical", "soft"):
+                skill_terms = _prepare_terms(supported_skill_terms.get(bucket) or [])
+                for term in skill_terms:
+                    clean_term = _sanitize_adapted_skill_term(term)
+                    if not clean_term:
                         continue
-                    items_len = len(items)
-                    if items_len < target_len:
-                        target = block
-                        target_len = items_len
-                if target is None:
-                    target = {
-                        "category": "Skills" if is_en else "Competences",
-                        "items": [],
-                    }
-                    skills_section.append(target)
-                    skills_entries.append(target)
+                    term_norm = normalize_keyword_for_match(clean_term)
+                    if not term_norm:
+                        continue
+                    if normalized_term_present(current_probe, term_norm):
+                        continue
 
-                items = target.get("items")
-                if not isinstance(items, list):
-                    items = []
-                target["items"] = _dedup_preserve(
-                    [
-                        clean_term,
-                        *[
-                            item
-                            for item in items
-                            if isinstance(item, str) and item.strip()
-                        ],
-                    ]
-                )[:10]
-                current_probe = skills_probe()
-                added_skills += 1
+                    target = _select_skill_block(bucket)
+                    items = target.get("items")
+                    if not isinstance(items, list):
+                        items = []
+                    target["items"] = _dedup_preserve(
+                        [
+                            clean_term,
+                            *[
+                                item
+                                for item in items
+                                if isinstance(item, str) and item.strip()
+                            ],
+                        ]
+                    )[:10]
+                    current_probe = skills_probe()
+                    added_skills += 1
 
             if added_skills:
                 logger.info(

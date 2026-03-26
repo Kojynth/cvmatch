@@ -2848,15 +2848,11 @@ class CVGenerationWorker(QThread):
 
     # Cover letter methods
     def _ensure_cover_letter_language_consistency(self, letter: str, lang: str) -> str:
-        try:
-            from ..utils.cover_letter_pipeline import (
-                ensure_cover_letter_language_consistency,
-            )
+        from ..utils.cover_letter_pipeline import (
+            ensure_cover_letter_language_consistency,
+        )
 
-            return ensure_cover_letter_language_consistency(letter, lang)
-        except Exception as exc:
-            logger.warning("Cover letter language check failed: %s", exc)
-            return letter
+        return ensure_cover_letter_language_consistency(letter, lang)
 
     def _is_cover_letter_structure_coherent(
         self, letter: str, language_code: Optional[str] = None
@@ -3384,13 +3380,23 @@ class CVGenerationWorker(QThread):
         if not isinstance(cv_json, dict):
             return
         try:
-            from ..utils.cv_offer_term_routing import route_terms_to_sections
+            from ..utils.cv_offer_term_routing import (
+                route_term_to_section,
+                route_terms_to_sections,
+            )
+            from ..utils.cv_skill_evidence import (
+                looks_like_noise_skill_term,
+                should_keep_skill_term,
+            )
             from ..utils.cv_skill_recovery import (
                 build_skill_blocks_from_profile,
                 skills_section_low_signal,
             )
         except Exception:
+            route_term_to_section = None
             route_terms_to_sections = None
+            looks_like_noise_skill_term = None
+            should_keep_skill_term = None
             build_skill_blocks_from_profile = None
             skills_section_low_signal = None
         offer_keywords = self._collect_offer_keywords_only(critic_json)
@@ -3497,19 +3503,20 @@ class CVGenerationWorker(QThread):
             cv_json["summary"], count = _replace_terms_in_text(summary, mapping)
             replacements += count
 
-        skills_present = not (
-            callable(skills_section_low_signal)
-            and skills_section_low_signal(cv_json.get("skills"))
-        )
+        total_skill_items_before = 0
+        total_skill_items_after = 0
+        cleaned_skill_blocks = []
         for category in cv_json.get("skills", []) or []:
             if not isinstance(category, dict):
                 continue
             items = category.get("items")
             if isinstance(items, list):
+                total_skill_items_before += sum(
+                    1 for item in items if isinstance(item, str) and item.strip()
+                )
                 updated_items = []
                 for item in items:
                     if not isinstance(item, str):
-                        updated_items.append(item)
                         continue
                     cleaned = self._sanitize_skill_item_text(item)
                     if not cleaned:
@@ -3517,8 +3524,23 @@ class CVGenerationWorker(QThread):
                     updated, count = _replace_terms_in_text(cleaned, mapping)
                     replacements += count
                     cleaned_updated = self._sanitize_skill_item_text(updated)
-                    if cleaned_updated:
-                        updated_items.append(cleaned_updated)
+                    if not cleaned_updated:
+                        continue
+                    if callable(
+                        looks_like_noise_skill_term
+                    ) and looks_like_noise_skill_term(cleaned_updated):
+                        continue
+                    if callable(should_keep_skill_term) and (
+                        not should_keep_skill_term(cleaned_updated, profile_payload)
+                    ):
+                        continue
+                    if (
+                        not callable(should_keep_skill_term)
+                        and callable(route_term_to_section)
+                        and (route_term_to_section(cleaned_updated) != "skills")
+                    ):
+                        continue
+                    updated_items.append(cleaned_updated)
                 category["items"] = _dedup_preserve(
                     [
                         item
@@ -3526,8 +3548,24 @@ class CVGenerationWorker(QThread):
                         if isinstance(item, str) and item.strip()
                     ]
                 )
+                total_skill_items_after += len(category["items"])
                 if category["items"]:
-                    skills_present = True
+                    cleaned_skill_blocks.append(category)
+
+        if isinstance(cv_json.get("skills"), list):
+            cv_json["skills"] = cleaned_skill_blocks
+
+        removed_skill_items = max(0, total_skill_items_before - total_skill_items_after)
+        if removed_skill_items:
+            logger.info(
+                "Skill section cleanup removed misplaced/noisy items: removed=%s",
+                removed_skill_items,
+            )
+
+        skills_present = not (
+            callable(skills_section_low_signal)
+            and skills_section_low_signal(cv_json.get("skills"), profile_payload)
+        )
 
         for entry in cv_json.get("experience", []) or []:
             if not isinstance(entry, dict):
