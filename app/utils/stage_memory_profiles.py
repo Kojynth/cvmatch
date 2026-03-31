@@ -27,18 +27,22 @@ def apply_cover_letter_subprocess_memory_profile(
     if total_vram_gb > 0:
         gpu_cap_gb = max(4.75, min(6.0, float(total_vram_gb) * 0.54))
 
-    env.setdefault("CVMATCH_PREFER_RAM_OFFLOAD", "1")
-    env.setdefault("CVMATCH_FORCE_DISK_OFFLOAD", "0")
-    env.setdefault("CVMATCH_FORCE_GPU", "0")
-    env.setdefault("CVMATCH_DISABLE_TORCH_COMPILE", "1")
-    env.setdefault("CVMATCH_KEEP_SELECTED_STAGE_MODEL", "1")
-    env.setdefault("CVMATCH_SURVIVAL_IGNORE_SELECTED_MODEL", "0")
-    env.setdefault("CVMATCH_MAX_MEMORY_GPU_GB", f"{gpu_cap_gb:.2f}")
+    # Override generic launcher defaults for cover-letter subprocesses.
+    # The parent process may already export an anti-OOM profile tuned for
+    # generic writer stages; cover-letter cold-loads need a stricter RAM-first
+    # balance, so these keys must be explicit here.
+    env["CVMATCH_PREFER_RAM_OFFLOAD"] = "1"
+    env["CVMATCH_FORCE_DISK_OFFLOAD"] = "0"
+    env["CVMATCH_FORCE_GPU"] = "0"
+    env["CVMATCH_DISABLE_TORCH_COMPILE"] = "1"
+    env["CVMATCH_KEEP_SELECTED_STAGE_MODEL"] = "1"
+    env["CVMATCH_SURVIVAL_IGNORE_SELECTED_MODEL"] = "0"
+    env["CVMATCH_MAX_MEMORY_GPU_GB"] = f"{gpu_cap_gb:.2f}"
 
     if attempt > 1:
-        env.setdefault("CVMATCH_SURVIVAL_MODE", "1")
-        env.setdefault("CVMATCH_VRAM_HEADROOM_GB", "3.25")
+        env["CVMATCH_SURVIVAL_MODE"] = "1"
+        env["CVMATCH_VRAM_HEADROOM_GB"] = "3.25"
     else:
-        env.setdefault("CVMATCH_VRAM_HEADROOM_GB", "3.0")
+        env["CVMATCH_VRAM_HEADROOM_GB"] = "3.0"
 
     return env
