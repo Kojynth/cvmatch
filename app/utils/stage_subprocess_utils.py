@@ -114,6 +114,9 @@ def is_transient_stage_memory_error(details: str) -> bool:
         "cannot copy out of meta tensor",
         "torch.acceleratorerror",
         "memoryerror",
+        "cpu-only device map",
+        "hybrid-only policy",
+        "insufficient for mixed placement",
     )
     return any(marker in lowered for marker in markers)
 
