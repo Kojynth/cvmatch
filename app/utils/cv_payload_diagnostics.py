@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from typing import Any, Dict, Tuple
 
 
@@ -26,6 +27,22 @@ _RETRY_LIST_LIMITS = {
     "languages": 4,
     "certifications": 3,
     "ats_keywords": 18,
+}
+_FACT_VALIDATED_LIST_KEYS = {
+    "skills",
+    "experience",
+    "education",
+    "projects",
+    "languages",
+    "certifications",
+}
+_SECTION_TO_PROFILE_KEY = {
+    "skills": "skills",
+    "experience": "experiences",
+    "education": "education",
+    "projects": "projects",
+    "languages": "languages",
+    "certifications": "certifications",
 }
 
 
@@ -168,6 +185,128 @@ def _dedup_merge_items(
     return merged
 
 
+def _collect_tokens(value: Any) -> list[str]:
+    tokens: list[str] = []
+    if isinstance(value, str):
+        for token in re.split(r"[^a-z0-9]+", value.lower()):
+            if len(token) >= 3:
+                tokens.append(token)
+        return tokens
+    if isinstance(value, dict):
+        for nested in value.values():
+            tokens.extend(_collect_tokens(nested))
+        return tokens
+    if isinstance(value, list):
+        for nested in value:
+            tokens.extend(_collect_tokens(nested))
+        return tokens
+    return tokens
+
+
+def _required_matches(token_count: int) -> int:
+    if token_count <= 0:
+        return 0
+    if token_count <= 2:
+        return 1
+    if token_count <= 4:
+        return 2
+    return max(2, token_count // 2)
+
+
+def _build_profile_section_cache(
+    profile_json: Dict[str, Any] | None,
+) -> tuple[Dict[str, list[str]], str]:
+    if not isinstance(profile_json, dict):
+        return {}, ""
+
+    section_cache: Dict[str, list[str]] = {}
+    for section_key, profile_key in _SECTION_TO_PROFILE_KEY.items():
+        entries = profile_json.get(profile_key)
+        texts: list[str] = []
+        if isinstance(entries, list):
+            for entry in entries:
+                if not _is_meaningful(entry):
+                    continue
+                if isinstance(entry, str):
+                    texts.append(entry.lower())
+                else:
+                    try:
+                        texts.append(
+                            json.dumps(entry, ensure_ascii=False, default=str).lower()
+                        )
+                    except Exception:
+                        texts.append(str(entry).lower())
+        section_cache[section_key] = texts
+
+    try:
+        profile_text = json.dumps(profile_json, ensure_ascii=False, default=str).lower()
+    except Exception:
+        profile_text = str(profile_json).lower()
+
+    return section_cache, profile_text
+
+
+def _item_supported_by_profile(
+    section_key: str,
+    item: Any,
+    *,
+    section_cache: Dict[str, list[str]],
+    profile_text: str,
+) -> bool:
+    if section_key not in _FACT_VALIDATED_LIST_KEYS:
+        return True
+    if not _is_meaningful(item):
+        return False
+
+    tokens = list(dict.fromkeys(_collect_tokens(item)))
+    if not tokens:
+        return False
+    required = _required_matches(len(tokens))
+
+    section_texts = section_cache.get(section_key) or []
+    if section_texts:
+        for probe in section_texts:
+            matches = sum(1 for token in tokens if token in probe)
+            if matches >= required:
+                return True
+        return False
+
+    # Soft fallback for sections where cross-section terms are common.
+    if section_key in {"skills", "languages"} and profile_text:
+        matches = sum(1 for token in tokens if token in profile_text)
+        return matches >= required
+
+    return False
+
+
+def _validated_previous_list_items(
+    section_key: str,
+    value: Any,
+    *,
+    section_cache: Dict[str, list[str]],
+    profile_text: str,
+) -> list:
+    if not isinstance(value, list):
+        return []
+    if section_key == "ats_keywords":
+        return _dedup_merge_items([], value, limit=_RETRY_LIST_LIMITS.get(section_key, 10))
+
+    validated: list = []
+    for item in value:
+        if _item_supported_by_profile(
+            section_key,
+            item,
+            section_cache=section_cache,
+            profile_text=profile_text,
+        ):
+            validated.append(copy.deepcopy(item))
+    return _dedup_merge_items(
+        [],
+        validated,
+        limit=_RETRY_LIST_LIMITS.get(section_key, 10),
+    )
+
+
 def compact_cv_payload_for_retry(payload: Any) -> Dict[str, Any]:
     """Keep only compact, useful sections for retry context prompts."""
     if not isinstance(payload, dict):
@@ -216,6 +355,7 @@ def stabilize_sparse_payload_with_previous(
     previous = compact_cv_payload_for_retry(previous_payload)
     if not previous:
         return current
+    section_cache, profile_text = _build_profile_section_cache(profile_json)
 
     for key in ("target_job_title", "target_company", "summary"):
         if not _is_meaningful(current.get(key)) and _is_meaningful(previous.get(key)):
@@ -235,15 +375,23 @@ def stabilize_sparse_payload_with_previous(
         prev_value = previous.get(key)
         if not _is_meaningful(prev_value):
             continue
+        validated_prev_value = _validated_previous_list_items(
+            key,
+            prev_value,
+            section_cache=section_cache,
+            profile_text=profile_text,
+        )
+        if not _is_meaningful(validated_prev_value):
+            continue
         current_value = current.get(key)
         if not _is_meaningful(current_value):
-            current[key] = copy.deepcopy(prev_value)
+            current[key] = copy.deepcopy(validated_prev_value)
             continue
-        if isinstance(current_value, list) and isinstance(prev_value, list):
-            if len(current_value) < 2 and len(prev_value) > len(current_value):
+        if isinstance(current_value, list):
+            if len(current_value) < 2 and len(validated_prev_value) > len(current_value):
                 merged = _dedup_merge_items(
                     current_value,
-                    prev_value,
+                    validated_prev_value,
                     limit=_RETRY_LIST_LIMITS.get(key, 10),
                 )
                 if len(merged) > len(current_value):
@@ -256,8 +404,14 @@ def stabilize_sparse_payload_with_previous(
         for key in ("skills", "education", "projects", "languages", "certifications", "ats_keywords"):
             if _is_meaningful(current.get(key)):
                 continue
-            if _is_meaningful(previous.get(key)):
-                current[key] = copy.deepcopy(previous.get(key))
+            validated_prev_value = _validated_previous_list_items(
+                key,
+                previous.get(key),
+                section_cache=section_cache,
+                profile_text=profile_text,
+            )
+            if _is_meaningful(validated_prev_value):
+                current[key] = copy.deepcopy(validated_prev_value)
             if not is_sparse_generated_cv_payload(current, profile_json=profile_json):
                 break
 
