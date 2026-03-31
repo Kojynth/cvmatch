@@ -58,6 +58,30 @@ _ROLE_HEAD_TOKENS = {
     "directeur",
     "owner",
 }
+_SUMMARY_INLINE_LOWERCASE_TOKENS = {
+    "analyse",
+    "analysis",
+    "benchmark",
+    "conception",
+    "execution",
+    "executer",
+    "maintenance",
+    "participation",
+    "preparation",
+    "preparer",
+    "redaction",
+    "rediger",
+    "suivi",
+    "suivre",
+    "testing",
+    "validation",
+    "verification",
+    "writing",
+}
+_SUMMARY_INLINE_CONNECTOR_PATTERN = re.compile(
+    r"^\s+(?:d['’]|de|des|du|la|le|les|et|a|au|aux|with|for|and|of)\b",
+    re.IGNORECASE,
+)
 
 
 def _normalize_marker(text: Any) -> str:
@@ -153,7 +177,7 @@ def build_summary_focus_sentence(
     focus_terms = select_summary_focus_terms(terms, max_terms=max_terms)
     if not focus_terms:
         return ""
-    joined = ", ".join(focus_terms)
+    joined = ", ".join(_format_term_for_inline_summary(item) for item in focus_terms)
     if language_code == "en":
         return f"Relevant strengths include {joined}."
     return f"Atouts pertinents : {joined}."
@@ -164,6 +188,34 @@ def _clean_candidate_term(text: Any) -> str:
     if not value:
         return ""
     return re.sub(r"^[,.;:\s]+|[,.;:\s]+$", "", value)
+
+
+def _format_term_for_inline_summary(text: Any) -> str:
+    """Lowercase leading action fragments when embedded inside a sentence."""
+    value = _clean_candidate_term(text)
+    if not value:
+        return ""
+
+    match = re.match(r"^(?P<head>[^\s,;:()]+)(?P<tail>.*)$", value)
+    if not match:
+        return value
+
+    head = str(match.group("head") or "")
+    tail = str(match.group("tail") or "")
+    head_norm = _normalize_marker(head)
+    if not head_norm:
+        return value
+    if _is_acronym_like_token(head):
+        return value
+    if re.search(r"[A-Z]", head[1:]):
+        return value
+    should_lower = head_norm in _SUMMARY_INLINE_LOWERCASE_TOKENS
+    if not should_lower and _SUMMARY_INLINE_CONNECTOR_PATTERN.match(tail):
+        should_lower = True
+    if not should_lower:
+        return value
+
+    return f"{head[:1].lower()}{head[1:]}{tail}"
 
 
 def _is_acronym_like_token(token: str) -> bool:
@@ -328,14 +380,20 @@ def build_minimum_profile_summary(
     if language_code == "en":
         subject = role_hint or "Technical profile"
         if skill_terms:
-            return f"{subject} with hands-on practice in {', '.join(skill_terms)}."
+            formatted_terms = [
+                _format_term_for_inline_summary(item) for item in skill_terms if item
+            ]
+            return f"{subject} with hands-on practice in {', '.join(formatted_terms)}."
         if len(experience_titles) > 1:
             return f"{subject} with experience across {experience_titles[0]} and {experience_titles[1]}."
         return f"{subject} with software delivery experience."
 
     subject = role_hint or "Profil technique"
     if skill_terms:
-        return f"{subject} avec une pratique de {', '.join(skill_terms)}."
+        formatted_terms = [
+            _format_term_for_inline_summary(item) for item in skill_terms if item
+        ]
+        return f"{subject} avec une pratique de {', '.join(formatted_terms)}."
     if len(experience_titles) > 1:
         return f"{subject} avec une experience sur des roles tels que {experience_titles[0]} et {experience_titles[1]}."
     return f"{subject} avec une experience sur des projets logiciels."

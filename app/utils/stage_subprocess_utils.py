@@ -137,10 +137,18 @@ def build_stage_subprocess_env(
     run_env["CVMATCH_STAGE_NAME"] = str(stage)
     run_env["CVMATCH_STAGE_ATTEMPT"] = str(attempt)
     run_env["CVMATCH_STAGE_ATTEMPTS"] = str(attempts)
+    stage_key = str(stage or "").strip().lower()
 
     # Retry policy in quality-first mode: keep model selection stable.
     if attempt > 1 and force_survival_retry:
         run_env.setdefault("CVMATCH_DISABLE_TORCH_COMPILE", "1")
+    if attempt > 1 and stage_key in {"cover_letter", "cover_letter_critic"}:
+        # Cover-letter retries frequently happen after a successful writer stage
+        # on marginal 10-12GB GPUs. Enter survival-mode load tuning on retry
+        # while keeping the user-selected model locked.
+        run_env.setdefault("CVMATCH_SURVIVAL_MODE", "1")
+        run_env.setdefault("CVMATCH_SURVIVAL_IGNORE_SELECTED_MODEL", "0")
+        run_env.setdefault("CVMATCH_VRAM_HEADROOM_GB", "2.5")
     if attempt >= 3:
         run_env.setdefault("CVMATCH_VRAM_HEADROOM_GB", "2.5")
     return run_env
