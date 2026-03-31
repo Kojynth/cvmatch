@@ -63,7 +63,7 @@ def _recommend_cover_letter_gpu_cap_gb(
             return max(6.0, min(7.0, total_vram * 0.48))
         return max(6.5, min(9.5, total_vram * 0.62))
     if attempt > 1:
-        return max(6.5, min(7.0, total_vram * 0.40))
+        return 7.0
     return max(8.0, min(14.0, total_vram * 0.68))
 
 
@@ -111,14 +111,16 @@ def apply_cover_letter_subprocess_memory_profile(
     total_vram_gb: float = 0.0,
     attempt: int = 1,
 ) -> Dict[str, str]:
-    """Bias cover-letter subprocesses toward RAM-first hybrid placement.
+    """Bias cover-letter subprocesses toward writer-aligned loading with RAM recovery.
 
     Cover-letter stages cold-load the selected writer model in a fresh
     subprocess. On 10-12GB GPUs this can fail even when CV stages passed,
     because the subprocess model load sits right on the VRAM edge.
 
-    Keep the selected model, but constrain GPU placement harder and prefer
-    CPU/RAM offload so the same model can still load.
+    Keep the selected model and stay aligned with the generic writer
+    disk-offload path that already succeeds for draft/final stages, while
+    preserving RAM-assist eligibility for in-process recovery and tightening
+    GPU budget and headroom on retries.
     """
 
     env = dict(run_env or {})
@@ -143,7 +145,7 @@ def apply_cover_letter_subprocess_memory_profile(
     _set_stage_value(
         env,
         "CVMATCH_FORCE_DISK_OFFLOAD",
-        "0",
+        "1",
         generic_defaults=_GENERIC_PARENT_DEFAULTS["CVMATCH_FORCE_DISK_OFFLOAD"],
     )
     env.setdefault("CVMATCH_FORCE_GPU", "0")
