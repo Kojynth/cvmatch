@@ -111,7 +111,7 @@ def apply_cover_letter_subprocess_memory_profile(
     total_vram_gb: float = 0.0,
     attempt: int = 1,
 ) -> Dict[str, str]:
-    """Bias cover-letter subprocesses toward RAM-first hybrid placement.
+    """Bias cover-letter subprocesses toward writer-aligned disk-offload placement.
 
     Cover-letter stages cold-load the selected writer model in a fresh
     subprocess. On 10-12GB GPUs this can fail even when CV stages passed,
