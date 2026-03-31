@@ -2321,6 +2321,17 @@ class QwenManager:
             True,
         )
 
+        recovery_ram_first = bool(
+            using_4bit
+            and (
+                (
+                    bool(getattr(self, "_ram_assist_mode", False))
+                    and self._prefer_ram_offload_mode()
+                )
+                or bool(getattr(self, "_meta_recovery_mode", False))
+            )
+        )
+
         if self._is_survival_mode():
             disk_offload_enabled = True
 
@@ -2331,7 +2342,17 @@ class QwenManager:
                 False,
             )
             auto_disk, auto_reason = self._should_auto_enable_disk_offload_for_4bit()
-            if force_disk:
+            if recovery_ram_first:
+                if force_disk or auto_disk or disk_offload_enabled:
+                    logger.warning(
+                        "4-bit recovery: ignoring disk offload policy to allow RAM-first recovery "
+                        "(forced=%s auto=%s reason=%s).",
+                        force_disk,
+                        auto_disk,
+                        auto_reason or "-",
+                    )
+                disk_offload_enabled = False
+            elif force_disk:
                 disk_offload_enabled = True
                 logger.info("4-bit mode: disk offload forced ON by config.")
             elif auto_disk:

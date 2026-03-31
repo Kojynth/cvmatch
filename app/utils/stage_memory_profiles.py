@@ -111,7 +111,7 @@ def apply_cover_letter_subprocess_memory_profile(
     total_vram_gb: float = 0.0,
     attempt: int = 1,
 ) -> Dict[str, str]:
-    """Bias cover-letter subprocesses toward writer-aligned disk-offload placement.
+    """Bias cover-letter subprocesses toward writer-aligned loading with RAM recovery.
 
     Cover-letter stages cold-load the selected writer model in a fresh
     subprocess. On 10-12GB GPUs this can fail even when CV stages passed,
@@ -119,7 +119,8 @@ def apply_cover_letter_subprocess_memory_profile(
 
     Keep the selected model and stay aligned with the generic writer
     disk-offload path that already succeeds for draft/final stages, while
-    tightening GPU budget and headroom on retries.
+    preserving RAM-assist eligibility for in-process recovery and tightening
+    GPU budget and headroom on retries.
     """
 
     env = dict(run_env or {})
@@ -138,7 +139,7 @@ def apply_cover_letter_subprocess_memory_profile(
     _set_stage_value(
         env,
         "CVMATCH_PREFER_RAM_OFFLOAD",
-        "0",
+        "1",
         generic_defaults=_GENERIC_PARENT_DEFAULTS["CVMATCH_PREFER_RAM_OFFLOAD"],
     )
     _set_stage_value(

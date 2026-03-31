@@ -1352,10 +1352,11 @@ class CVGenerationWorker(QThread):
                     )
                     logger.info(
                         "Cover-letter subprocess memory profile active: attempt=%s/%s prefer_ram_offload=%s "
-                        "gpu_cap=%sGB vram_headroom=%sGB survival=%s",
+                        "force_disk_offload=%s gpu_cap=%sGB vram_headroom=%sGB survival=%s",
                         attempt,
                         stage_attempts,
                         run_env.get("CVMATCH_PREFER_RAM_OFFLOAD"),
+                        run_env.get("CVMATCH_FORCE_DISK_OFFLOAD"),
                         run_env.get("CVMATCH_MAX_MEMORY_GPU_GB"),
                         run_env.get("CVMATCH_VRAM_HEADROOM_GB"),
                         run_env.get("CVMATCH_SURVIVAL_MODE", "0"),
