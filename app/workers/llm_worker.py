@@ -106,6 +106,9 @@ from ..utils.stage_subprocess_utils import (
     is_transient_stage_memory_error,
     persist_stage_subprocess_diagnostics,
 )
+from ..utils.stage_memory_profiles import (
+    apply_cover_letter_subprocess_memory_profile,
+)
 
 
 def _normalize_template_name(template: Optional[str]) -> str:
@@ -1322,6 +1325,17 @@ class CVGenerationWorker(QThread):
 
         try:
             last_error = "unknown stage subprocess error"
+            stage_key = str(stage or "").strip().lower()
+            total_vram_gb = 0.0
+            try:
+                total_vram_gb = float(
+                    (getattr(gpu_manager, "gpu_info", {}) or {}).get(
+                        "total_memory_gb"
+                    )
+                    or 0.0
+                )
+            except Exception:
+                total_vram_gb = 0.0
             for attempt in range(1, stage_attempts + 1):
                 run_env = build_stage_subprocess_env(
                     base_env=dict(os.environ),
@@ -1330,6 +1344,22 @@ class CVGenerationWorker(QThread):
                     attempts=stage_attempts,
                     force_survival_retry=survival_mode,
                 )
+                if stage_key in {"cover_letter", "cover_letter_critic"}:
+                    run_env = apply_cover_letter_subprocess_memory_profile(
+                        run_env,
+                        total_vram_gb=total_vram_gb,
+                        attempt=attempt,
+                    )
+                    logger.info(
+                        "Cover-letter subprocess memory profile active: attempt=%s/%s prefer_ram_offload=%s "
+                        "gpu_cap=%sGB vram_headroom=%sGB survival=%s",
+                        attempt,
+                        stage_attempts,
+                        run_env.get("CVMATCH_PREFER_RAM_OFFLOAD"),
+                        run_env.get("CVMATCH_MAX_MEMORY_GPU_GB"),
+                        run_env.get("CVMATCH_VRAM_HEADROOM_GB"),
+                        run_env.get("CVMATCH_SURVIVAL_MODE", "0"),
+                    )
                 if survival_mode:
                     run_env["CVMATCH_SURVIVAL_MODE"] = "1"
                     run_env.setdefault("CVMATCH_SURVIVAL_IGNORE_SELECTED_MODEL", "1")
@@ -1341,17 +1371,8 @@ class CVGenerationWorker(QThread):
                     run_env.setdefault("CVMATCH_CPU_HEADROOM_GB", "0.5")
                     run_env.setdefault("CVMATCH_VRAM_HEADROOM_GB", "2.0")
                     retry_gpu_cap_gb = 6.5
-                    try:
-                        total_vram_gb = float(
-                            (getattr(gpu_manager, "gpu_info", {}) or {}).get(
-                                "total_memory_gb"
-                            )
-                            or 0.0
-                        )
-                        if total_vram_gb > 0:
-                            retry_gpu_cap_gb = max(3.5, min(7.0, total_vram_gb * 0.62))
-                    except Exception:
-                        pass
+                    if total_vram_gb > 0:
+                        retry_gpu_cap_gb = max(3.5, min(7.0, total_vram_gb * 0.62))
                     run_env.setdefault(
                         "CVMATCH_MAX_MEMORY_GPU_GB", f"{retry_gpu_cap_gb:.2f}"
                     )
