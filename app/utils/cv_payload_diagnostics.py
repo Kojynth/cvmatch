@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import re
 from typing import Any, Dict, Tuple
 
@@ -60,6 +61,29 @@ _SUMMARY_STOPWORDS = {
     "that",
     "this",
     "over",
+}
+_SHORT_ACRONYM_TOKENS = {
+    "ai",
+    "it",
+    "go",
+    "r",
+    "c",
+    "ui",
+    "ux",
+    "qa",
+    "bi",
+    "pm",
+    "po",
+    "hr",
+    "js",
+    "ts",
+    "db",
+    "ci",
+    "cd",
+    "c#",
+    "c++",
+    "f#",
+    ".net",
 }
 
 
@@ -205,9 +229,17 @@ def _dedup_merge_items(
 def _collect_tokens(value: Any) -> list[str]:
     tokens: list[str] = []
     if isinstance(value, str):
-        for token in re.split(r"[^a-z0-9]+", value.lower()):
-            if len(token) >= 3:
-                tokens.append(token)
+        raw_tokens = re.findall(r"(?:\.[a-z0-9]+|[a-z0-9][a-z0-9#+.]*)", value.lower())
+        for token in raw_tokens:
+            normalized = str(token or "").strip()
+            if not normalized:
+                continue
+            core = re.sub(r"[^a-z0-9]", "", normalized)
+            if len(core) >= 3:
+                tokens.append(normalized)
+                continue
+            if normalized in _SHORT_ACRONYM_TOKENS or core in _SHORT_ACRONYM_TOKENS:
+                tokens.append(normalized)
         return tokens
     if isinstance(value, dict):
         for nested in value.values():
@@ -244,12 +276,7 @@ def _summary_supported_by_profile(summary: Any, profile_text: str) -> bool:
         return False
 
     token_count = len(tokens)
-    if token_count <= 4:
-        required = 1
-    elif token_count <= 10:
-        required = 2
-    else:
-        required = 3
+    required = max(2, int(math.ceil(token_count * 0.6)))
 
     matches = sum(1 for token in tokens if token in profile_text)
     return matches >= required
