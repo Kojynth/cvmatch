@@ -11,6 +11,37 @@ _GENERIC_PARENT_DEFAULTS = {
     "CVMATCH_MAX_MEMORY_GPU_GB": {"6.5"},
     "CVMATCH_VRAM_HEADROOM_GB": {"2.0", "2.5"},
 }
+_GENERIC_NUMERIC_KEYS = {
+    "CVMATCH_MAX_MEMORY_GPU_GB",
+    "CVMATCH_VRAM_HEADROOM_GB",
+}
+
+
+def _matches_generic_default(
+    key: str,
+    current: str,
+    generic_defaults: set[str],
+) -> bool:
+    normalized = str(current or "").strip()
+    if not normalized:
+        return False
+    if normalized in generic_defaults:
+        return True
+    if key not in _GENERIC_NUMERIC_KEYS:
+        return False
+
+    try:
+        current_value = float(normalized)
+    except Exception:
+        return False
+
+    for candidate in generic_defaults:
+        try:
+            if abs(current_value - float(candidate)) <= 1e-9:
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def _set_stage_value(
@@ -27,9 +58,8 @@ def _set_stage_value(
         env[key] = value
         return
 
-    normalized = str(current).strip()
     allowed_defaults = generic_defaults or set()
-    if normalized in allowed_defaults:
+    if _matches_generic_default(key, str(current), allowed_defaults):
         env[key] = value
 
 
