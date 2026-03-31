@@ -44,6 +44,23 @@ _SECTION_TO_PROFILE_KEY = {
     "languages": "languages",
     "certifications": "certifications",
 }
+_SUMMARY_STOPWORDS = {
+    "avec",
+    "dans",
+    "pour",
+    "sur",
+    "des",
+    "les",
+    "une",
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "that",
+    "this",
+    "over",
+}
 
 
 def _is_meaningful(value: Any) -> bool:
@@ -213,6 +230,31 @@ def _required_matches(token_count: int) -> int:
     return max(2, token_count // 2)
 
 
+def _summary_supported_by_profile(summary: Any, profile_text: str) -> bool:
+    text = str(summary or "").strip()
+    if not text or not profile_text:
+        return False
+
+    tokens = [
+        token
+        for token in dict.fromkeys(_collect_tokens(text))
+        if token not in _SUMMARY_STOPWORDS
+    ]
+    if not tokens:
+        return False
+
+    token_count = len(tokens)
+    if token_count <= 4:
+        required = 1
+    elif token_count <= 10:
+        required = 2
+    else:
+        required = 3
+
+    matches = sum(1 for token in tokens if token in profile_text)
+    return matches >= required
+
+
 def _build_profile_section_cache(
     profile_json: Dict[str, Any] | None,
 ) -> tuple[Dict[str, list[str]], str]:
@@ -358,8 +400,14 @@ def stabilize_sparse_payload_with_previous(
     section_cache, profile_text = _build_profile_section_cache(profile_json)
 
     for key in ("target_job_title", "target_company", "summary"):
-        if not _is_meaningful(current.get(key)) and _is_meaningful(previous.get(key)):
-            current[key] = copy.deepcopy(previous.get(key))
+        if _is_meaningful(current.get(key)) or (not _is_meaningful(previous.get(key))):
+            continue
+        if key == "summary" and not _summary_supported_by_profile(
+            previous.get("summary"),
+            profile_text,
+        ):
+            continue
+        current[key] = copy.deepcopy(previous.get(key))
 
     prev_contact = previous.get("contact")
     if isinstance(prev_contact, dict):
