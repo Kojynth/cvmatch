@@ -44,17 +44,46 @@ def _matches_generic_default(
     return False
 
 
-def _recommend_cover_letter_gpu_cap_gb(total_vram_gb: float) -> float:
+def _recommend_cover_letter_gpu_cap_gb(
+    total_vram_gb: float,
+    *,
+    attempt: int = 1,
+) -> float:
     """Return a stage-specific GPU cap without over-constraining high-VRAM hosts."""
 
     total_vram = float(total_vram_gb or 0.0)
     if total_vram <= 0:
-        return 6.0
+        return 6.0 if attempt > 1 else 6.25
     if total_vram <= 12.0:
-        return max(4.75, min(6.0, total_vram * 0.54))
+        if attempt > 1:
+            return max(4.75, min(6.0, total_vram * 0.54))
+        return max(5.5, min(6.35, total_vram * 0.57))
     if total_vram <= 16.0:
+        if attempt > 1:
+            return max(6.0, min(7.0, total_vram * 0.48))
         return max(6.5, min(9.5, total_vram * 0.62))
+    if attempt > 1:
+        return max(6.5, min(7.0, total_vram * 0.40))
     return max(8.0, min(14.0, total_vram * 0.68))
+
+
+def _recommend_cover_letter_headroom_gb(
+    total_vram_gb: float,
+    *,
+    attempt: int = 1,
+) -> float:
+    """Return a cover-letter-specific VRAM headroom target."""
+
+    total_vram = float(total_vram_gb or 0.0)
+    if attempt > 1:
+        if total_vram > 12.0:
+            return 2.75
+        return 3.25
+    if total_vram > 16.0:
+        return 2.25
+    if total_vram > 12.0:
+        return 2.5
+    return 2.5
 
 
 def _set_stage_value(
@@ -94,7 +123,14 @@ def apply_cover_letter_subprocess_memory_profile(
 
     env = dict(run_env or {})
 
-    gpu_cap_gb = _recommend_cover_letter_gpu_cap_gb(total_vram_gb)
+    gpu_cap_gb = _recommend_cover_letter_gpu_cap_gb(
+        total_vram_gb,
+        attempt=attempt,
+    )
+    headroom_gb = _recommend_cover_letter_headroom_gb(
+        total_vram_gb,
+        attempt=attempt,
+    )
 
     # Override generic launcher defaults for cover-letter subprocesses while
     # preserving host-specific explicit overrides inherited from the parent env.
@@ -129,14 +165,14 @@ def apply_cover_letter_subprocess_memory_profile(
         _set_stage_value(
             env,
             "CVMATCH_VRAM_HEADROOM_GB",
-            "3.25",
+            f"{headroom_gb:.2f}",
             generic_defaults=_GENERIC_PARENT_DEFAULTS["CVMATCH_VRAM_HEADROOM_GB"],
         )
     else:
         _set_stage_value(
             env,
             "CVMATCH_VRAM_HEADROOM_GB",
-            "3.0",
+            f"{headroom_gb:.2f}",
             generic_defaults=_GENERIC_PARENT_DEFAULTS["CVMATCH_VRAM_HEADROOM_GB"],
         )
 
