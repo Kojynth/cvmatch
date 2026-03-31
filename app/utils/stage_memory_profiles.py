@@ -117,13 +117,37 @@ def apply_cover_letter_subprocess_memory_profile(
     subprocess. On 10-12GB GPUs this can fail even when CV stages passed,
     because the subprocess model load sits right on the VRAM edge.
 
-    Keep the selected model and stay aligned with the generic writer
-    disk-offload path that already succeeds for draft/final stages, while
-    preserving RAM-assist eligibility for in-process recovery and tightening
-    GPU budget and headroom on retries.
+    Keep the selected model and reuse the generic writer memory policy on the
+    first attempt, because draft/final stages already succeed with that path.
+    Only apply stage-specific retry tuning after a first failure so the letter
+    stage does not diverge from the working CV writer load path unnecessarily.
     """
 
     env = dict(run_env or {})
+    env.setdefault("CVMATCH_FORCE_GPU", "0")
+    env.setdefault("CVMATCH_DISABLE_TORCH_COMPILE", "1")
+    env.setdefault("CVMATCH_KEEP_SELECTED_STAGE_MODEL", "1")
+    # Intentional: cover-letter stages keep the user-selected writer model
+    # locked even under survival-mode retries. Product policy here is to
+    # rebalance memory, not silently downshift to a smaller writer model.
+    env.setdefault("CVMATCH_SURVIVAL_IGNORE_SELECTED_MODEL", "0")
+    if attempt <= 1:
+        # First attempt: stay on the same writer-aligned path as the CV stages.
+        # Do not tighten GPU budget/headroom here; that tuning is only for
+        # retries, otherwise cover-letter load behavior diverges from draft/final.
+        _set_stage_value(
+            env,
+            "CVMATCH_PREFER_RAM_OFFLOAD",
+            "0",
+            generic_defaults=_GENERIC_PARENT_DEFAULTS["CVMATCH_PREFER_RAM_OFFLOAD"],
+        )
+        _set_stage_value(
+            env,
+            "CVMATCH_FORCE_DISK_OFFLOAD",
+            "1",
+            generic_defaults=_GENERIC_PARENT_DEFAULTS["CVMATCH_FORCE_DISK_OFFLOAD"],
+        )
+        return env
 
     gpu_cap_gb = _recommend_cover_letter_gpu_cap_gb(
         total_vram_gb,
@@ -134,8 +158,9 @@ def apply_cover_letter_subprocess_memory_profile(
         attempt=attempt,
     )
 
-    # Override generic launcher defaults for cover-letter subprocesses while
-    # preserving host-specific explicit overrides inherited from the parent env.
+    # Retry path: preserve the selected model, keep disk-offload compatibility
+    # with the writer path, and re-enable RAM-assist eligibility for the
+    # in-process recovery branch inside QwenManager.
     _set_stage_value(
         env,
         "CVMATCH_PREFER_RAM_OFFLOAD",
@@ -148,34 +173,18 @@ def apply_cover_letter_subprocess_memory_profile(
         "1",
         generic_defaults=_GENERIC_PARENT_DEFAULTS["CVMATCH_FORCE_DISK_OFFLOAD"],
     )
-    env.setdefault("CVMATCH_FORCE_GPU", "0")
-    env.setdefault("CVMATCH_DISABLE_TORCH_COMPILE", "1")
-    env.setdefault("CVMATCH_KEEP_SELECTED_STAGE_MODEL", "1")
-    # Intentional: cover-letter stages keep the user-selected writer model
-    # locked even under survival-mode retries. Product policy here is to
-    # rebalance memory, not silently downshift to a smaller writer model.
-    env.setdefault("CVMATCH_SURVIVAL_IGNORE_SELECTED_MODEL", "0")
     _set_stage_value(
         env,
         "CVMATCH_MAX_MEMORY_GPU_GB",
         f"{gpu_cap_gb:.2f}",
         generic_defaults=_GENERIC_PARENT_DEFAULTS["CVMATCH_MAX_MEMORY_GPU_GB"],
     )
-
-    if attempt > 1:
-        env.setdefault("CVMATCH_SURVIVAL_MODE", "1")
-        _set_stage_value(
-            env,
-            "CVMATCH_VRAM_HEADROOM_GB",
-            f"{headroom_gb:.2f}",
-            generic_defaults=_GENERIC_PARENT_DEFAULTS["CVMATCH_VRAM_HEADROOM_GB"],
-        )
-    else:
-        _set_stage_value(
-            env,
-            "CVMATCH_VRAM_HEADROOM_GB",
-            f"{headroom_gb:.2f}",
-            generic_defaults=_GENERIC_PARENT_DEFAULTS["CVMATCH_VRAM_HEADROOM_GB"],
-        )
+    env.setdefault("CVMATCH_SURVIVAL_MODE", "1")
+    _set_stage_value(
+        env,
+        "CVMATCH_VRAM_HEADROOM_GB",
+        f"{headroom_gb:.2f}",
+        generic_defaults=_GENERIC_PARENT_DEFAULTS["CVMATCH_VRAM_HEADROOM_GB"],
+    )
 
     return env
