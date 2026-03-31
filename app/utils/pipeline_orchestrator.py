@@ -760,10 +760,30 @@ class FinalCVPhase:
                     f"[ALIGN] Coverage insuffisante, regeneration final ({retry_count}/{retry_budget})..."
                 )
 
+                retry_critic_payload = (
+                    dict(critic_json_for_final)
+                    if isinstance(critic_json_for_final, dict)
+                    else {}
+                )
+                if isinstance(state.cv_json_final, dict) and state.cv_json_final:
+                    try:
+                        from .cv_payload_diagnostics import compact_cv_payload_for_retry
+
+                        previous_payload = compact_cv_payload_for_retry(
+                            state.cv_json_final
+                        )
+                    except Exception:
+                        previous_payload = copy.deepcopy(state.cv_json_final)
+                    if previous_payload:
+                        retry_critic_payload["previous_cv_payload"] = previous_payload
+
                 if self._augment_critic_feedback:
-                    critic_json_for_final = self._augment_critic_feedback(
-                        critic_json_for_final, state.alignment_audit
+                    retry_critic_payload = self._augment_critic_feedback(
+                        retry_critic_payload, state.alignment_audit
                     )
+                if not isinstance(retry_critic_payload, dict):
+                    retry_critic_payload = {}
+                critic_json_for_final = retry_critic_payload
 
                 try:
                     if state.use_subprocess and self._run_subprocess:
@@ -771,7 +791,7 @@ class FinalCVPhase:
                             "final",
                             {
                                 "profile_json": state.profile_json,
-                                "critic_json": critic_json_for_final,
+                                "critic_json": retry_critic_payload,
                             },
                         )
                     else:
@@ -780,7 +800,7 @@ class FinalCVPhase:
                         if self._generate_final:
                             candidate_final = self._generate_final(
                                 state.profile_json,
-                                critic_json_for_final,
+                                retry_critic_payload,
                                 state.progress_callback,
                             )
                 except Exception as exc:
@@ -794,12 +814,12 @@ class FinalCVPhase:
 
                 if self._postprocess_candidate:
                     candidate_final = self._postprocess_candidate(
-                        candidate_final, critic_json_for_final
+                        candidate_final, retry_critic_payload
                     )
 
                 if self._score_alignment:
                     candidate_audit = self._score_alignment(
-                        candidate_final, critic_json_for_final
+                        candidate_final, retry_critic_payload
                     )
                     logger.info(
                         "CV alignment retry %s/%s: exact=%.1f family=%.1f overall=%.1f sufficient=%s",

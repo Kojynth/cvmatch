@@ -4168,6 +4168,7 @@ JOB_OFFER_TEXT:
         stage: str,
     ) -> Dict[str, str]:
         from ..utils.cv_offer_term_routing import format_section_keyword_guidance
+        from ..utils.cv_payload_diagnostics import compact_cv_payload_for_retry
 
         offer_keywords = self._get_offer_keywords_json()
         offer_text = self._prepare_offer_text(
@@ -4213,6 +4214,7 @@ JOB_OFFER_TEXT:
         critic_payload: Dict[str, Any] = {}
         critic_block = ""
         section_guidance_block = ""
+        previous_cv_block = ""
         if critic_json:
             critic_payload = self._sanitize_critic_json(
                 critic_json, profile_json=profile_json
@@ -4232,6 +4234,16 @@ JOB_OFFER_TEXT:
                         "\n\nSECTION_KEYWORD_GUIDANCE (route these offer terms to the best sections):\n"
                         f"{_trim_text(section_guidance, 900)}"
                     )
+            previous_payload = compact_cv_payload_for_retry(
+                critic_json.get("previous_cv_payload")
+                if isinstance(critic_json, dict)
+                else None
+            )
+            if previous_payload:
+                previous_cv_block = (
+                    "\n\nPREVIOUS_CV_JSON (best previous candidate; improve incrementally):\n"
+                    f"{_trim_text(json.dumps(previous_payload, indent=2, ensure_ascii=False), 1800)}"
+                )
 
         user_instruction_block = ""
         user_instruction = str(self.user_instruction or "").strip()
@@ -4259,6 +4271,7 @@ PROFILE_JSON (source of truth):
 {matched_keywords_block}
 {critic_block}
 {section_guidance_block}
+{previous_cv_block}
 {user_instruction_block}
 
 OUTPUT RULES:
@@ -4306,6 +4319,7 @@ OUTPUT RULES:
             user_prompt += (
                 "\n\nRevise using CRITIC_JSON guidance. "
                 "Use SECTION_KEYWORD_GUIDANCE to redistribute missing offer terms into the most appropriate sections. "
+                "If PREVIOUS_CV_JSON is provided, treat it as a baseline candidate: preserve strong sections and improve weak/missing areas rather than restarting from scratch. "
                 "Include must_keep_facts, but also use other relevant facts from PROFILE_JSON. "
                 "Do not include critique or instructions in any field."
             )
@@ -4612,6 +4626,11 @@ OUTPUT RULES:
         from pydantic import ValidationError
         from ..schemas.cv_schema import CVJSON
         from ..utils.json_strict import generate_json_with_schema, JsonStrictError
+        from ..utils.cv_payload_diagnostics import (
+            compact_cv_payload_for_retry,
+            is_sparse_generated_cv_payload,
+            stabilize_sparse_payload_with_previous,
+        )
 
         messages = self._build_cv_json_messages(
             profile_json=profile_json,
@@ -4625,6 +4644,11 @@ OUTPUT RULES:
                 or critic_json.get("retry_guidance")
             )
         )
+        previous_cv_payload = {}
+        if isinstance(critic_json, dict):
+            previous_cv_payload = compact_cv_payload_for_retry(
+                critic_json.get("previous_cv_payload")
+            )
         try:
             strict_payload = generate_json_with_schema(
                 role="generator",
@@ -4639,7 +4663,43 @@ OUTPUT RULES:
                 profile_json=profile_json,
                 stage="final_strict",
             )
-            return CVJSON.model_validate(strict_payload).model_dump()
+            validated_payload = CVJSON.model_validate(strict_payload).model_dump()
+            if alignment_retry_active and is_sparse_generated_cv_payload(
+                validated_payload,
+                profile_json=profile_json,
+            ):
+                try:
+                    stabilized_payload = stabilize_sparse_payload_with_previous(
+                        validated_payload,
+                        previous_payload=previous_cv_payload,
+                        profile_json=profile_json,
+                    )
+                    stabilized_payload = self._ensure_required_cv_fields(
+                        cv_json=stabilized_payload,
+                        profile_json=profile_json,
+                        stage="final_strict_stabilized",
+                    )
+                    stabilized_payload = CVJSON.model_validate(
+                        stabilized_payload
+                    ).model_dump()
+                    if not is_sparse_generated_cv_payload(
+                        stabilized_payload,
+                        profile_json=profile_json,
+                    ):
+                        logger.info(
+                            "Strict CVJSON final sparse payload stabilized using previous retry candidate."
+                        )
+                        return stabilized_payload
+                except Exception as stabilize_exc:
+                    logger.warning(
+                        "Strict CVJSON sparse stabilization failed: %s",
+                        stabilize_exc,
+                    )
+                logger.warning(
+                    "Strict CVJSON final remained sparse during alignment retry; switching to creative non-strict regeneration."
+                )
+                raise JsonStrictError("strict final sparse payload during alignment retry")
+            return validated_payload
         except JsonStrictError as exc:
             if self._is_strict_missing_required_error(exc):
                 logger.warning(
