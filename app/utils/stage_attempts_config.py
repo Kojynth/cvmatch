@@ -10,7 +10,7 @@ DEFAULT_STAGE_ATTEMPTS: Dict[str, int] = {
     "draft": 3,
     "critic": 2,
     "final": 3,
-    "cover_letter": 2,
+    "cover_letter": 3,
     "cover_letter_critic": 2,
 }
 
@@ -67,4 +67,3 @@ def resolve_stage_timeout_seconds(
     if "CVMATCH_STAGE_TIMEOUT_SECONDS" in env_map:
         timeout = _safe_int(env_map.get("CVMATCH_STAGE_TIMEOUT_SECONDS"), timeout)
     return max(0, timeout)
-
