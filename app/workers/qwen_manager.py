@@ -437,6 +437,9 @@ class QwenManager:
 
         return is_writer_stage_survival(stage_key)
 
+    def _is_stage_subprocess_runtime(self) -> bool:
+        return bool(self._get_runtime_stage_name())
+
     def _get_survival_writer_min_size_gb(self) -> float:
 
         custom = self.custom_parameters or {}
@@ -3776,8 +3779,13 @@ class QwenManager:
                         progress_callback=progress_callback,
                     )
                     if not recovery_ready:
-                        raise RuntimeError(
-                            "VRAM cleanup incomplete after wait; fresh subprocess retry required."
+                        if self._is_stage_subprocess_runtime():
+                            raise RuntimeError(
+                                "VRAM cleanup incomplete after wait; fresh subprocess retry required."
+                            )
+                        logger.warning(
+                            "VRAM cleanup incomplete after wait during in-process load retry; "
+                            "continuing with same-process recovery because no stage subprocess runtime is active."
                         )
                     return self.load_model(progress_callback, allow_fallback=False)
 
@@ -4027,8 +4035,13 @@ class QwenManager:
                 except Exception:
                     pass
                 if not recovery_ready:
-                    raise RuntimeError(
-                        "VRAM cleanup incomplete after wait; fresh subprocess retry required."
+                    if self._is_stage_subprocess_runtime():
+                        raise RuntimeError(
+                            "VRAM cleanup incomplete after wait; fresh subprocess retry required."
+                        )
+                    logger.warning(
+                        "VRAM cleanup incomplete after wait during in-process load exception recovery; "
+                        "continuing with same-process retry because no stage subprocess runtime is active."
                     )
                 return self.load_model(progress_callback, allow_fallback=False)
 

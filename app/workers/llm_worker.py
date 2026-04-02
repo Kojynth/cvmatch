@@ -1580,19 +1580,26 @@ class CVGenerationWorker(QThread):
         baseline_free_vram_gb: float = 0.0,
     ) -> None:
         stage_key = str(stage or "").strip().lower()
-        if stage_key not in {"cover_letter", "cover_letter_critic"}:
-            return
+        long_wait_stage = stage_key in {"cover_letter", "cover_letter_critic"}
 
         try:
-            wait_total_s = float(os.getenv("CVMATCH_STAGE_RETRY_WAIT_SECONDS", "10"))
-        except Exception:
-            wait_total_s = 10.0
-        try:
-            initial_wait_s = float(
-                os.getenv("CVMATCH_STAGE_RETRY_INITIAL_WAIT_SECONDS", "3")
+            wait_total_s = float(
+                os.getenv(
+                    "CVMATCH_STAGE_RETRY_WAIT_SECONDS",
+                    "10" if long_wait_stage else "5",
+                )
             )
         except Exception:
-            initial_wait_s = 3.0
+            wait_total_s = 10.0 if long_wait_stage else 5.0
+        try:
+            initial_wait_s = float(
+                os.getenv(
+                    "CVMATCH_STAGE_RETRY_INITIAL_WAIT_SECONDS",
+                    "3" if long_wait_stage else "1",
+                )
+            )
+        except Exception:
+            initial_wait_s = 3.0 if long_wait_stage else 1.0
         try:
             poll_wait_s = float(os.getenv("CVMATCH_STAGE_RETRY_POLL_SECONDS", "1"))
         except Exception:
