@@ -438,7 +438,12 @@ class QwenManager:
         return is_writer_stage_survival(stage_key)
 
     def _is_stage_subprocess_runtime(self) -> bool:
-        return bool(self._get_runtime_stage_name())
+        stage_env = str(os.getenv("CVMATCH_STAGE_NAME", "") or "").strip().lower()
+        if not stage_env:
+            return False
+        attempt_env = str(os.getenv("CVMATCH_STAGE_ATTEMPT", "") or "").strip()
+        attempts_env = str(os.getenv("CVMATCH_STAGE_ATTEMPTS", "") or "").strip()
+        return bool(stage_env and (attempt_env or attempts_env))
 
     def _get_survival_writer_min_size_gb(self) -> float:
 
