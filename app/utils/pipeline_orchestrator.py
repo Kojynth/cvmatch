@@ -33,6 +33,8 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Protocol, Tuple
 
+from .memory_debug import log_memory_snapshot
+
 try:
     from ..config import DEFAULT_PII_CONFIG
     from ..logging.safe_logger import get_safe_logger
@@ -1626,10 +1628,29 @@ class PipelineOrchestrator:
                 )
                 continue
 
+            log_memory_snapshot(
+                label="phase_start",
+                stage=phase.name,
+                extra={
+                    "subprocess_mode": state.use_subprocess,
+                    "runtime_mode": state.runtime_mode,
+                },
+                logger_override=logger,
+            )
             result = self._execute_phase_with_adaptive_recovery(
                 phase=phase,
                 state=state,
                 adaptive_enabled=adaptive_enabled,
+            )
+            log_memory_snapshot(
+                label="phase_end",
+                stage=phase.name,
+                extra={
+                    "phase_status": result.status.name,
+                    "subprocess_mode": state.use_subprocess,
+                    "runtime_mode": state.runtime_mode,
+                },
+                logger_override=logger,
             )
             results.append(result)
             state.phase_results.append(result)

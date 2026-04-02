@@ -103,12 +103,14 @@ from ..utils.stage_attempts_config import (
 from ..utils.stage_subprocess_utils import (
     build_stage_subprocess_env,
     extract_stage_subprocess_error,
+    extract_stage_subprocess_memory_lines,
     is_transient_stage_memory_error,
     persist_stage_subprocess_diagnostics,
 )
 from ..utils.stage_memory_profiles import (
     apply_cover_letter_subprocess_memory_profile,
 )
+from ..utils.memory_debug import log_memory_snapshot
 
 
 def _normalize_template_name(template: Optional[str]) -> str:
@@ -1329,9 +1331,7 @@ class CVGenerationWorker(QThread):
             total_vram_gb = 0.0
             try:
                 total_vram_gb = float(
-                    (getattr(gpu_manager, "gpu_info", {}) or {}).get(
-                        "total_memory_gb"
-                    )
+                    (getattr(gpu_manager, "gpu_info", {}) or {}).get("total_memory_gb")
                     or 0.0
                 )
             except Exception:
@@ -1382,6 +1382,23 @@ class CVGenerationWorker(QThread):
                     )
                     run_env.setdefault("CVMATCH_FORCE_GPU", "0")
                     run_env.setdefault("CVMATCH_KEEP_SELECTED_STAGE_MODEL", "1")
+                log_memory_snapshot(
+                    label="parent_pre_subprocess",
+                    stage=stage_key,
+                    attempt=attempt,
+                    attempts=stage_attempts,
+                    extra={
+                        "subprocess": True,
+                        "survival_mode": run_env.get("CVMATCH_SURVIVAL_MODE", "0"),
+                        "prefer_ram_offload": run_env.get("CVMATCH_PREFER_RAM_OFFLOAD"),
+                        "force_disk_offload": run_env.get("CVMATCH_FORCE_DISK_OFFLOAD"),
+                        "gpu_cap_gb": run_env.get("CVMATCH_MAX_MEMORY_GPU_GB"),
+                        "cpu_pct": run_env.get("CVMATCH_MAX_MEMORY_CPU_PERCENT"),
+                        "cpu_headroom_gb": run_env.get("CVMATCH_CPU_HEADROOM_GB"),
+                        "vram_headroom_gb": run_env.get("CVMATCH_VRAM_HEADROOM_GB"),
+                    },
+                    logger_override=logger,
+                )
 
                 run_kwargs = {
                     "args": cmd,
@@ -1418,6 +1435,16 @@ class CVGenerationWorker(QThread):
                     detail_with_diag = (
                         f"{details} (diagnostic: {diag_path})" if diag_path else details
                     )
+                    for memory_line in extract_stage_subprocess_memory_lines(
+                        stdout, stderr
+                    ):
+                        logger.info(
+                            "Stage subprocess memory trace [%s %s/%s]: %s",
+                            stage_key,
+                            attempt,
+                            stage_attempts,
+                            memory_line,
+                        )
                     last_error = detail_with_diag
                     try:
                         self.qwen_manager._record_failure(
@@ -1441,6 +1468,27 @@ class CVGenerationWorker(QThread):
                 if result.returncode != 0:
                     stderr = str(result.stderr or "")
                     stdout = str(result.stdout or "")
+                    for memory_line in extract_stage_subprocess_memory_lines(
+                        stdout, stderr
+                    ):
+                        logger.info(
+                            "Stage subprocess memory trace [%s %s/%s]: %s",
+                            stage_key,
+                            attempt,
+                            stage_attempts,
+                            memory_line,
+                        )
+                    log_memory_snapshot(
+                        label="parent_post_subprocess_failure",
+                        stage=stage_key,
+                        attempt=attempt,
+                        attempts=stage_attempts,
+                        extra={
+                            "return_code": result.returncode,
+                            "subprocess": True,
+                        },
+                        logger_override=logger,
+                    )
                     details = extract_stage_subprocess_error(stdout, stderr)
                     diag_path = persist_stage_subprocess_diagnostics(
                         repo_root=repo_root,
@@ -1476,6 +1524,29 @@ class CVGenerationWorker(QThread):
                         f"Stage subprocess failed: {stage}: {detail_with_diag}"
                     )
 
+                stdout = str(result.stdout or "")
+                stderr = str(result.stderr or "")
+                for memory_line in extract_stage_subprocess_memory_lines(
+                    stdout, stderr
+                ):
+                    logger.info(
+                        "Stage subprocess memory trace [%s %s/%s]: %s",
+                        stage_key,
+                        attempt,
+                        stage_attempts,
+                        memory_line,
+                    )
+                log_memory_snapshot(
+                    label="parent_post_subprocess_success",
+                    stage=stage_key,
+                    attempt=attempt,
+                    attempts=stage_attempts,
+                    extra={
+                        "return_code": result.returncode,
+                        "subprocess": True,
+                    },
+                    logger_override=logger,
+                )
                 with open(output_path, "r", encoding="utf-8") as handle:
                     return json.load(handle)
 
@@ -4723,7 +4794,9 @@ OUTPUT RULES:
                 logger.warning(
                     "Strict CVJSON final remained sparse during alignment retry; switching to creative non-strict regeneration."
                 )
-                raise JsonStrictError("strict final sparse payload during alignment retry")
+                raise JsonStrictError(
+                    "strict final sparse payload during alignment retry"
+                )
             return validated_payload
         except JsonStrictError as exc:
             if self._is_strict_missing_required_error(exc):
