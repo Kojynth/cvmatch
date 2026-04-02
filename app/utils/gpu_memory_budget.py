@@ -584,6 +584,7 @@ def _get_percent_from_params(
     custom_parameters: Optional[Dict[str, Any]],
     key: str,
     default_value: int,
+    env_key: Optional[str] = None,
 ) -> int:
     """Get percentage value from custom parameters.
 
@@ -591,18 +592,32 @@ def _get_percent_from_params(
         custom_parameters: Custom parameters dict
         key: Parameter key
         default_value: Default value if not found
+        env_key: Optional environment variable override
 
     Returns:
         Percentage value (10-99) or default
     """
-    raw = (custom_parameters or {}).get(key)
-    try:
-        value = int(raw)
-    except Exception:
-        return default_value
-    if value < 10 or value > 99:
-        return default_value
-    return value
+    def _parse_percent(raw: Any) -> Optional[int]:
+        try:
+            value = int(raw)
+        except Exception:
+            return None
+        if value < 10 or value > 99:
+            return None
+        return value
+
+    if env_key:
+        env_raw = os.getenv(env_key)
+        if env_raw is not None and str(env_raw).strip():
+            env_value = _parse_percent(env_raw)
+            if env_value is not None:
+                return env_value
+
+    custom_value = _parse_percent((custom_parameters or {}).get(key))
+    if custom_value is not None:
+        return custom_value
+
+    return default_value
 
 
 def _get_gb_from_params_or_env(
@@ -767,7 +782,12 @@ def build_max_memory_map_detailed(
     memory_map: Dict[Union[int, str], str] = {0: f"{vram_budget_mib}MiB"}
 
     # CPU memory budget
-    cpu_percent_value = _get_percent_from_params(custom_parameters, "max_memory_cpu_percent", 80)
+    cpu_percent_value = _get_percent_from_params(
+        custom_parameters,
+        "max_memory_cpu_percent",
+        80,
+        env_key="CVMATCH_MAX_MEMORY_CPU_PERCENT",
+    )
     cpu_available_ram_gb = 0.0
     cpu_headroom_gb = 2.0
     cpu_mode = "percent_available"

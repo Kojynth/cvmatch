@@ -13,6 +13,7 @@ from typing import Any, Dict
 
 from .worker_data import ProfileWorkerData
 from .llm_worker import CVGenerationWorker
+from ..utils.memory_debug import log_memory_snapshot
 
 
 def _load_json(path: str) -> Dict[str, Any]:
@@ -27,14 +28,18 @@ def _write_json(path: str, payload: Any) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a single CVMatch LLM stage.")
-    parser.add_argument("--stage", required=True, choices=[
-        "offer_keywords",
-        "draft",
-        "critic",
-        "final",
-        "cover_letter",
-        "cover_letter_critic",
-    ])
+    parser.add_argument(
+        "--stage",
+        required=True,
+        choices=[
+            "offer_keywords",
+            "draft",
+            "critic",
+            "final",
+            "cover_letter",
+            "cover_letter_critic",
+        ],
+    )
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
@@ -66,6 +71,11 @@ def main() -> int:
         worker.qwen_manager.set_runtime_stage(stage)
     except Exception:
         pass
+    log_memory_snapshot(
+        label="stage_runner_start",
+        stage=stage,
+        extra={"subprocess": True},
+    )
     stage_model_id = str(payload.get("stage_model_id") or "").strip()
     if stage_model_id:
         try:
@@ -79,6 +89,11 @@ def main() -> int:
             ) from exc
 
     result: Any
+    log_memory_snapshot(
+        label="stage_runner_before_execute",
+        stage=stage,
+        extra={"subprocess": True},
+    )
     if stage == "offer_keywords":
         result = worker.generate_offer_keywords_json()
     elif stage == "draft":
@@ -114,10 +129,20 @@ def main() -> int:
     else:
         raise SystemExit(f"Unknown stage: {stage}")
 
+    log_memory_snapshot(
+        label="stage_runner_after_execute",
+        stage=stage,
+        extra={"subprocess": True},
+    )
     try:
         worker.qwen_manager.cleanup_memory()
     except Exception:
         pass
+    log_memory_snapshot(
+        label="stage_runner_after_cleanup",
+        stage=stage,
+        extra={"subprocess": True},
+    )
 
     _write_json(args.output, result)
     return 0

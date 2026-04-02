@@ -179,6 +179,8 @@ def apply_cover_letter_subprocess_memory_profile(
         f"{gpu_cap_gb:.2f}",
         generic_defaults=_GENERIC_PARENT_DEFAULTS["CVMATCH_MAX_MEMORY_GPU_GB"],
     )
+    env.setdefault("CVMATCH_MAX_MEMORY_CPU_PERCENT", "92")
+    env.setdefault("CVMATCH_CPU_HEADROOM_GB", "0.75")
     env.setdefault("CVMATCH_SURVIVAL_MODE", "1")
     _set_stage_value(
         env,

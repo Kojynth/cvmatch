@@ -101,6 +101,47 @@ def extract_stage_subprocess_error(
     return " | ".join(tail)[:1200]
 
 
+def is_stage_subprocess_memory_line(line: str) -> bool:
+    lower = str(line or "").strip().lower()
+    if not lower:
+        return False
+    markers = (
+        "[memory]",
+        "max memory map active:",
+        "max memory map computed:",
+        "gpu memory before load:",
+        "model load policy:",
+        "runtime memory-pressure tuning applied:",
+        "disk offload enabled:",
+        "disk offload disabled by config.",
+        "ram assist enabled",
+        "meta tensor failure detected",
+    )
+    return any(marker in lower for marker in markers)
+
+
+def extract_stage_subprocess_memory_lines(
+    stdout: str,
+    stderr: str,
+    *,
+    limit: int = 24,
+) -> List[str]:
+    joined = "\n".join(part for part in [stdout, stderr] if part)
+    if not joined.strip():
+        return []
+
+    lines = []
+    for raw_line in joined.splitlines():
+        line = str(raw_line or "").strip()
+        if not line:
+            continue
+        if is_stage_subprocess_memory_line(line):
+            lines.append(line[:1200])
+    if limit > 0:
+        return lines[:limit]
+    return lines
+
+
 def is_transient_stage_memory_error(details: str) -> bool:
     lowered = str(details or "").lower()
     if not lowered:
