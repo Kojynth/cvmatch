@@ -158,6 +158,8 @@ def is_transient_stage_memory_error(details: str) -> bool:
         "cpu-only device map",
         "hybrid-only policy",
         "insufficient for mixed placement",
+        "vram cleanup incomplete after wait",
+        "fresh subprocess retry required",
     )
     return any(marker in lowered for marker in markers)
 

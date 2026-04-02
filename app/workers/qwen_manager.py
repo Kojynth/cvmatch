@@ -437,6 +437,14 @@ class QwenManager:
 
         return is_writer_stage_survival(stage_key)
 
+    def _is_stage_subprocess_runtime(self) -> bool:
+        stage_env = str(os.getenv("CVMATCH_STAGE_NAME", "") or "").strip().lower()
+        if not stage_env:
+            return False
+        attempt_env = str(os.getenv("CVMATCH_STAGE_ATTEMPT", "") or "").strip()
+        attempts_env = str(os.getenv("CVMATCH_STAGE_ATTEMPTS", "") or "").strip()
+        return bool(stage_env and (attempt_env or attempts_env))
+
     def _get_survival_writer_min_size_gb(self) -> float:
 
         custom = self.custom_parameters or {}
@@ -803,7 +811,7 @@ class QwenManager:
         reason: str,
         progress_callback=None,
         source_exception: Any = None,
-    ) -> None:
+    ) -> bool:
         """Aggressively clean CUDA/Transformers state before retrying the same model."""
         stage_name = self._get_runtime_stage_name() or "unknown"
         expected_free_vram_gb = float(
@@ -847,6 +855,85 @@ class QwenManager:
         except Exception:
             recovered_free_vram_gb = 0.0
 
+        tolerance_gb = 0.75
+        try:
+            tolerance_gb = float(
+                os.getenv("CVMATCH_LOAD_RETRY_RECOVERY_TOLERANCE_GB", "0.75")
+            )
+        except Exception:
+            tolerance_gb = 0.75
+
+        wait_timeout_s = 10.0
+        try:
+            wait_timeout_s = float(
+                os.getenv("CVMATCH_LOAD_RETRY_RECOVERY_WAIT_SECONDS", "10")
+            )
+        except Exception:
+            wait_timeout_s = 10.0
+
+        initial_wait_s = 3.0
+        try:
+            initial_wait_s = float(
+                os.getenv("CVMATCH_LOAD_RETRY_RECOVERY_INITIAL_WAIT_SECONDS", "3")
+            )
+        except Exception:
+            initial_wait_s = 3.0
+
+        poll_wait_s = 1.0
+        try:
+            poll_wait_s = float(
+                os.getenv("CVMATCH_LOAD_RETRY_RECOVERY_POLL_SECONDS", "1")
+            )
+        except Exception:
+            poll_wait_s = 1.0
+
+        recovery_ok = not expected_free_vram_gb or (
+            recovered_free_vram_gb + tolerance_gb >= expected_free_vram_gb
+        )
+        waited_s = 0.0
+        if not recovery_ok and wait_timeout_s > 0:
+            target_free_vram_gb = max(0.0, expected_free_vram_gb - tolerance_gb)
+            logger.warning(
+                "Retry cleanup waiting for VRAM recovery: free=%.2fGB target>=%.2fGB timeout=%ss stage=%s reason=%s",
+                recovered_free_vram_gb,
+                target_free_vram_gb,
+                wait_timeout_s,
+                stage_name,
+                reason,
+            )
+            if progress_callback:
+                try:
+                    progress_callback(
+                        f"[WAIT] VRAM cleanup after load failure: {recovered_free_vram_gb:.2f}GB free, target {target_free_vram_gb:.2f}GB."
+                    )
+                except Exception:
+                    pass
+            first_sleep = min(max(0.0, initial_wait_s), wait_timeout_s)
+            if first_sleep > 0:
+                time.sleep(first_sleep)
+                waited_s += first_sleep
+            while True:
+                try:
+                    recovered_free_vram_gb = float(self._get_free_vram_gb() or 0.0)
+                except Exception:
+                    recovered_free_vram_gb = 0.0
+                recovery_ok = (
+                    recovered_free_vram_gb + tolerance_gb >= expected_free_vram_gb
+                )
+                logger.info(
+                    "Retry cleanup VRAM poll: free=%.2fGB target>=%.2fGB waited=%.1fs stage=%s reason=%s",
+                    recovered_free_vram_gb,
+                    target_free_vram_gb,
+                    waited_s,
+                    stage_name,
+                    reason,
+                )
+                if recovery_ok or waited_s >= wait_timeout_s:
+                    break
+                sleep_s = min(max(0.1, poll_wait_s), wait_timeout_s - waited_s)
+                time.sleep(sleep_s)
+                waited_s += sleep_s
+
         log_memory_snapshot(
             label="load_retry_post_cleanup",
             stage=stage_name,
@@ -862,22 +949,26 @@ class QwenManager:
                     if recovered_free_vram_gb > 0
                     else None
                 ),
+                "recovery_wait_s": f"{waited_s:.1f}",
             },
             logger_override=logger,
         )
         if expected_free_vram_gb > 0 and recovered_free_vram_gb > 0:
-            if recovered_free_vram_gb + 0.75 < expected_free_vram_gb:
+            if recovered_free_vram_gb + tolerance_gb < expected_free_vram_gb:
                 logger.warning(
-                    "Retry cleanup did not restore VRAM near load-start budget: recovered=%.2fGB expected~=%.2fGB",
+                    "Retry cleanup did not restore VRAM near load-start budget: recovered=%.2fGB expected~=%.2fGB waited=%.1fs",
                     recovered_free_vram_gb,
                     expected_free_vram_gb,
+                    waited_s,
                 )
             else:
                 logger.info(
-                    "Retry cleanup restored VRAM close to load-start budget: recovered=%.2fGB expected~=%.2fGB",
+                    "Retry cleanup restored VRAM close to load-start budget: recovered=%.2fGB expected~=%.2fGB waited=%.1fs",
                     recovered_free_vram_gb,
                     expected_free_vram_gb,
+                    waited_s,
                 )
+        return recovery_ok
 
     def _get_lowram_profile(self, force_refresh: bool = False) -> Dict[str, Any]:
         """Delegate to QwenMemoryManager for LowRAM profile."""
@@ -3688,10 +3779,19 @@ class QwenManager:
                         reason="preload_memory_check",
                         progress_callback=progress_callback,
                     )
-                    self._reset_partial_load_state_for_retry(
+                    recovery_ready = self._reset_partial_load_state_for_retry(
                         reason="preload_memory_check",
                         progress_callback=progress_callback,
                     )
+                    if not recovery_ready:
+                        if self._is_stage_subprocess_runtime():
+                            raise RuntimeError(
+                                "VRAM cleanup incomplete after wait; fresh subprocess retry required."
+                            )
+                        logger.warning(
+                            "VRAM cleanup incomplete after wait during in-process load retry; "
+                            "continuing with same-process recovery because no stage subprocess runtime is active."
+                        )
                     return self.load_model(progress_callback, allow_fallback=False)
 
                 if allow_fallback:
@@ -3930,7 +4030,7 @@ class QwenManager:
                     reason="load_exception",
                     progress_callback=progress_callback,
                 )
-                self._reset_partial_load_state_for_retry(
+                recovery_ready = self._reset_partial_load_state_for_retry(
                     reason="load_exception",
                     progress_callback=progress_callback,
                     source_exception=e,
@@ -3939,6 +4039,15 @@ class QwenManager:
                     del e
                 except Exception:
                     pass
+                if not recovery_ready:
+                    if self._is_stage_subprocess_runtime():
+                        raise RuntimeError(
+                            "VRAM cleanup incomplete after wait; fresh subprocess retry required."
+                        )
+                    logger.warning(
+                        "VRAM cleanup incomplete after wait during in-process load exception recovery; "
+                        "continuing with same-process retry because no stage subprocess runtime is active."
+                    )
                 return self.load_model(progress_callback, allow_fallback=False)
 
             # If selected repo is gated/unavailable, switch to an open fallback model.

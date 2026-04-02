@@ -1337,6 +1337,13 @@ class CVGenerationWorker(QThread):
             except Exception:
                 total_vram_gb = 0.0
             for attempt in range(1, stage_attempts + 1):
+                baseline_free_vram_gb = 0.0
+                try:
+                    baseline_free_vram_gb = float(
+                        self.qwen_manager._get_free_vram_gb() or 0.0
+                    )
+                except Exception:
+                    baseline_free_vram_gb = 0.0
                 run_env = build_stage_subprocess_env(
                     base_env=dict(os.environ),
                     stage=stage,
@@ -1512,6 +1519,12 @@ class CVGenerationWorker(QThread):
                         pass
                     is_transient = is_transient_stage_memory_error(details)
                     if is_transient and attempt < stage_attempts:
+                        self._wait_for_stage_retry_memory_recovery(
+                            stage=stage_key,
+                            attempt=attempt,
+                            attempts=stage_attempts,
+                            baseline_free_vram_gb=baseline_free_vram_gb,
+                        )
                         logger.warning(
                             "Stage subprocess memory failure, retrying: stage=%s attempt=%s/%s detail=%s",
                             stage,
@@ -1557,6 +1570,123 @@ class CVGenerationWorker(QThread):
                 output_path.unlink(missing_ok=True)
             except Exception:
                 pass
+
+    def _wait_for_stage_retry_memory_recovery(
+        self,
+        *,
+        stage: str,
+        attempt: int,
+        attempts: int,
+        baseline_free_vram_gb: float = 0.0,
+    ) -> None:
+        stage_key = str(stage or "").strip().lower()
+        long_wait_stage = stage_key in {"cover_letter", "cover_letter_critic"}
+
+        try:
+            wait_total_s = float(
+                os.getenv(
+                    "CVMATCH_STAGE_RETRY_WAIT_SECONDS",
+                    "10" if long_wait_stage else "5",
+                )
+            )
+        except Exception:
+            wait_total_s = 10.0 if long_wait_stage else 5.0
+        try:
+            initial_wait_s = float(
+                os.getenv(
+                    "CVMATCH_STAGE_RETRY_INITIAL_WAIT_SECONDS",
+                    "3" if long_wait_stage else "1",
+                )
+            )
+        except Exception:
+            initial_wait_s = 3.0 if long_wait_stage else 1.0
+        try:
+            poll_wait_s = float(os.getenv("CVMATCH_STAGE_RETRY_POLL_SECONDS", "1"))
+        except Exception:
+            poll_wait_s = 1.0
+        try:
+            tolerance_gb = float(
+                os.getenv("CVMATCH_STAGE_RETRY_VRAM_TOLERANCE_GB", "0.5")
+            )
+        except Exception:
+            tolerance_gb = 0.5
+
+        if wait_total_s <= 0:
+            return
+
+        waited_s = 0.0
+        target_free_vram_gb = max(
+            0.0, float(baseline_free_vram_gb or 0.0) - tolerance_gb
+        )
+        logger.info(
+            "Waiting before next stage subprocess retry: stage=%s next_attempt=%s/%s baseline_vram=%.2fGB target>=%.2fGB timeout=%ss",
+            stage_key,
+            attempt + 1,
+            attempts,
+            float(baseline_free_vram_gb or 0.0),
+            target_free_vram_gb,
+            wait_total_s,
+        )
+
+        first_sleep = min(max(0.0, initial_wait_s), wait_total_s)
+        if first_sleep > 0:
+            time.sleep(first_sleep)
+            waited_s += first_sleep
+
+        while True:
+            current_free_vram_gb = 0.0
+            try:
+                current_free_vram_gb = float(
+                    self.qwen_manager._get_free_vram_gb() or 0.0
+                )
+            except Exception:
+                current_free_vram_gb = 0.0
+            log_memory_snapshot(
+                label="parent_retry_wait",
+                stage=stage_key,
+                attempt=attempt + 1,
+                attempts=attempts,
+                extra={
+                    "baseline_free_vram_gb": (
+                        f"{baseline_free_vram_gb:.2f}"
+                        if baseline_free_vram_gb > 0
+                        else None
+                    ),
+                    "target_free_vram_gb": (
+                        f"{target_free_vram_gb:.2f}"
+                        if target_free_vram_gb > 0
+                        else None
+                    ),
+                    "waited_s": f"{waited_s:.1f}",
+                    "subprocess": True,
+                },
+                logger_override=logger,
+            )
+            if target_free_vram_gb <= 0 or current_free_vram_gb >= target_free_vram_gb:
+                logger.info(
+                    "Retry wait complete: stage=%s next_attempt=%s/%s current_vram=%.2fGB target>=%.2fGB waited=%.1fs",
+                    stage_key,
+                    attempt + 1,
+                    attempts,
+                    current_free_vram_gb,
+                    target_free_vram_gb,
+                    waited_s,
+                )
+                return
+            if waited_s >= wait_total_s:
+                logger.warning(
+                    "Retry wait timeout: stage=%s next_attempt=%s/%s current_vram=%.2fGB target>=%.2fGB waited=%.1fs",
+                    stage_key,
+                    attempt + 1,
+                    attempts,
+                    current_free_vram_gb,
+                    target_free_vram_gb,
+                    waited_s,
+                )
+                return
+            sleep_s = min(max(0.1, poll_wait_s), wait_total_s - waited_s)
+            time.sleep(sleep_s)
+            waited_s += sleep_s
 
     def _build_profile_payload(self) -> Dict[str, Any]:
         personal_info = dict(self.profile_data.extracted_personal_info or {})
