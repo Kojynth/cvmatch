@@ -5,10 +5,12 @@ QwenManager
 Gestionnaire pour les modèles IA (Qwen, etc.). Nommé QwenManager car historique.
 Extrait de llm_worker.py pour réduire la taille du fichier principal.
 """
+
 import inspect
 import os
 import re
 import time
+import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -46,19 +48,36 @@ except ImportError as e:
 
     class MockTorch:
         device = lambda x: None
-        cuda = type("cuda", (), {"is_available": lambda: False, "empty_cache": lambda: None})()
-        no_grad = lambda: type("context", (), {"__enter__": lambda self: None, "__exit__": lambda self, *args: None})()
+        cuda = type(
+            "cuda", (), {"is_available": lambda: False, "empty_cache": lambda: None}
+        )()
+        no_grad = lambda: type(
+            "context",
+            (),
+            {"__enter__": lambda self: None, "__exit__": lambda self, *args: None},
+        )()
         float16 = "float16"
         float32 = "float32"
 
     torch = MockTorch()
 
-from ..utils.generation_role_params import DEFAULT_ROLE_PARAMS as DEFAULT_ROLE_PARAMS_EXTRACTED
-from ..utils.gpu_memory_budget import build_max_memory_map_detailed as build_max_memory_map_util
-from ..utils.gpu_memory_budget import estimate_model_size_gb as estimate_model_size_gb_budget
+from ..utils.generation_role_params import (
+    DEFAULT_ROLE_PARAMS as DEFAULT_ROLE_PARAMS_EXTRACTED,
+)
+from ..utils.gpu_memory_budget import (
+    build_max_memory_map_detailed as build_max_memory_map_util,
+)
+from ..utils.gpu_memory_budget import (
+    estimate_model_size_gb as estimate_model_size_gb_budget,
+)
 from ..utils.gpu_memory_budget import get_vram_headroom_gb as get_vram_headroom_util
-from ..utils.language_policy import normalize_language_code as normalize_language_code_policy
-from ..utils.memory_preflight_check import check_memory_before_load as check_memory_before_load_preflight
+from ..utils.language_policy import (
+    normalize_language_code as normalize_language_code_policy,
+)
+from ..utils.memory_debug import log_memory_snapshot
+from ..utils.memory_preflight_check import (
+    check_memory_before_load as check_memory_before_load_preflight,
+)
 from ..utils.model_registry import model_registry
 from ..utils.model_resolution import ModelCandidate
 from ..utils.model_resolution import select_fallback_model as select_fallback_model_util
@@ -76,6 +95,7 @@ from ..utils.worker_base import trim_text as trim_text_worker
 try:
     from ..utils.gpu_utils import gpu_manager
 except ImportError:
+
     class MockGPUManager:
         gpu_info = {"available": False}
 
@@ -99,11 +119,14 @@ except ImportError:
 try:
     from ..utils.model_optimizer import model_optimizer
 except ImportError:
+
     class MockModelOptimizer:
         def check_hf_xet_status(self):
             return {"optimizations_active": False}
 
-        def optimize_model_download(self, model_name, progress_callback=None, force_download=False):
+        def optimize_model_download(
+            self, model_name, progress_callback=None, force_download=False
+        ):
             if progress_callback:
                 progress_callback("Téléchargement standard...")
             return model_name
@@ -119,6 +142,7 @@ _trim_text = trim_text_worker
 
 class QwenManager:
     """Gestionnaire pour les modèles IA avec support multi-modèles."""
+
     _instance = None
 
     _model = None
@@ -184,6 +208,7 @@ class QwenManager:
         self._meta_recovery_mode: bool = False
         self._ram_assist_mode: bool = False
         self._hybrid_cpu_reload_active: bool = False
+        self._last_load_start_free_vram_gb: float = 0.0
 
         self._runtime_stage_name: str = ""
 
@@ -199,7 +224,9 @@ class QwenManager:
 
         # Initialize memory manager after custom_parameters are set
 
-        self._memory_manager = QwenMemoryManager(custom_parameters=self.custom_parameters)
+        self._memory_manager = QwenMemoryManager(
+            custom_parameters=self.custom_parameters
+        )
 
     def _load_selected_model_config(self):
         """Charge la configuration du modèle sélectionné par l'utilisateur."""
@@ -228,9 +255,13 @@ class QwenManager:
                 self._selected_model_id = str(config.model_id or "").strip()
                 self.model_name = model_info.model_path
                 self.current_model_id = config.model_id
-                self.current_loader = getattr(model_info, "loader", "transformers") or "transformers"
+                self.current_loader = (
+                    getattr(model_info, "loader", "transformers") or "transformers"
+                )
 
-                self.role_params = (getattr(model_info, "metadata", None) or {}).get("role_params", {})
+                self.role_params = (getattr(model_info, "metadata", None) or {}).get(
+                    "role_params", {}
+                )
 
                 if getattr(model_info, "quantization", "") == "nf4":
                     self.custom_parameters.setdefault("force_4bit_nf4", True)
@@ -243,9 +274,13 @@ class QwenManager:
                     self.last_model_resolution_note = note
                     logger.warning(note)
 
-                logger.info(f"Configuration modèle: {config.model_id} -> {self.model_name}")
+                logger.info(
+                    f"Configuration modèle: {config.model_id} -> {self.model_name}"
+                )
             else:
-                logger.warning(f"Modele {config.model_id} non trouve, utilisation du registre dynamique")
+                logger.warning(
+                    f"Modele {config.model_id} non trouve, utilisation du registre dynamique"
+                )
 
                 fallback = model_registry.select_profile(
                     {
@@ -259,18 +294,28 @@ class QwenManager:
                     self._selected_model_id = str(fallback.key or "").strip()
                     self.model_name = fallback.model_id
                     self.current_model_id = fallback.key
-                    self.current_loader = getattr(fallback, "loader", None) or "transformers"
+                    self.current_loader = (
+                        getattr(fallback, "loader", None) or "transformers"
+                    )
 
-                    self.role_params = (getattr(fallback, "extra", None) or {}).get("role_params", {})
+                    self.role_params = (getattr(fallback, "extra", None) or {}).get(
+                        "role_params", {}
+                    )
 
                     if getattr(fallback, "quantization", "") == "nf4":
                         self.custom_parameters.setdefault("force_4bit_nf4", True)
-                    logger.info(f"Fallback registre -> {fallback.key} ({self.model_name})")
+                    logger.info(
+                        f"Fallback registre -> {fallback.key} ({self.model_name})"
+                    )
                 else:
-                    logger.warning("Aucun profil registre disponible, conservation du modèle par défaut")
+                    logger.warning(
+                        "Aucun profil registre disponible, conservation du modèle par défaut"
+                    )
 
         except ImportError:
-            logger.warning("Configuration centralisée non disponible, modèle par défaut")
+            logger.warning(
+                "Configuration centralisée non disponible, modèle par défaut"
+            )
         except Exception as e:
             logger.error(f"Erreur chargement config modèle: {e}")
 
@@ -339,21 +384,31 @@ class QwenManager:
 
         target_model_path = str(getattr(model_info, "model_path", "") or "")
 
-        if self.model_loaded and self._current_model_path and self._current_model_path != target_model_path:
+        if (
+            self.model_loaded
+            and self._current_model_path
+            and self._current_model_path != target_model_path
+        ):
             self.unload_model(reason=f"switch model -> {target_id}")
 
         self.model_name = target_model_path
 
         self.current_model_id = target_id
 
-        self.current_loader = getattr(model_info, "loader", "transformers") or "transformers"
+        self.current_loader = (
+            getattr(model_info, "loader", "transformers") or "transformers"
+        )
 
-        self.role_params = (getattr(model_info, "metadata", None) or {}).get("role_params", {})
+        self.role_params = (getattr(model_info, "metadata", None) or {}).get(
+            "role_params", {}
+        )
 
         if getattr(model_info, "quantization", "") == "nf4":
             self.custom_parameters.setdefault("force_4bit_nf4", True)
 
-        note = f"[MODEL_SWITCH] {current_id or 'unknown'} -> {target_id}" + (f" ({reason})" if reason else "")
+        note = f"[MODEL_SWITCH] {current_id or 'unknown'} -> {target_id}" + (
+            f" ({reason})" if reason else ""
+        )
 
         self.last_model_resolution_note = note
 
@@ -456,7 +511,9 @@ class QwenManager:
 
         return max(0.0, default_ceiling)
 
-    def _build_fallback_min_size_candidates(self, stage: Optional[str] = None) -> List[float]:
+    def _build_fallback_min_size_candidates(
+        self, stage: Optional[str] = None
+    ) -> List[float]:
         stage_key = str(stage or self._get_runtime_stage_name()).strip().lower()
         global_floor = self._get_global_fallback_min_size_gb()
         candidates: List[float] = []
@@ -491,7 +548,11 @@ class QwenManager:
         require_memory_fit: bool = True,
     ) -> Optional[Dict[str, str]]:
         stage_key = str(stage or self._get_runtime_stage_name()).strip().lower()
-        prefer_quality_value = self._is_writer_stage(stage_key) if prefer_quality is None else bool(prefer_quality)
+        prefer_quality_value = (
+            self._is_writer_stage(stage_key)
+            if prefer_quality is None
+            else bool(prefer_quality)
+        )
 
         fallback = None
         for min_size in self._build_fallback_min_size_candidates(stage_key):
@@ -509,7 +570,9 @@ class QwenManager:
 
         return None
 
-    def _resolve_role_params(self, role: str, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _resolve_role_params(
+        self, role: str, overrides: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
 
         defaults = dict(self.DEFAULT_ROLE_PARAMS.get(role, {}))
         model_overrides = self.role_params.get(role, {}) if self.role_params else {}
@@ -518,7 +581,11 @@ class QwenManager:
             role_key = str(role or "").strip().lower()
             if role_key in ("generator", "cover_letter", "letter"):
                 recipe = self.UNIVERSAL_WRITER_RECIPE.get(
-                    "cover_letter" if role_key in ("cover_letter", "letter") else "generator",
+                    (
+                        "cover_letter"
+                        if role_key in ("cover_letter", "letter")
+                        else "generator"
+                    ),
                     {},
                 )
                 if recipe:
@@ -581,8 +648,12 @@ class QwenManager:
                 return
             self.model_name = str(getattr(info, "model_path", "") or self.model_name)
             self.current_model_id = selected_id
-            self.current_loader = getattr(info, "loader", "transformers") or "transformers"
-            self.role_params = (getattr(info, "metadata", None) or {}).get("role_params", {})
+            self.current_loader = (
+                getattr(info, "loader", "transformers") or "transformers"
+            )
+            self.role_params = (getattr(info, "metadata", None) or {}).get(
+                "role_params", {}
+            )
             note = (
                 f"[MODEL_LOCK] Restored selected model '{selected_id}' (was '{current_id or 'unknown'}')"
                 + (f" ({reason})" if reason else "")
@@ -636,7 +707,11 @@ class QwenManager:
         runtime = self._runtime_custom_overrides
 
         try:
-            cpu_pct = float(runtime.get("max_memory_cpu_percent") or self.custom_parameters.get("max_memory_cpu_percent") or 0.0)
+            cpu_pct = float(
+                runtime.get("max_memory_cpu_percent")
+                or self.custom_parameters.get("max_memory_cpu_percent")
+                or 0.0
+            )
         except Exception:
             cpu_pct = 0.0
         floor = 95.0 if getattr(self, "_ram_assist_mode", False) else 92.0
@@ -644,7 +719,11 @@ class QwenManager:
             runtime["max_memory_cpu_percent"] = int(floor)
 
         try:
-            headroom = float(runtime.get("cpu_headroom_gb") or self.custom_parameters.get("cpu_headroom_gb") or 2.0)
+            headroom = float(
+                runtime.get("cpu_headroom_gb")
+                or self.custom_parameters.get("cpu_headroom_gb")
+                or 2.0
+            )
         except Exception:
             headroom = 2.0
         cap = 0.5
@@ -655,7 +734,9 @@ class QwenManager:
         runtime["offload_state_dict"] = False
         runtime["disable_torch_compile"] = True
 
-    def _activate_ram_assist_mode(self, *, reason: str = "", progress_callback=None) -> None:
+    def _activate_ram_assist_mode(
+        self, *, reason: str = "", progress_callback=None
+    ) -> None:
         if not self._prefer_ram_offload_mode():
             logger.info("RAM assist ignored: prefer_ram_offload is disabled.")
             return
@@ -683,7 +764,9 @@ class QwenManager:
         lowered = str(error or "").strip().lower()
         return "meta tensor" in lowered or "cannot copy out of meta tensor" in lowered
 
-    def _activate_meta_recovery_mode(self, *, reason: str = "", progress_callback=None) -> None:
+    def _activate_meta_recovery_mode(
+        self, *, reason: str = "", progress_callback=None
+    ) -> None:
         if getattr(self, "_meta_recovery_mode", False):
             return
         self._meta_recovery_mode = True
@@ -703,16 +786,115 @@ class QwenManager:
             except Exception:
                 pass
 
+    @staticmethod
+    def _clear_exception_frames(exc: Any) -> None:
+        """Drop traceback frame locals to release partial model refs before retry."""
+        tb = getattr(exc, "__traceback__", None)
+        if tb is None:
+            return
+        try:
+            traceback.clear_frames(tb)
+        except Exception:
+            pass
+
+    def _reset_partial_load_state_for_retry(
+        self,
+        *,
+        reason: str,
+        progress_callback=None,
+        source_exception: Any = None,
+    ) -> None:
+        """Aggressively clean CUDA/Transformers state before retrying the same model."""
+        stage_name = self._get_runtime_stage_name() or "unknown"
+        expected_free_vram_gb = float(
+            getattr(self, "_last_load_start_free_vram_gb", 0.0) or 0.0
+        )
+        log_memory_snapshot(
+            label="load_retry_pre_cleanup",
+            stage=stage_name,
+            extra={
+                "reason": reason,
+                "expected_free_vram_gb": (
+                    f"{expected_free_vram_gb:.2f}"
+                    if expected_free_vram_gb > 0
+                    else None
+                ),
+            },
+            logger_override=logger,
+        )
+        if source_exception is not None:
+            self._clear_exception_frames(source_exception)
+
+        self.model_loaded = False
+        self._model = None
+        self._tokenizer = None
+        self._device = None
+        self._current_model_path = None
+
+        try:
+            self.cleanup_memory()
+        except Exception:
+            pass
+        time.sleep(0.15)
+        try:
+            self.cleanup_memory()
+        except Exception:
+            pass
+
+        recovered_free_vram_gb = 0.0
+        try:
+            recovered_free_vram_gb = float(self._get_free_vram_gb() or 0.0)
+        except Exception:
+            recovered_free_vram_gb = 0.0
+
+        log_memory_snapshot(
+            label="load_retry_post_cleanup",
+            stage=stage_name,
+            extra={
+                "reason": reason,
+                "expected_free_vram_gb": (
+                    f"{expected_free_vram_gb:.2f}"
+                    if expected_free_vram_gb > 0
+                    else None
+                ),
+                "recovered_free_vram_gb": (
+                    f"{recovered_free_vram_gb:.2f}"
+                    if recovered_free_vram_gb > 0
+                    else None
+                ),
+            },
+            logger_override=logger,
+        )
+        if expected_free_vram_gb > 0 and recovered_free_vram_gb > 0:
+            if recovered_free_vram_gb + 0.75 < expected_free_vram_gb:
+                logger.warning(
+                    "Retry cleanup did not restore VRAM near load-start budget: recovered=%.2fGB expected~=%.2fGB",
+                    recovered_free_vram_gb,
+                    expected_free_vram_gb,
+                )
+            else:
+                logger.info(
+                    "Retry cleanup restored VRAM close to load-start budget: recovered=%.2fGB expected~=%.2fGB",
+                    recovered_free_vram_gb,
+                    expected_free_vram_gb,
+                )
+
     def _get_lowram_profile(self, force_refresh: bool = False) -> Dict[str, Any]:
         """Delegate to QwenMemoryManager for LowRAM profile."""
         if self._memory_manager is None:
             # Fallback if memory manager not yet initialized
 
-            return {"level": "normal", "platform": os.name, "reason": "memory_manager_not_ready"}
+            return {
+                "level": "normal",
+                "platform": os.name,
+                "reason": "memory_manager_not_ready",
+            }
 
         return self._memory_manager.get_lowram_profile(force_refresh=force_refresh)
 
-    def _collect_memory_pressure_snapshot(self, force_refresh: bool = False) -> Dict[str, Any]:
+    def _collect_memory_pressure_snapshot(
+        self, force_refresh: bool = False
+    ) -> Dict[str, Any]:
         """Collect RAM/commit/VRAM signals for non-survival runtime tuning."""
         profile = self._get_lowram_profile(force_refresh=force_refresh) or {}
         lowram_level = str(profile.get("level") or "normal").strip().lower()
@@ -725,7 +907,9 @@ class QwenManager:
         stage_name = self._get_runtime_stage_name()
         writer_stage = self._is_writer_stage(stage_name)
 
-        pressure_level = lowram_level if lowram_level in {"tight", "critical"} else "normal"
+        pressure_level = (
+            lowram_level if lowram_level in {"tight", "critical"} else "normal"
+        )
         if pressure_level == "normal":
             if (
                 (effective_available_gb > 0 and effective_available_gb < 4.0)
@@ -793,7 +977,9 @@ class QwenManager:
             cpu_headroom = 3.0
 
         try:
-            current_util = float(self._optimization_config.get("gpu_memory_utilization") or 0.0)
+            current_util = float(
+                self._optimization_config.get("gpu_memory_utilization") or 0.0
+            )
         except Exception:
             current_util = 0.0
         if current_util <= 0 or current_util > target_util:
@@ -812,7 +998,9 @@ class QwenManager:
                 "max_memory_cpu_percent": cpu_percent,
                 "cpu_headroom_gb": cpu_headroom,
                 "disk_offload": False if self._prefer_ram_offload_mode() else True,
-                "offload_state_dict": False if self._prefer_ram_offload_mode() else True,
+                "offload_state_dict": (
+                    False if self._prefer_ram_offload_mode() else True
+                ),
                 "disable_torch_compile": pressure in {"tight", "critical"},
             }
         )
@@ -933,7 +1121,9 @@ class QwenManager:
             self._memory_manager.record_failure(reason)
 
         else:
-            logger.warning("Failure recorded (no memory manager): %s", str(reason or "")[:240])
+            logger.warning(
+                "Failure recorded (no memory manager): %s", str(reason or "")[:240]
+            )
 
     def _record_success(self, reason: str = "") -> None:
         """Delegate to QwenMemoryManager for success tracking."""
@@ -1055,7 +1245,9 @@ class QwenManager:
         custom = self.custom_parameters or {}
         ignore_selected = True
         if "survival_ignore_selected_model" in custom:
-            ignore_selected = self._to_bool(custom.get("survival_ignore_selected_model"), True)
+            ignore_selected = self._to_bool(
+                custom.get("survival_ignore_selected_model"), True
+            )
 
         raw_env = os.getenv("CVMATCH_SURVIVAL_IGNORE_SELECTED_MODEL")
         if raw_env is not None:
@@ -1071,6 +1263,7 @@ class QwenManager:
 
         try:
             import psutil
+
             available_ram_gb = psutil.virtual_memory().available / (1024**3)
         except Exception:
             available_ram_gb = 0.0
@@ -1148,7 +1341,10 @@ class QwenManager:
 
         # Check recycle policy via memory manager
 
-        if self._memory_manager is not None and self._memory_manager.should_recycle_model():
+        if (
+            self._memory_manager is not None
+            and self._memory_manager.should_recycle_model()
+        ):
             return True
 
         if self._is_survival_mode():
@@ -1168,14 +1364,18 @@ class QwenManager:
 
         total_vram = 0.0
         try:
-            total_vram = float(getattr(gpu_manager, "gpu_info", {}).get("total_memory_gb", 0) or 0)
+            total_vram = float(
+                getattr(gpu_manager, "gpu_info", {}).get("total_memory_gb", 0) or 0
+            )
 
         except Exception:
             total_vram = 0.0
         if total_vram > 0:
             return total_vram
         try:
-            total_vram = float(getattr(gpu_manager, "gpu_info", {}).get("vram_gb", 0) or 0)
+            total_vram = float(
+                getattr(gpu_manager, "gpu_info", {}).get("vram_gb", 0) or 0
+            )
 
         except Exception:
             total_vram = 0.0
@@ -1261,7 +1461,9 @@ class QwenManager:
         from ..utils.json_strict import JsonStrictError, build_lmfe_generation_kwargs
 
         if getattr(self, "current_loader", "transformers") != "transformers":
-            raise JsonStrictError("Strict JSON requires transformers (in-process) loader.")
+            raise JsonStrictError(
+                "Strict JSON requires transformers (in-process) loader."
+            )
 
         if not self.model_loaded:
             self.load_model(
@@ -1372,11 +1574,17 @@ class QwenManager:
                     break
 
             if not model_cached and progress_callback:
-                model_display_name = getattr(self, "current_model_id", self.model_name.split("/")[-1])
+                model_display_name = getattr(
+                    self, "current_model_id", self.model_name.split("/")[-1]
+                )
 
                 progress_callback(f"⏳ Premier téléchargement de {model_display_name}")
-                progress_callback("📥 Le téléchargement peut prendre plusieurs minutes selon votre connexion...")
-                progress_callback("💾 Le modèle sera mis en cache pour les prochaines utilisations")
+                progress_callback(
+                    "📥 Le téléchargement peut prendre plusieurs minutes selon votre connexion..."
+                )
+                progress_callback(
+                    "💾 Le modèle sera mis en cache pour les prochaines utilisations"
+                )
 
         except Exception as e:
             logger.warning(f"Impossible de vérifier le cache: {e}")
@@ -1403,7 +1611,9 @@ class QwenManager:
                 try:
                     from ..utils.model_manager import model_manager
 
-                    info = model_manager.get_model_info(str(model_id or getattr(self, "current_model_id", "") or ""))
+                    info = model_manager.get_model_info(
+                        str(model_id or getattr(self, "current_model_id", "") or "")
+                    )
 
                 except Exception:
                     info = None
@@ -1469,7 +1679,11 @@ class QwenManager:
 
         current_id = getattr(self, "current_model_id", None)
 
-        model_ids = [mid for mid in getattr(model_manager, "available_models", []) if mid and mid != current_id]
+        model_ids = [
+            mid
+            for mid in getattr(model_manager, "available_models", [])
+            if mid and mid != current_id
+        ]
 
         if not model_ids:
             return None
@@ -1490,11 +1704,17 @@ class QwenManager:
                 ModelCandidate(
                     model_id=model_id,
                     model_path=model_path,
-                    required_ram_gb=self._estimate_required_ram_gb(model_name=model_path, model_id=model_id),
+                    required_ram_gb=self._estimate_required_ram_gb(
+                        model_name=model_path, model_id=model_id
+                    ),
                     required_vram_gb=float(getattr(info, "vram_required", 0) or 0),
                     quality_stars=float(getattr(info, "quality_stars", 0) or 0),
                     speed_rating=float(getattr(info, "speed_rating", 0) or 0),
-                    estimated_size_gb=float(_estimate_model_size_gb(model_name=model_path, model_id=model_id)),
+                    estimated_size_gb=float(
+                        _estimate_model_size_gb(
+                            model_name=model_path, model_id=model_id
+                        )
+                    ),
                 )
             )
 
@@ -1669,7 +1889,9 @@ class QwenManager:
             threshold = 0.0
         if threshold <= 0:
             try:
-                total_vram = float(getattr(gpu_manager, "gpu_info", {}).get("total_memory_gb", 0) or 0)
+                total_vram = float(
+                    getattr(gpu_manager, "gpu_info", {}).get("total_memory_gb", 0) or 0
+                )
             except Exception:
                 total_vram = 0.0
             if self._is_low_vram_mode() and total_vram > 0:
@@ -1733,7 +1955,10 @@ class QwenManager:
 
         """
         try:
-            if getattr(self._device, "type", None) == "cuda" and self._should_disable_kv_cache():
+            if (
+                getattr(self._device, "type", None) == "cuda"
+                and self._should_disable_kv_cache()
+            ):
                 free_vram = self._get_free_vram_gb()
 
                 note = f"[WARN] VRAM faible ({free_vram:.1f}GB) : KV cache désactivé."
@@ -1770,7 +1995,11 @@ class QwenManager:
         free_vram_gb = 0.0
 
         try:
-            if TORCH_AVAILABLE and torch.cuda.is_available() and hasattr(torch.cuda, "mem_get_info"):
+            if (
+                TORCH_AVAILABLE
+                and torch.cuda.is_available()
+                and hasattr(torch.cuda, "mem_get_info")
+            ):
                 free_bytes, _ = torch.cuda.mem_get_info()
 
                 free_vram_gb = free_bytes / (1024**3)
@@ -1787,7 +2016,9 @@ class QwenManager:
         survival_cap_gb = 0.0
 
         if is_survival:
-            survival_cap_gb = self._get_survival_gpu_budget_cap_gb(total_vram or free_vram_gb)
+            survival_cap_gb = self._get_survival_gpu_budget_cap_gb(
+                total_vram or free_vram_gb
+            )
 
         # Delegate to utility
 
@@ -1994,7 +2225,9 @@ class QwenManager:
             from ..utils.llama_cpp_server import LlamaCppServer, LlamaCppServerConfig
 
         except Exception as exc:
-            raise RuntimeError("Support llama.cpp indisponible (dépendances manquantes).") from exc
+            raise RuntimeError(
+                "Support llama.cpp indisponible (dépendances manquantes)."
+            ) from exc
 
         model_path_value = (
             (self.custom_parameters or {}).get("llama_cpp_model_path")
@@ -2012,18 +2245,24 @@ class QwenManager:
             or os.getenv("CVMATCH_LLAMA_CPP_BINARY")
             or os.getenv("CVMATCH_LLAMA_CPP_BIN")
         )
-        binary_path = Path(str(binary_override)).expanduser() if binary_override else None
+        binary_path = (
+            Path(str(binary_override)).expanduser() if binary_override else None
+        )
 
         try:
             port = int(
-                (self.custom_parameters or {}).get("llama_cpp_port") or os.getenv("CVMATCH_LLAMA_CPP_PORT") or 8080
+                (self.custom_parameters or {}).get("llama_cpp_port")
+                or os.getenv("CVMATCH_LLAMA_CPP_PORT")
+                or 8080
             )
 
         except Exception:
             port = 8080
         try:
             ctx_size = int(
-                (self.custom_parameters or {}).get("llama_cpp_ctx_size") or os.getenv("CVMATCH_LLAMA_CPP_CTX") or 4096
+                (self.custom_parameters or {}).get("llama_cpp_ctx_size")
+                or os.getenv("CVMATCH_LLAMA_CPP_CTX")
+                or 4096
             )
 
         except Exception:
@@ -2048,7 +2287,11 @@ class QwenManager:
 
         existing = getattr(self, "_llama_cpp_server", None)
 
-        if existing and getattr(existing, "config", None) == cfg and (existing.is_alive() or existing.is_ready()):
+        if (
+            existing
+            and getattr(existing, "config", None) == cfg
+            and (existing.is_alive() or existing.is_ready())
+        ):
             self.model_loaded = True
             self._current_model_path = self.model_name
             return
@@ -2106,7 +2349,9 @@ class QwenManager:
 
     # ------------------------------------------------------------------
 
-    def _load_tokenizer(self, model_path: Optional[str], model_display_name: str, progress_callback=None) -> str:
+    def _load_tokenizer(
+        self, model_path: Optional[str], model_display_name: str, progress_callback=None
+    ) -> str:
         """Load the tokenizer with protobuf / sentencepiece / force-download fallbacks.
 
 
@@ -2167,8 +2412,12 @@ class QwenManager:
         except Exception as e:
             msg = str(e).lower()
 
-            if any(token in msg for token in ("vocabulary", "sentencepiece", "tokenizer")):
-                logger.warning("Tokenizer load failed, retrying with use_fast=False: %s", e)
+            if any(
+                token in msg for token in ("vocabulary", "sentencepiece", "tokenizer")
+            ):
+                logger.warning(
+                    "Tokenizer load failed, retrying with use_fast=False: %s", e
+                )
 
                 try:
                     self._tokenizer = AutoTokenizer.from_pretrained(
@@ -2211,7 +2460,9 @@ class QwenManager:
         return model_ref
 
     @staticmethod
-    def _resolve_bool_setting(custom_value: Any, env_value: Optional[str], default: bool) -> bool:
+    def _resolve_bool_setting(
+        custom_value: Any, env_value: Optional[str], default: bool
+    ) -> bool:
 
         if env_value is not None:
             return str(env_value).strip().lower() in ("1", "true", "yes", "y", "on")
@@ -2236,10 +2487,14 @@ class QwenManager:
         if force_gpu_env is not None:
             requested_force_gpu = force_gpu_env.strip() == "1"
         elif "force_cuda" in effective_custom:
-            requested_force_gpu = self._to_bool(effective_custom.get("force_cuda"), False)
+            requested_force_gpu = self._to_bool(
+                effective_custom.get("force_cuda"), False
+            )
 
         if requested_force_gpu:
-            logger.info("Hybrid-only policy active: ignoring force_cuda/CVMATCH_FORCE_GPU strict request.")
+            logger.info(
+                "Hybrid-only policy active: ignoring force_cuda/CVMATCH_FORCE_GPU strict request."
+            )
 
         return False
 
@@ -2253,7 +2508,9 @@ class QwenManager:
             return True
 
         try:
-            failures = int(getattr(self._memory_manager, "consecutive_failures", 0) or 0)
+            failures = int(
+                getattr(self._memory_manager, "consecutive_failures", 0) or 0
+            )
         except Exception:
             failures = 0
         if failures > 0:
@@ -2369,7 +2626,9 @@ class QwenManager:
 
         return disk_offload_enabled
 
-    def _build_model_load_kwargs(self) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+    def _build_model_load_kwargs(
+        self,
+    ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
         """Build device/offload/quantization kwargs for AutoModelForCausalLM.from_pretrained.
 
 
@@ -2434,7 +2693,9 @@ class QwenManager:
                     logger.info("Max memory map active: %s", max_memory)
 
             else:
-                logger.warning("Max memory map not set (device_map=auto). Offload disabled.")
+                logger.warning(
+                    "Max memory map not set (device_map=auto). Offload disabled."
+                )
 
             disk_offload_enabled = self._resolve_disk_offload_enabled(
                 effective_custom,
@@ -2498,7 +2759,9 @@ class QwenManager:
 
         # Ajout de la quantisation si necessaire
 
-        if self._optimization_config.get("load_in_8bit") or self._optimization_config.get("load_in_4bit"):
+        if self._optimization_config.get(
+            "load_in_8bit"
+        ) or self._optimization_config.get("load_in_4bit"):
             try:
                 import bitsandbytes  # noqa: F401
 
@@ -2605,7 +2868,9 @@ class QwenManager:
             logger.info("Device map summary: %s", device_summary)
 
             if self._optimization_config["device"] == "cuda":
-                has_cuda = any(str(key).startswith("cuda") for key in device_summary.keys())
+                has_cuda = any(
+                    str(key).startswith("cuda") for key in device_summary.keys()
+                )
 
                 if not has_cuda:
                     free_vram = 0.0
@@ -2632,7 +2897,12 @@ class QwenManager:
 
         disable_compile = False
 
-        if os.getenv("CVMATCH_DISABLE_TORCH_COMPILE", "").strip() in ("1", "true", "yes", "y"):
+        if os.getenv("CVMATCH_DISABLE_TORCH_COMPILE", "").strip() in (
+            "1",
+            "true",
+            "yes",
+            "y",
+        ):
             disable_compile = True
 
         if (self.custom_parameters or {}).get("disable_torch_compile"):
@@ -2689,12 +2959,16 @@ class QwenManager:
 
         memory_stats = gpu_manager.get_memory_stats()
 
-        logger.info(f"Modèle {model_display_name} chargé - Mémoire utilisée: {memory_stats}")
+        logger.info(
+            f"Modèle {model_display_name} chargé - Mémoire utilisée: {memory_stats}"
+        )
 
         if progress_callback:
             progress_callback(f"✅ Modèle {model_display_name} chargé avec succès !")
 
-    def _build_load_error_diagnostic(self, error_msg: str, error_code: Any) -> Tuple[str, str]:
+    def _build_load_error_diagnostic(
+        self, error_msg: str, error_code: Any
+    ) -> Tuple[str, str]:
         """Build a structured diagnostic text and a user-visible hint from a model-load error.
 
 
@@ -2714,7 +2988,9 @@ class QwenManager:
         """
         diagnostic_lines: List[str] = []
 
-        diagnostic_lines.append(f"- model_id: {getattr(self, 'current_model_id', None)}")
+        diagnostic_lines.append(
+            f"- model_id: {getattr(self, 'current_model_id', None)}"
+        )
 
         diagnostic_lines.append(f"- model_name: {getattr(self, 'model_name', None)}")
 
@@ -2738,7 +3014,9 @@ class QwenManager:
 
             diagnostic_lines.append(f"- ram_total_gb: {mem.total / (1024**3):.1f}")
 
-            diagnostic_lines.append(f"- ram_available_gb: {mem.available / (1024**3):.1f}")
+            diagnostic_lines.append(
+                f"- ram_available_gb: {mem.available / (1024**3):.1f}"
+            )
 
         except Exception:
             pass
@@ -2747,16 +3025,22 @@ class QwenManager:
             diagnostic_lines.append(f"- torch_available: {TORCH_AVAILABLE}")
 
             if TORCH_AVAILABLE:
-                diagnostic_lines.append(f"- torch_cuda_available: {torch.cuda.is_available()}")
+                diagnostic_lines.append(
+                    f"- torch_cuda_available: {torch.cuda.is_available()}"
+                )
 
         except Exception:
             pass
 
         try:
-            diagnostic_lines.append(f"- gpu_info: {getattr(gpu_manager, 'gpu_info', None)}")
+            diagnostic_lines.append(
+                f"- gpu_info: {getattr(gpu_manager, 'gpu_info', None)}"
+            )
 
             if hasattr(gpu_manager, "get_available_vram"):
-                diagnostic_lines.append(f"- vram_available_gb: {gpu_manager.get_available_vram():.1f}")
+                diagnostic_lines.append(
+                    f"- vram_available_gb: {gpu_manager.get_available_vram():.1f}"
+                )
 
         except Exception:
             pass
@@ -2795,7 +3079,9 @@ class QwenManager:
                 "ou choisissez un modèle CPU plus petit."
             )
 
-        elif "automatic conversion of the weights" in lowered or ("conversion" in lowered and "weights" in lowered):
+        elif "automatic conversion of the weights" in lowered or (
+            "conversion" in lowered and "weights" in lowered
+        ):
             hint = (
                 "Piste: conversion des poids echouee (cache potentiellement corrompu). "
                 "Supprimez le snapshot du modele dans le cache HF puis relancez, "
@@ -2850,7 +3136,9 @@ class QwenManager:
                 "offload_state_dict" in lowered_msg or "offload_folder" in lowered_msg
             ):
 
-                logger.warning("Transformers version does not support disk offload kwargs; retrying without them.")
+                logger.warning(
+                    "Transformers version does not support disk offload kwargs; retrying without them."
+                )
 
                 alt_kwargs = dict(kwargs)
 
@@ -2866,8 +3154,13 @@ class QwenManager:
                     last_load_kwargs,
                 )
 
-            if "unexpected keyword argument" in lowered_msg and "attn_implementation" in lowered_msg:
-                logger.warning("Transformers version does not support attn_implementation; retrying without it.")
+            if (
+                "unexpected keyword argument" in lowered_msg
+                and "attn_implementation" in lowered_msg
+            ):
+                logger.warning(
+                    "Transformers version does not support attn_implementation; retrying without it."
+                )
 
                 alt_kwargs = dict(kwargs)
 
@@ -2884,7 +3177,10 @@ class QwenManager:
             if (
                 not skip_conversion_retry
                 and not conversion_done
-                and ("automatic conversion of the weights" in lowered_msg or "conversion" in lowered_msg)
+                and (
+                    "automatic conversion of the weights" in lowered_msg
+                    or "conversion" in lowered_msg
+                )
             ):
 
                 conversion_done = True
@@ -2952,7 +3248,10 @@ class QwenManager:
                         force_download=True,
                     )
                 except Exception as force_exc:
-                    logger.warning("Force download failed for unrecognized model retry: %s", force_exc)
+                    logger.warning(
+                        "Force download failed for unrecognized model retry: %s",
+                        force_exc,
+                    )
 
                 if forced_path:
                     model_ref = forced_path
@@ -2966,9 +3265,9 @@ class QwenManager:
                 )
 
             if (
-                ("filenotfounderror" in lowered_msg or "no such file or directory" in lowered_msg)
-                and ("safetensors" in lowered_msg or "model-" in lowered_msg)
-            ):
+                "filenotfounderror" in lowered_msg
+                or "no such file or directory" in lowered_msg
+            ) and ("safetensors" in lowered_msg or "model-" in lowered_msg):
                 logger.warning(
                     "Model shard appears missing/corrupted; forcing re-download and retry: %s",
                     msg,
@@ -2997,7 +3296,10 @@ class QwenManager:
                     last_load_kwargs,
                 )
 
-            if "Device cuda:0 is not recognized" in msg or "Device 0 is not recognized" in msg:
+            if (
+                "Device cuda:0 is not recognized" in msg
+                or "Device 0 is not recognized" in msg
+            ):
                 logger.warning(
                     "Retry model load with alternate max_memory keys: %s",
                     msg,
@@ -3037,13 +3339,17 @@ class QwenManager:
                         last_load_kwargs = dict(alt_kwargs)
 
                         return (
-                            AutoModelForCausalLM.from_pretrained(model_ref, **alt_kwargs),
+                            AutoModelForCausalLM.from_pretrained(
+                                model_ref, **alt_kwargs
+                            ),
                             model_ref,
                             last_load_kwargs,
                         )
 
                     except Exception:
-                        logger.warning("Normalized max_memory keys still failed; retrying without max_memory.")
+                        logger.warning(
+                            "Normalized max_memory keys still failed; retrying without max_memory."
+                        )
 
                         alt_kwargs.pop("max_memory", None)
 
@@ -3052,7 +3358,9 @@ class QwenManager:
                         last_load_kwargs = dict(alt_kwargs)
 
                         return (
-                            AutoModelForCausalLM.from_pretrained(model_ref, **alt_kwargs),
+                            AutoModelForCausalLM.from_pretrained(
+                                model_ref, **alt_kwargs
+                            ),
                             model_ref,
                             last_load_kwargs,
                         )
@@ -3074,7 +3382,10 @@ class QwenManager:
                     hybrid_kwargs.pop("offload_state_dict", None)
                     max_memory = hybrid_kwargs.get("max_memory")
                     if isinstance(max_memory, dict):
-                        has_cpu_key = any(str(key).strip().lower() == "cpu" for key in max_memory.keys())
+                        has_cpu_key = any(
+                            str(key).strip().lower() == "cpu"
+                            for key in max_memory.keys()
+                        )
                         if not has_cpu_key:
                             patched_memory = dict(max_memory)
                             patched_memory["cpu"] = "1024MiB"
@@ -3090,7 +3401,9 @@ class QwenManager:
                     try:
                         last_load_kwargs = dict(hybrid_kwargs)
                         return (
-                            AutoModelForCausalLM.from_pretrained(model_ref, **hybrid_kwargs),
+                            AutoModelForCausalLM.from_pretrained(
+                                model_ref, **hybrid_kwargs
+                            ),
                             model_ref,
                             last_load_kwargs,
                         )
@@ -3170,13 +3483,19 @@ class QwenManager:
 
         # Vérifier si le modèle actuel est différent de celui demandé
 
-        if self.model_loaded and self._model is not None and self._current_model_path == self.model_name:
+        if (
+            self.model_loaded
+            and self._model is not None
+            and self._current_model_path == self.model_name
+        ):
             logger.info(f"Modèle {self.model_name} déjà chargé en mémoire")
 
             return
 
         try:
-            failures = self._memory_manager.consecutive_failures if self._memory_manager else 0
+            failures = (
+                self._memory_manager.consecutive_failures if self._memory_manager else 0
+            )
 
             logger.info(
                 "Model load policy: vram_mode=%s low_mode=%s med_mode=%s survival_mode=%s recycle_every_runs=%s failures=%s",
@@ -3193,8 +3512,12 @@ class QwenManager:
 
         # Ã‰vite de garder des références partielles après un échec précédent.
 
-        if not self.model_loaded and (self._model is not None or self._tokenizer is not None):
-            logger.warning("Stale model references detected before load; forcing cleanup.")
+        if not self.model_loaded and (
+            self._model is not None or self._tokenizer is not None
+        ):
+            logger.warning(
+                "Stale model references detected before load; forcing cleanup."
+            )
 
             self._model = None
 
@@ -3209,7 +3532,9 @@ class QwenManager:
         # Si on change de modèle, nettoyer l'ancien
 
         if self.model_loaded and self._current_model_path != self.model_name:
-            logger.info(f"Changement de modèle: {self._current_model_path} -> {self.model_name}")
+            logger.info(
+                f"Changement de modèle: {self._current_model_path} -> {self.model_name}"
+            )
 
             # Relâcher d'abord les références Python puis vider les caches CUDA.
 
@@ -3249,7 +3574,9 @@ class QwenManager:
             xet_status = model_optimizer.check_hf_xet_status()
 
             if xet_status["optimizations_active"]:
-                logger.info("✅ Optimisations hf_xet actives pour téléchargements rapides")
+                logger.info(
+                    "✅ Optimisations hf_xet actives pour téléchargements rapides"
+                )
 
             # Optimisation matérielle automatique
 
@@ -3259,7 +3586,9 @@ class QwenManager:
             )
 
             try:
-                self._optimization_config = gpu_manager.recommend_quantization(model_size_gb=model_size_gb)
+                self._optimization_config = gpu_manager.recommend_quantization(
+                    model_size_gb=model_size_gb
+                )
 
             except TypeError:
                 # Compat/mode mock
@@ -3271,6 +3600,7 @@ class QwenManager:
             if TORCH_AVAILABLE and torch.cuda.is_available():
                 try:
                     free_bytes, total_bytes = torch.cuda.mem_get_info()
+                    self._last_load_start_free_vram_gb = free_bytes / (1024**3)
 
                     logger.info(
                         "GPU memory before load: free=%.2fGB total=%.2fGB",
@@ -3280,6 +3610,8 @@ class QwenManager:
 
                 except Exception:
                     pass
+            else:
+                self._last_load_start_free_vram_gb = 0.0
 
             self._log_cuda_mem("before_load")
 
@@ -3299,13 +3631,17 @@ class QwenManager:
 
                 survival_max_len = self._get_survival_max_model_len()
 
-                current_max_len = int(self._optimization_config.get("max_model_len") or 0)
+                current_max_len = int(
+                    self._optimization_config.get("max_model_len") or 0
+                )
 
                 if current_max_len <= 0 or current_max_len > survival_max_len:
                     self._optimization_config["max_model_len"] = survival_max_len
 
                 try:
-                    current_util = float(self._optimization_config.get("gpu_memory_utilization") or 0.0)
+                    current_util = float(
+                        self._optimization_config.get("gpu_memory_utilization") or 0.0
+                    )
 
                 except Exception:
                     current_util = 0.0
@@ -3322,12 +3658,16 @@ class QwenManager:
                 )
 
             try:
-                self._apply_non_survival_memory_tuning(progress_callback=progress_callback)
+                self._apply_non_survival_memory_tuning(
+                    progress_callback=progress_callback
+                )
 
             except Exception as tuning_exc:
                 logger.warning("Non-survival memory tuning failed: %s", tuning_exc)
 
-            logger.info(f"Configuration optimale: {self._optimization_config['reason']}")
+            logger.info(
+                f"Configuration optimale: {self._optimization_config['reason']}"
+            )
 
             # Vérification mémoire avant chargement (évite les crashs Access Violation)
 
@@ -3348,10 +3688,10 @@ class QwenManager:
                         reason="preload_memory_check",
                         progress_callback=progress_callback,
                     )
-                    try:
-                        self.cleanup_memory()
-                    except Exception:
-                        pass
+                    self._reset_partial_load_state_for_retry(
+                        reason="preload_memory_check",
+                        progress_callback=progress_callback,
+                    )
                     return self.load_model(progress_callback, allow_fallback=False)
 
                 if allow_fallback:
@@ -3382,7 +3722,11 @@ class QwenManager:
                         require_memory_fit=writer_stage,
                     )
 
-                    if fallback and fallback.get("model_id") and fallback.get("model_path"):
+                    if (
+                        fallback
+                        and fallback.get("model_id")
+                        and fallback.get("model_path")
+                    ):
                         previous_id = getattr(self, "current_model_id", None)
 
                         previous_model = self.model_name
@@ -3428,12 +3772,16 @@ class QwenManager:
 
             # Telechargement optimise du modele si necessaire
 
-            model_display_name = getattr(self, "current_model_id", self.model_name.split("/")[-1])
+            model_display_name = getattr(
+                self, "current_model_id", self.model_name.split("/")[-1]
+            )
 
             model_path = self.model_name
 
             if progress_callback:
-                progress_callback(f"[DL] Verification/telechargement du modele {model_display_name}...")
+                progress_callback(
+                    f"[DL] Verification/telechargement du modele {model_display_name}..."
+                )
 
             try:
                 model_path = model_optimizer.optimize_model_download(
@@ -3442,7 +3790,9 @@ class QwenManager:
                 )
 
             except Exception as e:
-                logger.warning(f"Telechargement optimise echoue, fallback standard: {e}")
+                logger.warning(
+                    f"Telechargement optimise echoue, fallback standard: {e}"
+                )
 
                 if self._is_download_or_cache_failure_reason(str(e)):
                     raise RuntimeError(f"Model download/cache failure: {e}") from e
@@ -3451,7 +3801,9 @@ class QwenManager:
 
             # Load tokenizer (sets self._tokenizer, returns final model_ref for possible force-download path)
 
-            model_ref = self._load_tokenizer(model_path, model_display_name, progress_callback)
+            model_ref = self._load_tokenizer(
+                model_path, model_display_name, progress_callback
+            )
 
             if progress_callback:
                 progress_callback(
@@ -3485,7 +3837,9 @@ class QwenManager:
             except Exception as exc:
                 lowered = str(exc).lower()
 
-                if auto_kwargs and ("cuda out of memory" in lowered or "out of memory" in lowered):
+                if auto_kwargs and (
+                    "cuda out of memory" in lowered or "out of memory" in lowered
+                ):
                     logger.warning(
                         "Forced GPU load failed (OOM). Retrying with device_map=auto and max_memory=%s.",
                         auto_kwargs.get("max_memory"),
@@ -3510,7 +3864,9 @@ class QwenManager:
                 else:
                     raise
 
-            self._finalize_model_load(model_display_name, last_load_kwargs, progress_callback)
+            self._finalize_model_load(
+                model_display_name, last_load_kwargs, progress_callback
+            )
 
             if self._optimization_config.get("device") == "cuda":
                 try:
@@ -3574,8 +3930,13 @@ class QwenManager:
                     reason="load_exception",
                     progress_callback=progress_callback,
                 )
+                self._reset_partial_load_state_for_retry(
+                    reason="load_exception",
+                    progress_callback=progress_callback,
+                    source_exception=e,
+                )
                 try:
-                    self.cleanup_memory()
+                    del e
                 except Exception:
                     pass
                 return self.load_model(progress_callback, allow_fallback=False)
@@ -3806,7 +4167,11 @@ class QwenManager:
 
                     return self.load_model(progress_callback, allow_fallback=False)
 
-            if isinstance(e, MemoryError) or "out of memory" in lowered or "cuda out of memory" in lowered:
+            if (
+                isinstance(e, MemoryError)
+                or "out of memory" in lowered
+                or "cuda out of memory" in lowered
+            ):
                 # Ã‰vite de conserver des références partielles après un échec OOM.
 
                 self.model_loaded = False
@@ -3846,7 +4211,9 @@ class QwenManager:
 
                     progress_callback("💡 Exécutez: python scripts/fix_model_cache.py")
 
-            diagnostic_text, hint = self._build_load_error_diagnostic(error_msg, error_code)
+            diagnostic_text, hint = self._build_load_error_diagnostic(
+                error_msg, error_code
+            )
 
             logger.error(f"Erreur chargement modèle: {e}")
 
@@ -3857,7 +4224,8 @@ class QwenManager:
                     progress_callback(f"💡 {hint}")
 
             raise RuntimeError(
-                f"Erreur chargement modèle: {e}\n\nDiagnostic:\n{diagnostic_text}" + (f"\n\n{hint}" if hint else "")
+                f"Erreur chargement modèle: {e}\n\nDiagnostic:\n{diagnostic_text}"
+                + (f"\n\n{hint}" if hint else "")
             ) from e
 
     @staticmethod
@@ -3949,7 +4317,13 @@ class QwenManager:
                 max_tokens = 768
 
             try:
-                ctx_size = int(getattr(getattr(self._llama_cpp_server, "config", None), "ctx_size", 4096))
+                ctx_size = int(
+                    getattr(
+                        getattr(self._llama_cpp_server, "config", None),
+                        "ctx_size",
+                        4096,
+                    )
+                )
 
             except Exception:
                 ctx_size = 4096
@@ -3998,7 +4372,9 @@ class QwenManager:
         requested_max_new_tokens = max(128, requested_max_new_tokens)
 
         try:
-            temperature = float(overrides.get("temperature") if "temperature" in overrides else 0.2)
+            temperature = float(
+                overrides.get("temperature") if "temperature" in overrides else 0.2
+            )
 
         except Exception:
             temperature = 0.2
@@ -4023,7 +4399,9 @@ class QwenManager:
 
         try:
             repetition_penalty = float(
-                overrides.get("repetition_penalty") if "repetition_penalty" in overrides else 1.05
+                overrides.get("repetition_penalty")
+                if "repetition_penalty" in overrides
+                else 1.05
             )
 
         except Exception:
@@ -4037,16 +4415,25 @@ class QwenManager:
         else:
             do_sample = temperature > 0.0
 
-        return requested_max_new_tokens, temperature, top_p, top_k, repetition_penalty, do_sample
+        return (
+            requested_max_new_tokens,
+            temperature,
+            top_p,
+            top_k,
+            repetition_penalty,
+            do_sample,
+        )
 
-    def generate_cv(self, prompt: str, progress_callback=None, allow_fallback: bool = False) -> str:
+    def generate_cv(
+        self, prompt: str, progress_callback=None, allow_fallback: bool = False
+    ) -> str:
         """Génère un CV basé sur le prompt avec Qwen2.5-32B."""
         if not self.model_loaded:
             self.load_model(progress_callback, allow_fallback=allow_fallback)
 
-        if getattr(self, "current_loader", "transformers") != "llama_cpp" and self._should_use_chunked_generation(
-            prompt
-        ):
+        if getattr(
+            self, "current_loader", "transformers"
+        ) != "llama_cpp" and self._should_use_chunked_generation(prompt):
 
             return self._generate_cv_chunked(prompt, progress_callback)
 
@@ -4077,16 +4464,24 @@ class QwenManager:
             model_max_positions = 4096  # Valeur par défaut sécurisée
 
             try:
-                if hasattr(self._model, "config") and hasattr(self._model.config, "max_position_embeddings"):
-                    model_max_positions = int(self._model.config.max_position_embeddings)
+                if hasattr(self._model, "config") and hasattr(
+                    self._model.config, "max_position_embeddings"
+                ):
+                    model_max_positions = int(
+                        self._model.config.max_position_embeddings
+                    )
 
-                    logger.debug(f"Capacité modèle détectée: max_position_embeddings={model_max_positions}")
+                    logger.debug(
+                        f"Capacité modèle détectée: max_position_embeddings={model_max_positions}"
+                    )
 
             except Exception as cfg_err:
                 logger.warning(f"Impossible de lire max_position_embeddings: {cfg_err}")
 
             try:
-                opt_max_len = int((self._optimization_config or {}).get("max_model_len") or 0)
+                opt_max_len = int(
+                    (self._optimization_config or {}).get("max_model_len") or 0
+                )
 
             except Exception:
                 opt_max_len = 0
@@ -4118,7 +4513,9 @@ class QwenManager:
 
             device_label = "CPU" if is_cpu else "GPU"
 
-            logger.info(f"Mode {device_label}: génération avec max_tokens={max_tokens} pour {self.model_name}")
+            logger.info(
+                f"Mode {device_label}: génération avec max_tokens={max_tokens} pour {self.model_name}"
+            )
 
             if progress_callback:
                 progress_callback(f"🤖 Génération du CV (~{max_tokens} tokens max)...")
@@ -4179,12 +4576,16 @@ class QwenManager:
             if output_len <= input_slice_end:
                 # Aucun nouveau token généré - fallback
 
-                logger.warning(f"Aucun nouveau token généré (output_len={output_len}, input_len={input_slice_end})")
+                logger.warning(
+                    f"Aucun nouveau token généré (output_len={output_len}, input_len={input_slice_end})"
+                )
 
                 generated_text = ""
 
             else:
-                generated_text = self._tokenizer.decode(outputs[0][input_slice_end:], skip_special_tokens=True)
+                generated_text = self._tokenizer.decode(
+                    outputs[0][input_slice_end:], skip_special_tokens=True
+                )
 
             self._log_cuda_mem("post_generate")
 
@@ -4207,7 +4608,9 @@ class QwenManager:
             lowered = str(e).lower()
 
             if "meta tensor" in lowered or "cannot copy out of meta tensor" in lowered:
-                logger.warning("Generation meta tensor detected; unloading model for safe reload.")
+                logger.warning(
+                    "Generation meta tensor detected; unloading model for safe reload."
+                )
 
                 try:
                     self.unload_model(reason="generation meta tensor")
@@ -4216,7 +4619,9 @@ class QwenManager:
                     pass
 
             if "out of memory" in lowered or "cuda out of memory" in lowered:
-                logger.warning("Generation OOM detected; unloading model to recover VRAM.")
+                logger.warning(
+                    "Generation OOM detected; unloading model to recover VRAM."
+                )
 
                 try:
                     self.unload_model(reason="generation OOM")
@@ -4246,16 +4651,25 @@ class QwenManager:
                 allow_fallback=self._allow_model_fallback(),
             )
 
-        overrides = dict(generation_overrides) if isinstance(generation_overrides, dict) else {}
-        meta_recovery_retry = self._to_bool(overrides.pop("_meta_recovery_retry", False), False)
+        overrides = (
+            dict(generation_overrides) if isinstance(generation_overrides, dict) else {}
+        )
+        meta_recovery_retry = self._to_bool(
+            overrides.pop("_meta_recovery_retry", False), False
+        )
         role_key = str(role or "").strip().lower()
         parsed_overrides: Dict[str, Any] = dict(overrides)
         if role_key:
             parsed_overrides = self._resolve_role_params(role_key, overrides)
 
-        requested_max_new_tokens, temperature, top_p, top_k, repetition_penalty, do_sample = (
-            self._parse_generation_overrides(parsed_overrides)
-        )
+        (
+            requested_max_new_tokens,
+            temperature,
+            top_p,
+            top_k,
+            repetition_penalty,
+            do_sample,
+        ) = self._parse_generation_overrides(parsed_overrides)
 
         if getattr(self, "current_loader", "transformers") == "llama_cpp":
             try:
@@ -4263,7 +4677,13 @@ class QwenManager:
                     progress_callback("[LLM] Structured JSON via llama.cpp...")
 
                 try:
-                    ctx_size = int(getattr(getattr(self._llama_cpp_server, "config", None), "ctx_size", 4096))
+                    ctx_size = int(
+                        getattr(
+                            getattr(self._llama_cpp_server, "config", None),
+                            "ctx_size",
+                            4096,
+                        )
+                    )
 
                 except Exception:
                     ctx_size = 4096
@@ -4287,7 +4707,9 @@ class QwenManager:
                 return ""
 
         if not TRANSFORMERS_AVAILABLE or self._model is None:
-            self._set_last_generation_error("structured_json: model backend unavailable")
+            self._set_last_generation_error(
+                "structured_json: model backend unavailable"
+            )
             return ""
 
         try:
@@ -4299,7 +4721,9 @@ class QwenManager:
             desired_new_tokens = requested_max_new_tokens
 
             try:
-                opt_max_len = int((self._optimization_config or {}).get("max_model_len") or 0)
+                opt_max_len = int(
+                    (self._optimization_config or {}).get("max_model_len") or 0
+                )
 
             except Exception:
                 opt_max_len = 0
@@ -4324,7 +4748,9 @@ class QwenManager:
             allowed_new_tokens = max_total_len - input_len - 32
 
             if allowed_new_tokens > 0:
-                max_new_tokens = min(desired_new_tokens, max_new_tokens_cap, allowed_new_tokens)
+                max_new_tokens = min(
+                    desired_new_tokens, max_new_tokens_cap, allowed_new_tokens
+                )
 
             else:
                 max_new_tokens = max_new_tokens_cap
@@ -4346,7 +4772,8 @@ class QwenManager:
 
             if not use_cache:
                 logger.info(
-                    "Structured JSON no-cache mode: cap max_new_tokens=%s", max_new_tokens
+                    "Structured JSON no-cache mode: cap max_new_tokens=%s",
+                    max_new_tokens,
                 )
 
             if TORCH_AVAILABLE and torch.cuda.is_available():
@@ -4415,7 +4842,10 @@ class QwenManager:
                             role=role,
                         )
                     except Exception as retry_exc:
-                        logger.error("Structured JSON retry after meta tensor failed: %s", retry_exc)
+                        logger.error(
+                            "Structured JSON retry after meta tensor failed: %s",
+                            retry_exc,
+                        )
                 logger.warning(
                     "Structured JSON meta tensor error detected; unloading model for safe reload."
                 )
@@ -4426,7 +4856,9 @@ class QwenManager:
 
             lowered = str(e).lower()
             if "out of memory" in lowered or "cuda out of memory" in lowered:
-                logger.warning("Structured JSON OOM detected; unloading model to recover VRAM.")
+                logger.warning(
+                    "Structured JSON OOM detected; unloading model to recover VRAM."
+                )
 
                 try:
                     self.unload_model(reason="structured json OOM")
@@ -4453,6 +4885,7 @@ Contraintes absolues:
 - L'offre cible est prioritaire pour la structure et les mots-cles (si valides).
 - Format de sortie: uniquement du Markdown, sans explications, en respectant strictement la structure demandee.
 - Style: concis, orienté impact, resultats mesurables quand disponibles."""
+
     @staticmethod
     def _cv_user_prompt(base_prompt: str) -> str:
 
@@ -4461,6 +4894,7 @@ Contraintes absolues:
 
 
 Genere le CV final en Markdown uniquement, conforme a la structure imposee."""
+
     def _build_cv_prompt(self, base_prompt: str) -> str:
         """Construit un prompt optimisé selon le type de modèle.
 
@@ -4671,17 +5105,25 @@ CV en Markdown:
             return bool(custom.get("chunked_generation"))
 
         try:
-            total_vram = float(getattr(gpu_manager, "gpu_info", {}).get("total_memory_gb", 0) or 0)
+            total_vram = float(
+                getattr(gpu_manager, "gpu_info", {}).get("total_memory_gb", 0) or 0
+            )
         except Exception:
             total_vram = 0.0
 
         model_hint = str(self.model_name or "").lower()
-        if total_vram and total_vram <= 12 and ("7b" in model_hint or "8b" in model_hint):
+        if (
+            total_vram
+            and total_vram <= 12
+            and ("7b" in model_hint or "8b" in model_hint)
+        ):
             return True
 
         free_vram = self._get_free_vram_gb()
 
-        if free_vram > 0 and free_vram < max(2.0, self._get_vram_headroom_gb(free_vram_gb=free_vram)):
+        if free_vram > 0 and free_vram < max(
+            2.0, self._get_vram_headroom_gb(free_vram_gb=free_vram)
+        ):
             return True
         return False
 
@@ -4699,13 +5141,17 @@ CV en Markdown:
 
         model_max_positions = 4096
         try:
-            if hasattr(self._model, "config") and hasattr(self._model.config, "max_position_embeddings"):
+            if hasattr(self._model, "config") and hasattr(
+                self._model.config, "max_position_embeddings"
+            ):
                 model_max_positions = int(self._model.config.max_position_embeddings)
         except Exception:
             pass
 
         try:
-            opt_max_len = int((self._optimization_config or {}).get("max_model_len") or 0)
+            opt_max_len = int(
+                (self._optimization_config or {}).get("max_model_len") or 0
+            )
         except Exception:
             opt_max_len = 0
         max_total_len = min(opt_max_len or model_max_positions, model_max_positions)
@@ -4727,7 +5173,10 @@ CV en Markdown:
             max_tokens = min(max_tokens, max_new_tokens_cap)
 
         use_cache = True
-        if getattr(self._device, "type", None) == "cuda" and self._should_disable_kv_cache():
+        if (
+            getattr(self._device, "type", None) == "cuda"
+            and self._should_disable_kv_cache()
+        ):
             free_vram = self._get_free_vram_gb()
             use_cache = False
             note = f"[WARN] VRAM faible ({free_vram:.1f}GB) : KV cache désactivé."
@@ -4858,18 +5307,24 @@ CV en Markdown:
             },
             {
                 "key": "certifications",
-                "title": "Certifications (optional)" if en else "Certifications (optionnel)",
+                "title": (
+                    "Certifications (optional)" if en else "Certifications (optionnel)"
+                ),
                 "data_keys": ["certifications"],
                 "max_tokens": 140,
                 "include_offer": False,
                 "include_identity": False,
                 "guidance": (
-                    "List only confirmed certifications." if en else "Liste uniquement les certifications confirmées."
+                    "List only confirmed certifications."
+                    if en
+                    else "Liste uniquement les certifications confirmées."
                 ),
             },
             {
                 "key": "interests",
-                "title": "Interests (optional)" if en else "Centres d'interet (optionnel)",
+                "title": (
+                    "Interests (optional)" if en else "Centres d'interet (optionnel)"
+                ),
                 "data_keys": ["interests"],
                 "max_tokens": 120,
                 "include_offer": False,
@@ -4889,14 +5344,20 @@ CV en Markdown:
         if progress_callback:
             progress_callback("[LOW VRAM] Generation en sections (mode fragmenté)...")
 
-        offer_block = self._extract_prompt_block(base_prompt, "OFFRE CIBLE:", "IDENTITE CANDIDAT")
+        offer_block = self._extract_prompt_block(
+            base_prompt, "OFFRE CIBLE:", "IDENTITE CANDIDAT"
+        )
 
         if offer_block:
             offer_block = _trim_text(offer_block, 1400)
 
-        identity_block = self._extract_prompt_block(base_prompt, "IDENTITE CANDIDAT", "DONNEES CANDIDAT")
+        identity_block = self._extract_prompt_block(
+            base_prompt, "IDENTITE CANDIDAT", "DONNEES CANDIDAT"
+        )
 
-        candidate_block = self._extract_prompt_block(base_prompt, "DONNEES CANDIDAT", "SORTIE OBLIGATOIRE")
+        candidate_block = self._extract_prompt_block(
+            base_prompt, "DONNEES CANDIDAT", "SORTIE OBLIGATOIRE"
+        )
 
         if candidate_block:
             lines = candidate_block.splitlines()
@@ -4912,7 +5373,9 @@ CV en Markdown:
 
         current_cv_block = self._extract_current_cv_block(base_prompt)
 
-        current_cv_sections = self._parse_markdown_sections(current_cv_block) if current_cv_block else {}
+        current_cv_sections = (
+            self._parse_markdown_sections(current_cv_block) if current_cv_block else {}
+        )
 
         if language_code == "en":
             header = "# [Your First Name] [Your Last Name]\n## <Target role>\n"
@@ -5005,7 +5468,9 @@ CV en Markdown:
                 progress_callback=progress_callback,
             )
 
-            output_parts.append(self._normalize_section_output(raw, section["title"], placeholder))
+            output_parts.append(
+                self._normalize_section_output(raw, section["title"], placeholder)
+            )
 
         return "\n\n".join(part for part in output_parts if part).strip()
 
@@ -5081,7 +5546,13 @@ CV en Markdown:
                 max_new_tokens = int(params.get("max_new_tokens") or 1200)
 
                 try:
-                    ctx_size = int(getattr(getattr(self._llama_cpp_server, "config", None), "ctx_size", 4096))
+                    ctx_size = int(
+                        getattr(
+                            getattr(self._llama_cpp_server, "config", None),
+                            "ctx_size",
+                            4096,
+                        )
+                    )
                 except Exception:
                     ctx_size = 4096
                 max_tokens = max(256, int(min(max_new_tokens, ctx_size // 2)))
@@ -5102,11 +5573,15 @@ CV en Markdown:
                 self._set_last_generation_error(f"cover_letter_llama_cpp: {e}")
                 self._record_failure(f"cover_letter_llama_cpp: {str(e)[:240]}")
 
-                raise RuntimeError(f"Cover letter generation failed (llama.cpp): {e}") from e
+                raise RuntimeError(
+                    f"Cover letter generation failed (llama.cpp): {e}"
+                ) from e
 
         if not TRANSFORMERS_AVAILABLE or self._model is None:
             self._set_last_generation_error("cover_letter: model backend unavailable")
-            raise RuntimeError("Cover letter generation failed: model backend unavailable")
+            raise RuntimeError(
+                "Cover letter generation failed: model backend unavailable"
+            )
 
         try:
             if progress_callback:
@@ -5124,7 +5599,9 @@ CV en Markdown:
 
             # Budget tokens: adapter le prompt et la génération selon la limite recommandée.
             try:
-                opt_max_len = int((self._optimization_config or {}).get("max_model_len") or 0)
+                opt_max_len = int(
+                    (self._optimization_config or {}).get("max_model_len") or 0
+                )
             except Exception:
                 opt_max_len = 0
             role_max_total = int(params.get("max_total_tokens") or 0)
@@ -5136,14 +5613,19 @@ CV en Markdown:
             if role_max_input:
                 prompt_max_len = min(prompt_max_len, max(256, role_max_input))
 
-            inputs = self._tokenizer(letter_prompt, return_tensors="pt", truncation=True, max_length=prompt_max_len).to(
-                self._device
-            )
+            inputs = self._tokenizer(
+                letter_prompt,
+                return_tensors="pt",
+                truncation=True,
+                max_length=prompt_max_len,
+            ).to(self._device)
 
             input_len = int(inputs.input_ids.shape[1])
             allowed_new_tokens = max_total_len - input_len - 32
             if allowed_new_tokens > 0:
-                max_new_tokens = min(desired_new_tokens, max_new_tokens_cap, allowed_new_tokens)
+                max_new_tokens = min(
+                    desired_new_tokens, max_new_tokens_cap, allowed_new_tokens
+                )
             else:
                 max_new_tokens = max_new_tokens_cap
 
@@ -5179,7 +5661,9 @@ CV en Markdown:
                     use_cache=use_cache,
                 )
 
-            generated_text = self._tokenizer.decode(outputs[0][inputs.input_ids.shape[1] :], skip_special_tokens=True)
+            generated_text = self._tokenizer.decode(
+                outputs[0][inputs.input_ids.shape[1] :], skip_special_tokens=True
+            )
 
             letter_content = self._extract_letter_content(generated_text)
 
@@ -5218,7 +5702,9 @@ CV en Markdown:
                             _oom_recovery_retry=_oom_recovery_retry,
                         )
                     except Exception as retry_exc:
-                        logger.error("Cover letter retry after meta tensor failed: %s", retry_exc)
+                        logger.error(
+                            "Cover letter retry after meta tensor failed: %s", retry_exc
+                        )
                 logger.warning(
                     "Cover letter meta tensor error detected; unloading model for safe reload."
                 )
@@ -5246,7 +5732,9 @@ CV en Markdown:
                             _oom_recovery_retry=True,
                         )
                     except Exception as retry_exc:
-                        logger.error("Cover letter retry after OOM failed: %s", retry_exc)
+                        logger.error(
+                            "Cover letter retry after OOM failed: %s", retry_exc
+                        )
                 logger.warning(
                     "Cover letter OOM detected; unloading model to recover memory."
                 )
@@ -5273,6 +5761,7 @@ Contraintes absolues:
 - Longueur: maximum 1 page (court, dense, sans blabla).
 - Style: professionnel, specifique a l'offre (mots-cles) sans phrases generiques.
 - Sortie: texte uniquement (pas de Markdown, pas d'explications)."""
+
     @staticmethod
     def _letter_user_prompt(base_prompt: str) -> str:
 
@@ -5281,6 +5770,7 @@ Contraintes absolues:
 
 
 Genere la lettre finale (texte uniquement), en respectant la structure demandee."""
+
     def _build_letter_prompt(self, base_prompt: str) -> str:
         """Construit un prompt pour lettre de motivation."""
         system_prompt = self._letter_system_prompt()
@@ -5301,7 +5791,9 @@ Genere la lettre finale (texte uniquement), en respectant la structure demandee.
         """Nettoie la mémoire GPU/CPU."""
         # Si un serveur llama.cpp tourne et qu'on change de modèle, arrêter l'ancien serveur.
         server = getattr(self, "_llama_cpp_server", None)
-        if server is not None and getattr(self, "_current_model_path", None) != getattr(self, "model_name", None):
+        if server is not None and getattr(self, "_current_model_path", None) != getattr(
+            self, "model_name", None
+        ):
             try:
                 server.stop()
             except Exception:
@@ -5314,6 +5806,23 @@ Genere la lettre finale (texte uniquement), en respectant la structure demandee.
         except Exception:
             pass
         if TORCH_AVAILABLE and torch.cuda.is_available():
+            try:
+                if hasattr(torch.cuda, "synchronize"):
+                    torch.cuda.synchronize()
+            except Exception:
+                pass
+            try:
+                torch.cuda.empty_cache()
+                if hasattr(torch.cuda, "ipc_collect"):
+                    torch.cuda.ipc_collect()
+            except Exception:
+                pass
+            try:
+                import gc
+
+                gc.collect()
+            except Exception:
+                pass
             try:
                 torch.cuda.empty_cache()
                 if hasattr(torch.cuda, "ipc_collect"):
