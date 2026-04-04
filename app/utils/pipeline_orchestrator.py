@@ -34,6 +34,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Protocol, Tuple
 
 from .memory_debug import log_memory_snapshot
+from .stage_subprocess_utils import is_transient_stage_memory_error
 
 try:
     from ..config import DEFAULT_PII_CONFIG
@@ -1058,6 +1059,13 @@ class CoverLetterPhase:
                 f"Cover letter language mismatch after rewrite (target={state.language_code}): {rewrite_exc}"
             ) from rewrite_exc
 
+    @staticmethod
+    def _is_transient_cover_letter_subprocess_error(exc: Exception) -> bool:
+        details = str(exc or "").strip()
+        if not details:
+            return False
+        return is_transient_stage_memory_error(details)
+
     @property
     def name(self) -> str:
         return "cover_letter"
@@ -1134,12 +1142,42 @@ class CoverLetterPhase:
 
         letter_prompt = self._build_prompt() if self._build_prompt else ""
         generation_mode = "generated"
+        force_inprocess_review = False
 
         try:
             if state.use_subprocess and self._run_subprocess:
                 cover_payload = {"letter_prompt": letter_prompt}
-                cover_result = self._run_subprocess("cover_letter", cover_payload)
-                state.cover_letter = cover_result.get("cover_letter", "")
+                try:
+                    cover_result = self._run_subprocess("cover_letter", cover_payload)
+                    state.cover_letter = cover_result.get("cover_letter", "")
+                except Exception as exc:
+                    can_fallback = self._generate_letter is not None
+                    if (
+                        can_fallback
+                        and self._is_transient_cover_letter_subprocess_error(exc)
+                    ):
+                        state.emit_progress(
+                            "[LETTER] Subprocess memory retry exhausted, falling back to in-process generation..."
+                        )
+                        state.add_degraded_reason(
+                            "cover_letter_subprocess_memory_fallback"
+                        )
+                        logger.warning(
+                            "Cover-letter subprocess failed with transient memory error; "
+                            "falling back to in-process generation: %s",
+                            exc,
+                        )
+                        force_inprocess_review = True
+                        generation_mode = "generated_inprocess_fallback"
+                        if self._apply_stage_override:
+                            self._apply_stage_override(
+                                "cover_letter", state.progress_callback
+                            )
+                        state.cover_letter = self._generate_letter(
+                            letter_prompt, state.progress_callback
+                        )
+                    else:
+                        raise
             else:
                 if self._apply_stage_override:
                     self._apply_stage_override("cover_letter", state.progress_callback)
@@ -1168,14 +1206,45 @@ class CoverLetterPhase:
         if should_run_critic:
             state.emit_progress("[LETTER] Critique + correction...")
             try:
-                if state.use_subprocess and self._run_subprocess:
+                if state.use_subprocess and self._run_subprocess and (
+                    not force_inprocess_review
+                ):
                     review_payload = {
                         "cover_letter": state.cover_letter,
                         "language_code": state.language_code,
                     }
-                    review_result = self._run_subprocess(
-                        "cover_letter_critic", review_payload
-                    )
+                    try:
+                        review_result = self._run_subprocess(
+                            "cover_letter_critic", review_payload
+                        )
+                    except Exception as exc:
+                        can_fallback = self._critique_and_rewrite is not None
+                        if (
+                            can_fallback
+                            and self._is_transient_cover_letter_subprocess_error(exc)
+                        ):
+                            state.emit_progress(
+                                "[LETTER] Critic subprocess memory retry exhausted, falling back to in-process rewrite..."
+                            )
+                            state.add_degraded_reason(
+                                "cover_letter_critic_subprocess_memory_fallback"
+                            )
+                            logger.warning(
+                                "Cover-letter critic subprocess failed with transient memory error; "
+                                "falling back to in-process rewrite: %s",
+                                exc,
+                            )
+                            if self._apply_stage_override:
+                                self._apply_stage_override(
+                                    "cover_letter_critic", state.progress_callback
+                                )
+                            review_result = self._critique_and_rewrite(
+                                state.cover_letter,
+                                state.language_code,
+                                state.progress_callback,
+                            )
+                        else:
+                            raise
                 else:
                     if self._apply_stage_override:
                         self._apply_stage_override(
