@@ -1200,12 +1200,34 @@ class CoverLetterPhase:
                 except Exception as exc:
                     if self._is_transient_cover_letter_subprocess_error(exc):
                         state.emit_progress(
-                            "[LETTER] Subprocess memory retry exhausted; aborting cover-letter generation without in-process fallback..."
+                            "[LETTER] Subprocess memory retry exhausted; keeping CV result and skipping cover-letter generation..."
                         )
+                        state.add_degraded_reason(
+                            "cover_letter_generation_skipped_after_subprocess_memory_exhaustion"
+                        )
+                        state.cover_letter = ""
+                        state.cover_letter_review = {
+                            "relevance_score": 0,
+                            "structure_ok": False,
+                            "language": state.language_code,
+                            "unavailable_reason": "subprocess_memory_exhausted",
+                        }
                         logger.warning(
                             "Cover-letter subprocess failed with transient memory error; "
-                            "aborting without in-process generation fallback to avoid parent model reload: %s",
+                            "skipping cover-letter generation without in-process fallback to avoid parent model reload: %s",
                             exc,
+                        )
+                        return PhaseResult(
+                            phase_name=self.name,
+                            status=PipelinePhaseStatus.COMPLETED,
+                            duration_seconds=time.time() - start,
+                            warnings=[
+                                "cover_letter_skipped_after_subprocess_memory_exhaustion"
+                            ],
+                            metadata={
+                                "mode": "cover_letter_skipped_after_subprocess_oom",
+                                "length": 0,
+                            },
                         )
                     raise
             else:
