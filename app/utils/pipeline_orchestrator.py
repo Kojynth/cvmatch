@@ -1198,33 +1198,16 @@ class CoverLetterPhase:
                     cover_result = self._run_subprocess("cover_letter", cover_payload)
                     state.cover_letter = cover_result.get("cover_letter", "")
                 except Exception as exc:
-                    can_fallback = self._generate_letter is not None
-                    if (
-                        can_fallback
-                        and self._is_transient_cover_letter_subprocess_error(exc)
-                    ):
+                    if self._is_transient_cover_letter_subprocess_error(exc):
                         state.emit_progress(
-                            "[LETTER] Subprocess memory retry exhausted, falling back to in-process generation..."
-                        )
-                        state.add_degraded_reason(
-                            "cover_letter_subprocess_memory_fallback"
+                            "[LETTER] Subprocess memory retry exhausted; aborting cover-letter generation without in-process fallback..."
                         )
                         logger.warning(
                             "Cover-letter subprocess failed with transient memory error; "
-                            "falling back to in-process generation: %s",
+                            "aborting without in-process generation fallback to avoid parent model reload: %s",
                             exc,
                         )
-                        force_inprocess_review = True
-                        generation_mode = "generated_inprocess_fallback"
-                        if self._apply_stage_override:
-                            self._apply_stage_override(
-                                "cover_letter", state.progress_callback
-                            )
-                        state.cover_letter = self._generate_letter(
-                            letter_prompt, state.progress_callback
-                        )
-                    else:
-                        raise
+                    raise
             else:
                 if self._apply_stage_override:
                     self._apply_stage_override("cover_letter", state.progress_callback)
