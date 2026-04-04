@@ -438,14 +438,14 @@ def _match_offer_keywords(
     return _dedup_preserve(matches)[:max_items]
 
 
-def _detect_language_from_text(text: Optional[str]) -> str:
+def _detect_language_from_text(text: Optional[str]) -> Optional[str]:
     if not text or not str(text).strip():
-        return "fr"
+        return None
     raw = str(text)
     lowered = raw.lower()
     tokens = re.findall(r"[a-zA-Z]+", lowered)
     if not tokens:
-        return "fr"
+        return None
 
     fr_tokens = {
         "le",
@@ -501,8 +501,30 @@ def _detect_language_from_text(text: Optional[str]) -> str:
     en_score = sum(1 for token in tokens if token in en_tokens)
     if any(ord(ch) > 127 for ch in raw):
         fr_score += 2
-    if en_score > fr_score + 1:
+    if en_score >= max(2, fr_score + 2):
         return "en"
+    if fr_score >= max(2, en_score + 2):
+        return "fr"
+    return None
+
+
+def _resolve_offer_language_code(
+    offer_data: Optional[Dict[str, Any]],
+    preferred_language: Optional[str] = None,
+) -> str:
+    offer_payload = offer_data if isinstance(offer_data, dict) else {}
+    analysis = offer_payload.get("analysis")
+    analysis = analysis if isinstance(analysis, dict) else {}
+    analysis_language = analysis.get("language")
+    if isinstance(analysis_language, str) and analysis_language.strip():
+        return _normalize_language(analysis_language)
+
+    detected = _detect_language_from_text(offer_payload.get("text"))
+    if detected:
+        return _normalize_language(detected)
+
+    if preferred_language:
+        return _normalize_language(preferred_language)
     return "fr"
 
 
@@ -2659,31 +2681,10 @@ class CVGenerationWorker(QThread):
         )
 
     def _resolve_language_code(self) -> str:
-        analysis = (
-            self.offer_data.get("analysis")
-            if isinstance(self.offer_data, dict)
-            else None
+        return _resolve_offer_language_code(
+            self.offer_data,
+            getattr(self.profile_data, "preferred_language", None),
         )
-        analysis_language = (
-            analysis.get("language") if isinstance(analysis, dict) else None
-        )
-        offer_text = (
-            self.offer_data.get("text") if isinstance(self.offer_data, dict) else None
-        )
-        detected = _detect_language_from_text(offer_text)
-        preferred = getattr(self.profile_data, "preferred_language", None)
-
-        if analysis_language and _normalize_language(analysis_language):
-            analysis_norm = _normalize_language(analysis_language)
-            if detected and detected != analysis_norm:
-                return _normalize_language(detected)
-            return analysis_norm
-
-        if detected:
-            return _normalize_language(detected)
-        if preferred:
-            return _normalize_language(preferred)
-        return "fr"
 
     # Stage model routing
     def _is_stage_model_routing_enabled(self) -> bool:
@@ -5699,30 +5700,10 @@ class CoverLetterGenerationWorker(QThread):
         return str(style_payload.get("prompt") or "")
 
     def _resolve_letter_language_code(self) -> str:
-        analysis = (
-            self.offer_data.get("analysis")
-            if isinstance(self.offer_data, dict)
-            else None
+        return _resolve_offer_language_code(
+            self.offer_data,
+            getattr(self.profile_data, "preferred_language", None),
         )
-        analysis_language = (
-            analysis.get("language") if isinstance(analysis, dict) else None
-        )
-        offer_text = (
-            self.offer_data.get("text") if isinstance(self.offer_data, dict) else None
-        )
-        detected = _detect_language_from_text(offer_text)
-        preferred = getattr(self.profile_data, "preferred_language", None)
-
-        if isinstance(analysis_language, str) and analysis_language.strip():
-            analysis_norm = _normalize_language(analysis_language)
-            if detected and detected != analysis_norm:
-                return _normalize_language(detected)
-            return analysis_norm
-        if detected:
-            return _normalize_language(detected)
-        if preferred:
-            return _normalize_language(preferred)
-        return "fr"
 
     def _build_cover_letter_generation_audit(
         self,
