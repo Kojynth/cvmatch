@@ -1017,6 +1017,7 @@ class CoverLetterPhase:
         *,
         allow_rewrite: bool,
         context: str,
+        prefer_subprocess_rewrite: bool = True,
     ) -> None:
         if not self._ensure_language_consistency:
             return
@@ -1039,11 +1040,25 @@ class CoverLetterPhase:
 
         state.emit_progress("[LETTER] Language mismatch detected, rewriting...")
         try:
-            rewrite_result = self._critique_and_rewrite(
-                state.cover_letter,
-                state.language_code,
-                state.progress_callback,
-            )
+            rewrite_result = {}
+            if (
+                prefer_subprocess_rewrite
+                and state.use_subprocess
+                and self._run_subprocess is not None
+            ):
+                rewrite_payload = {
+                    "cover_letter": state.cover_letter,
+                    "language_code": state.language_code,
+                }
+                rewrite_result = self._run_subprocess(
+                    "cover_letter_critic", rewrite_payload
+                )
+            else:
+                rewrite_result = self._critique_and_rewrite(
+                    state.cover_letter,
+                    state.language_code,
+                    state.progress_callback,
+                )
             applied = self._apply_letter_review_result(
                 state,
                 rewrite_result,
@@ -1193,6 +1208,7 @@ class CoverLetterPhase:
             state,
             allow_rewrite=True,
             context="generation",
+            prefer_subprocess_rewrite=not force_inprocess_review,
         )
         if self._enforce_alignment:
             state.cover_letter = self._enforce_alignment(
@@ -1206,8 +1222,10 @@ class CoverLetterPhase:
         if should_run_critic:
             state.emit_progress("[LETTER] Critique + correction...")
             try:
-                if state.use_subprocess and self._run_subprocess and (
-                    not force_inprocess_review
+                if (
+                    state.use_subprocess
+                    and self._run_subprocess
+                    and (not force_inprocess_review)
                 ):
                     review_payload = {
                         "cover_letter": state.cover_letter,
