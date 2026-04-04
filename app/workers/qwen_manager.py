@@ -445,6 +445,17 @@ class QwenManager:
         attempts_env = str(os.getenv("CVMATCH_STAGE_ATTEMPTS", "") or "").strip()
         return bool(stage_env and (attempt_env or attempts_env))
 
+    def _should_preserve_disk_offload_in_ram_assist(self) -> bool:
+        if not bool(getattr(self, "_ram_assist_mode", False)):
+            return False
+        if bool(getattr(self, "_meta_recovery_mode", False)):
+            return False
+        if not self._prefer_ram_offload_mode():
+            return False
+        if not self._is_stage_subprocess_runtime():
+            return False
+        return self._is_writer_stage()
+
     def _get_survival_writer_min_size_gb(self) -> float:
 
         custom = self.custom_parameters or {}
@@ -684,8 +695,9 @@ class QwenManager:
             merged["disable_torch_compile"] = True
         if getattr(self, "_ram_assist_mode", False) and self._prefer_ram_offload_mode():
             # RAM-assist keeps the selected model and shifts pressure to host RAM.
-            merged["disk_offload"] = False
-            merged["offload_state_dict"] = False
+            if not self._should_preserve_disk_offload_in_ram_assist():
+                merged["disk_offload"] = False
+                merged["offload_state_dict"] = False
             merged["disable_torch_compile"] = True
             try:
                 cpu_pct = float(merged.get("max_memory_cpu_percent") or 0.0)
@@ -738,8 +750,12 @@ class QwenManager:
         if headroom > cap:
             runtime["cpu_headroom_gb"] = cap
 
-        runtime["disk_offload"] = False
-        runtime["offload_state_dict"] = False
+        if self._should_preserve_disk_offload_in_ram_assist():
+            runtime.pop("disk_offload", None)
+            runtime.pop("offload_state_dict", None)
+        else:
+            runtime["disk_offload"] = False
+            runtime["offload_state_dict"] = False
         runtime["disable_torch_compile"] = True
 
     def _activate_ram_assist_mode(
@@ -753,9 +769,14 @@ class QwenManager:
         self._ram_assist_mode = True
         self._runtime_force_hybrid_load = True
         self._apply_ram_budget_floor()
+        preserve_disk_offload = self._should_preserve_disk_offload_in_ram_assist()
         note = (
             "[RECOVERY] RAM assist enabled - keeping selected model and increasing CPU RAM budget "
-            "(disk offload disabled)."
+            + (
+                "(disk offload preserved for writer subprocess recovery)."
+                if preserve_disk_offload
+                else "(disk offload disabled)."
+            )
         )
         if reason:
             note = f"{note} Reason={reason}."
@@ -2691,15 +2712,29 @@ class QwenManager:
             )
             auto_disk, auto_reason = self._should_auto_enable_disk_offload_for_4bit()
             if recovery_ram_first:
-                if force_disk or auto_disk or disk_offload_enabled:
+                if self._should_preserve_disk_offload_in_ram_assist():
+                    if force_disk:
+                        disk_offload_enabled = True
+                    elif auto_disk:
+                        disk_offload_enabled = True
                     logger.warning(
-                        "4-bit recovery: ignoring disk offload policy to allow RAM-first recovery "
-                        "(forced=%s auto=%s reason=%s).",
+                        "4-bit recovery: preserving disk offload for writer subprocess RAM-assist path "
+                        "(forced=%s auto=%s enabled=%s reason=%s).",
                         force_disk,
                         auto_disk,
+                        disk_offload_enabled,
                         auto_reason or "-",
                     )
-                disk_offload_enabled = False
+                else:
+                    if force_disk or auto_disk or disk_offload_enabled:
+                        logger.warning(
+                            "4-bit recovery: ignoring disk offload policy to allow RAM-first recovery "
+                            "(forced=%s auto=%s reason=%s).",
+                            force_disk,
+                            auto_disk,
+                            auto_reason or "-",
+                        )
+                    disk_offload_enabled = False
             elif force_disk:
                 disk_offload_enabled = True
                 logger.info("4-bit mode: disk offload forced ON by config.")
