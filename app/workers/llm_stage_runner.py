@@ -122,9 +122,11 @@ def main() -> int:
     elif stage == "cover_letter_critic":
         cover_letter = str(payload.get("cover_letter") or "")
         language_code = payload.get("language_code")
+        rewrite_reason = str(payload.get("rewrite_reason") or "")
         result = worker.critique_and_rewrite_cover_letter(
             cover_letter=cover_letter,
             language_code=language_code,
+            rewrite_reason=rewrite_reason,
         )
     else:
         raise SystemExit(f"Unknown stage: {stage}")
