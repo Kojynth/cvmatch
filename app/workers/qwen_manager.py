@@ -445,6 +445,12 @@ class QwenManager:
         attempts_env = str(os.getenv("CVMATCH_STAGE_ATTEMPTS", "") or "").strip()
         return bool(stage_env and (attempt_env or attempts_env))
 
+    def _should_force_fresh_subprocess_retry_after_load_recovery(self) -> bool:
+        if not self._is_stage_subprocess_runtime():
+            return False
+        stage_key = str(self._get_runtime_stage_name() or "").strip().lower()
+        return stage_key == "cover_letter"
+
     def _should_preserve_disk_offload_in_ram_assist(self) -> bool:
         if not bool(getattr(self, "_ram_assist_mode", False)):
             return False
@@ -3818,11 +3824,19 @@ class QwenManager:
                         reason="preload_memory_check",
                         progress_callback=progress_callback,
                     )
-                    if not recovery_ready:
-                        if self._is_stage_subprocess_runtime():
+                    if self._should_force_fresh_subprocess_retry_after_load_recovery():
+                        if recovery_ready:
+                            logger.info(
+                                "Cover-letter load recovery defers retry to a fresh stage subprocess."
+                            )
+                            raise RuntimeError(
+                                "Fresh subprocess retry required for cover-letter load recovery after failure."
+                            )
+                        if not recovery_ready:
                             raise RuntimeError(
                                 "VRAM cleanup incomplete after wait; fresh subprocess retry required."
                             )
+                    if not recovery_ready:
                         logger.warning(
                             "VRAM cleanup incomplete after wait during in-process load retry; "
                             "continuing with same-process recovery because no stage subprocess runtime is active."
@@ -4074,6 +4088,14 @@ class QwenManager:
                     del e
                 except Exception:
                     pass
+                if self._should_force_fresh_subprocess_retry_after_load_recovery():
+                    if recovery_ready:
+                        logger.info(
+                            "Cover-letter load recovery defers retry to a fresh stage subprocess."
+                        )
+                        raise RuntimeError(
+                            "Fresh subprocess retry required for cover-letter load recovery after failure."
+                        )
                 if not recovery_ready:
                     if self._is_stage_subprocess_runtime():
                         raise RuntimeError(

@@ -9,10 +9,14 @@ _GENERIC_PARENT_DEFAULTS = {
     "CVMATCH_PREFER_RAM_OFFLOAD": {"0"},
     "CVMATCH_FORCE_DISK_OFFLOAD": {"1"},
     "CVMATCH_MAX_MEMORY_GPU_GB": {"6.5"},
+    "CVMATCH_MAX_MEMORY_CPU_PERCENT": {"80"},
+    "CVMATCH_CPU_HEADROOM_GB": {"0.5"},
     "CVMATCH_VRAM_HEADROOM_GB": {"2.0", "2.5"},
 }
 _GENERIC_NUMERIC_KEYS = {
     "CVMATCH_MAX_MEMORY_GPU_GB",
+    "CVMATCH_MAX_MEMORY_CPU_PERCENT",
+    "CVMATCH_CPU_HEADROOM_GB",
     "CVMATCH_VRAM_HEADROOM_GB",
 }
 
@@ -53,15 +57,23 @@ def _recommend_cover_letter_gpu_cap_gb(
 
     total_vram = float(total_vram_gb or 0.0)
     if total_vram <= 0:
+        if attempt >= 3:
+            return 5.5
         return 6.0 if attempt > 1 else 6.25
     if total_vram <= 12.0:
+        if attempt >= 3:
+            return max(4.25, min(5.5, total_vram * 0.50))
         if attempt > 1:
             return max(4.75, min(6.0, total_vram * 0.54))
         return max(5.5, min(6.35, total_vram * 0.57))
     if total_vram <= 16.0:
+        if attempt >= 3:
+            return max(5.5, min(6.5, total_vram * 0.44))
         if attempt > 1:
             return max(6.0, min(7.0, total_vram * 0.48))
         return max(6.5, min(9.5, total_vram * 0.62))
+    if attempt >= 3:
+        return 6.5
     if attempt > 1:
         return 7.0
     return max(8.0, min(14.0, total_vram * 0.68))
@@ -75,6 +87,12 @@ def _recommend_cover_letter_headroom_gb(
     """Return a cover-letter-specific VRAM headroom target."""
 
     total_vram = float(total_vram_gb or 0.0)
+    if attempt >= 3:
+        if total_vram > 16.0:
+            return 3.0
+        if total_vram > 12.0:
+            return 3.5
+        return 3.75
     if attempt > 1:
         if total_vram > 12.0:
             return 2.75
@@ -84,6 +102,40 @@ def _recommend_cover_letter_headroom_gb(
     if total_vram > 12.0:
         return 2.5
     return 2.5
+
+
+def _recommend_cover_letter_cpu_percent(
+    *,
+    attempt: int = 1,
+) -> int:
+    """Return CPU RAM budget for subprocess retries."""
+
+    if attempt >= 3:
+        return 95
+    if attempt > 1:
+        return 92
+    return 80
+
+
+def _recommend_cover_letter_cpu_headroom_gb(
+    total_vram_gb: float,
+    *,
+    attempt: int = 1,
+) -> float:
+    """Return CPU RAM headroom target for subprocess retries."""
+
+    total_vram = float(total_vram_gb or 0.0)
+    if attempt >= 3:
+        if total_vram > 16.0:
+            return 0.5
+        if total_vram > 12.0:
+            return 0.35
+        return 0.25
+    if attempt > 1:
+        if total_vram > 16.0:
+            return 0.75
+        return 0.5
+    return 0.5
 
 
 def _set_stage_value(
@@ -157,6 +209,11 @@ def apply_cover_letter_subprocess_memory_profile(
         total_vram_gb,
         attempt=attempt,
     )
+    cpu_percent = _recommend_cover_letter_cpu_percent(attempt=attempt)
+    cpu_headroom_gb = _recommend_cover_letter_cpu_headroom_gb(
+        total_vram_gb,
+        attempt=attempt,
+    )
 
     # Retry path: preserve the selected model, keep disk-offload compatibility
     # with the writer path, and re-enable RAM-assist eligibility for the
@@ -179,8 +236,18 @@ def apply_cover_letter_subprocess_memory_profile(
         f"{gpu_cap_gb:.2f}",
         generic_defaults=_GENERIC_PARENT_DEFAULTS["CVMATCH_MAX_MEMORY_GPU_GB"],
     )
-    env.setdefault("CVMATCH_MAX_MEMORY_CPU_PERCENT", "92")
-    env.setdefault("CVMATCH_CPU_HEADROOM_GB", "0.75")
+    _set_stage_value(
+        env,
+        "CVMATCH_MAX_MEMORY_CPU_PERCENT",
+        str(cpu_percent),
+        generic_defaults=_GENERIC_PARENT_DEFAULTS["CVMATCH_MAX_MEMORY_CPU_PERCENT"],
+    )
+    _set_stage_value(
+        env,
+        "CVMATCH_CPU_HEADROOM_GB",
+        f"{cpu_headroom_gb:.2f}",
+        generic_defaults=_GENERIC_PARENT_DEFAULTS["CVMATCH_CPU_HEADROOM_GB"],
+    )
     env.setdefault("CVMATCH_SURVIVAL_MODE", "1")
     _set_stage_value(
         env,
