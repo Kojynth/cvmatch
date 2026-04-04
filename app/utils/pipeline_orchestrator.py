@@ -1050,9 +1050,38 @@ class CoverLetterPhase:
                     "cover_letter": state.cover_letter,
                     "language_code": state.language_code,
                 }
-                rewrite_result = self._run_subprocess(
-                    "cover_letter_critic", rewrite_payload
-                )
+                try:
+                    rewrite_result = self._run_subprocess(
+                        "cover_letter_critic", rewrite_payload
+                    )
+                except Exception as exc:
+                    can_fallback = self._critique_and_rewrite is not None
+                    if (
+                        can_fallback
+                        and self._is_transient_cover_letter_subprocess_error(exc)
+                    ):
+                        state.emit_progress(
+                            "[LETTER] Language rewrite subprocess memory retry exhausted, falling back to in-process rewrite..."
+                        )
+                        state.add_degraded_reason(
+                            "cover_letter_language_rewrite_subprocess_memory_fallback"
+                        )
+                        logger.warning(
+                            "Cover-letter language rewrite subprocess failed with transient memory error; "
+                            "falling back to in-process rewrite: %s",
+                            exc,
+                        )
+                        if self._apply_stage_override:
+                            self._apply_stage_override(
+                                "cover_letter_critic", state.progress_callback
+                            )
+                        rewrite_result = self._critique_and_rewrite(
+                            state.cover_letter,
+                            state.language_code,
+                            state.progress_callback,
+                        )
+                    else:
+                        raise
             else:
                 rewrite_result = self._critique_and_rewrite(
                     state.cover_letter,
