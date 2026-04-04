@@ -1180,6 +1180,35 @@ class CoverLetterPhase:
             metadata={"mode": "cv_only_reuse"},
         )
 
+    def _load_existing_cover_letter_review(
+        self, state: PipelineState
+    ) -> Dict[str, Any]:
+        previous_audit = (
+            state.previous_generation_audit
+            if isinstance(state.previous_generation_audit, dict)
+            else {}
+        )
+        if not previous_audit and isinstance(state.existing_snapshot, dict):
+            snapshot_audit = state.existing_snapshot.get("generation_audit")
+            if isinstance(snapshot_audit, dict):
+                previous_audit = snapshot_audit
+
+        previous_letter = {}
+        breakdown = previous_audit.get("breakdown")
+        if isinstance(breakdown, dict):
+            letter_payload = breakdown.get("letter")
+            if isinstance(letter_payload, dict):
+                previous_letter = dict(letter_payload)
+
+        if previous_letter:
+            return previous_letter
+
+        return {
+            "relevance_score": 80,
+            "structure_ok": True,
+            "language": state.language_code,
+        }
+
     def _execute_generation_mode(
         self, state: PipelineState, start: float
     ) -> PhaseResult:
@@ -1199,19 +1228,31 @@ class CoverLetterPhase:
                     state.cover_letter = cover_result.get("cover_letter", "")
                 except Exception as exc:
                     if self._is_transient_cover_letter_subprocess_error(exc):
+                        existing_letter = str(
+                            state.existing_snapshot.get("cover_letter") or ""
+                        ).strip()
                         state.emit_progress(
                             "[LETTER] Subprocess memory retry exhausted; keeping CV result and skipping cover-letter generation..."
                         )
-                        state.add_degraded_reason(
-                            "cover_letter_generation_skipped_after_subprocess_memory_exhaustion"
-                        )
-                        state.cover_letter = ""
-                        state.cover_letter_review = {
-                            "relevance_score": 0,
-                            "structure_ok": False,
-                            "language": state.language_code,
-                            "unavailable_reason": "subprocess_memory_exhausted",
-                        }
+                        if existing_letter:
+                            state.add_degraded_reason(
+                                "cover_letter_reused_after_subprocess_memory_exhaustion"
+                            )
+                            state.cover_letter = existing_letter
+                            state.cover_letter_review = (
+                                self._load_existing_cover_letter_review(state)
+                            )
+                        else:
+                            state.add_degraded_reason(
+                                "cover_letter_generation_skipped_after_subprocess_memory_exhaustion"
+                            )
+                            state.cover_letter = ""
+                            state.cover_letter_review = {
+                                "relevance_score": 0,
+                                "structure_ok": False,
+                                "language": state.language_code,
+                                "unavailable_reason": "subprocess_memory_exhausted",
+                            }
                         logger.warning(
                             "Cover-letter subprocess failed with transient memory error; "
                             "skipping cover-letter generation without in-process fallback to avoid parent model reload: %s",
@@ -1225,8 +1266,12 @@ class CoverLetterPhase:
                                 "cover_letter_skipped_after_subprocess_memory_exhaustion"
                             ],
                             metadata={
-                                "mode": "cover_letter_skipped_after_subprocess_oom",
-                                "length": 0,
+                                "mode": (
+                                    "cover_letter_reused_after_subprocess_oom"
+                                    if existing_letter
+                                    else "cover_letter_skipped_after_subprocess_oom"
+                                ),
+                                "length": len(state.cover_letter or ""),
                             },
                         )
                     raise
@@ -1462,6 +1507,13 @@ class AuditAndSavePhase:
 
             application = None
             if self._save_application:
+                preserve_cover_letter = bool(state.cv_only_regen) or any(
+                    reason in getattr(state, "degraded_reasons", [])
+                    for reason in (
+                        "cover_letter_generation_skipped_after_subprocess_memory_exhaustion",
+                        "cover_letter_reused_after_subprocess_memory_exhaustion",
+                    )
+                )
                 application = self._save_application(
                     state.cv_markdown,
                     state.cover_letter,
@@ -1474,7 +1526,7 @@ class AuditAndSavePhase:
                     alignment_audit=state.alignment_audit,
                     cover_letter_review=state.cover_letter_review,
                     application_id=state.application_id,
-                    preserve_cover_letter=bool(state.cv_only_regen),
+                    preserve_cover_letter=preserve_cover_letter,
                 )
 
             application_id = (

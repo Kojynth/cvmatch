@@ -5323,8 +5323,8 @@ OUTPUT RULES:
         }
 
     def _load_application_snapshot(self) -> dict:
-        """Load existing application snapshot for cv_only_regen mode."""
-        if not self.cv_only_regen:
+        """Load existing application snapshot when an application already exists."""
+        if not self.application_id:
             return {}
         try:
             from ..models.database import get_session
