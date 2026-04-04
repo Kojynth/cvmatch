@@ -57,6 +57,10 @@ def _normalize_language(value: Optional[str]) -> str:
     return "fr"
 
 
+def _language_display_name(language_code: Optional[str]) -> str:
+    return "English" if _normalize_language(language_code) == "en" else "French"
+
+
 def _normalize_template_name(value: Optional[str]) -> str:
     key = str(value or "").strip().lower()
     if key in {"modern", "classic", "tech", "creative", "minimal"}:
@@ -141,7 +145,9 @@ def _instruction_requests_style_change(user_instruction: Optional[str]) -> bool:
     return any(marker in text for marker in markers)
 
 
-def _extract_mode_from_user_instruction(user_instruction: Optional[str]) -> Optional[str]:
+def _extract_mode_from_user_instruction(
+    user_instruction: Optional[str],
+) -> Optional[str]:
     text = str(user_instruction or "").strip().lower()
     if not text:
         return None
@@ -362,6 +368,7 @@ def build_cover_letter_generation_payload(
     preferred_language: Optional[str],
     profile_name: str,
     profile_block: str,
+    language_code: Optional[str] = None,
     user_instruction: Optional[str] = None,
     freeze_previous_style: bool = False,
 ) -> Dict[str, Any]:
@@ -371,8 +378,10 @@ def build_cover_letter_generation_payload(
     analysis = analysis if isinstance(analysis, dict) else {}
 
     keywords = _collect_offer_keywords(analysis)
-    language = analysis.get("language") or preferred_language or "fr"
+    language = language_code or analysis.get("language") or preferred_language or "fr"
     language_code = _normalize_language(language)
+    target_language_name = _language_display_name(language_code)
+    other_language_name = "French" if language_code == "en" else "English"
     placeholder = "[TO COMPLETE]" if language_code == "en" else "[A COMPLETER]"
 
     template_key = _normalize_template_name(template)
@@ -439,6 +448,42 @@ Sincerely,
             if instruction_text
             else ""
         )
+        prompt = f"""
+TARGET OUTPUT LANGUAGE: {language_code} ({target_language_name}) [derived from the job offer language]
+GENERATION STYLE: {style_profile["label"]} ({style_profile["mode"]})
+UI TEMPLATE CONTEXT: {template_key} ({style_profile["template_hint"]})
+STYLE SOURCE: {style_source}
+
+STYLE DIRECTIONS:
+{style_rules}
+{instruction_block}
+TARGET OFFER:
+- Job title: {job_title}
+- Company: {company}
+- Detected keywords: {keywords_text}
+- Raw description (trimmed if needed):
+{_trim_text(offer_text, 2000 if isinstance(offer_keywords, dict) else 3000)}
+
+OFFER_KEYWORDS_JSON (if available):
+{_trim_text(json.dumps(offer_keywords, indent=2, ensure_ascii=False), 1200) if isinstance(offer_keywords, dict) else "N/A"}
+
+CANDIDATE DATA (detailed profile + source CV + source cover letter if provided):
+{profile_block}
+
+MANDATORY OUTPUT RULES (plain text only, no Markdown):
+- Use EXACTLY one language throughout the whole letter: {language_code} ({target_language_name}).
+- Write the subject, greeting, body, closing, and signature in {target_language_name} from the very first draft.
+- Do NOT mix {target_language_name} and {other_language_name} anywhere in the generated prose.
+- Translate every generated sentence into {target_language_name}. Only proper nouns, official company/product names, established acronyms, and tool names may remain untranslated when necessary.
+- Use only facts present in the candidate data (otherwise {placeholder}).
+- Reuse offer keywords only when justified by the profile.
+- Keep the tone aligned with the selected generation style.
+- If USER INSTRUCTION is provided, follow it without inventing facts.
+- Length: maximum 1 page.
+
+STRUCTURE:
+{letter_skeleton}
+""".strip()
     else:
         letter_skeleton = f"""Objet: Candidature - {job_title} ({company})
 
@@ -458,9 +503,8 @@ Je vous prie d'agreer, Madame, Monsieur, l'expression de mes salutations disting
             if instruction_text
             else ""
         )
-
-    prompt = f"""
-LANGUE: {language_code}
+        prompt = f"""
+LANGUE DE SORTIE OBLIGATOIRE: {language_code} ({target_language_name}) [derivee de la langue de l'offre]
 STYLE DE GENERATION (contenu): {style_profile["label"]} ({style_profile["mode"]})
 STYLE CONTEXTE (template UI): {template_key} ({style_profile["template_hint"]})
 STYLE SOURCE: {style_source}
@@ -478,11 +522,15 @@ OFFRE CIBLE:
 OFFER_KEYWORDS_JSON (si disponible):
 {_trim_text(json.dumps(offer_keywords, indent=2, ensure_ascii=False), 1200) if isinstance(offer_keywords, dict) else "N/A"}
 
-DONNEES CANDIDAT (Profil detaille + CV de reference + lettre type si fournie):
+DONNEES CANDIDAT (profil detaille + CV de reference + lettre type si fournie):
 {profile_block}
 
 SORTIE OBLIGATOIRE (texte uniquement, pas de Markdown):
 - Respecte STRICTEMENT la structure ci-dessous.
+- Utilise EXACTEMENT une seule langue dans toute la lettre: {language_code} ({target_language_name}).
+- Redige l'objet, la salutation, les paragraphes, la formule de politesse et la signature en {target_language_name} des le premier jet.
+- Ne melange jamais {target_language_name} et {other_language_name} dans le texte genere.
+- Traduis chaque phrase generee en {target_language_name}. Seuls les noms propres, noms officiels d'entreprise/produit, acronymes etablis et noms d'outils peuvent rester non traduits si necessaire.
 - Utilise uniquement les faits presents dans les donnees candidat (sinon {placeholder}).
 - Reprends en priorite les mots-cles de l'offre qui sont justifiables par le profil.
 - Conserve un ton adapte au style de generation selectionne.
@@ -522,6 +570,7 @@ def build_cover_letter_generation_prompt(
     preferred_language: Optional[str],
     profile_name: str,
     profile_block: str,
+    language_code: Optional[str] = None,
     user_instruction: Optional[str] = None,
     freeze_previous_style: bool = False,
 ) -> str:
@@ -530,10 +579,10 @@ def build_cover_letter_generation_prompt(
         offer_data=offer_data,
         template=template,
         preferred_language=preferred_language,
+        language_code=language_code,
         profile_name=profile_name,
         profile_block=profile_block,
         user_instruction=user_instruction,
         freeze_previous_style=freeze_previous_style,
     )
     return str(payload.get("prompt") or "")
-

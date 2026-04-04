@@ -481,6 +481,7 @@ def build_cover_letter_rewrite_prompt(
     cover_letter: str,
     review: Dict[str, Any],
     language_code: str,
+    rewrite_reason: str = "",
     max_review_chars: int = 1800,
     max_letter_chars: int = 2600,
 ) -> str:
@@ -492,6 +493,7 @@ def build_cover_letter_rewrite_prompt(
         cover_letter: Current cover letter text
         review: Quality review JSON
         language_code: Target language code
+        rewrite_reason: Optional rewrite reason (e.g. language_mismatch)
         max_review_chars: Max chars for review JSON
         max_letter_chars: Max chars for letter
 
@@ -502,6 +504,30 @@ def build_cover_letter_rewrite_prompt(
         json.dumps(review or {}, ensure_ascii=False, indent=2),
         max_review_chars,
     )
+    normalized_reason = str(rewrite_reason or "").strip().lower()
+    language_name = (
+        "French" if str(language_code or "").strip().lower() == "fr" else "English"
+    )
+    if normalized_reason == "language_mismatch":
+        return f"""
+{base_prompt}
+
+QUALITY_REVIEW_JSON:
+{review_block}
+
+CURRENT_COVER_LETTER:
+{_trim_text(cover_letter, max_letter_chars)}
+
+TASK:
+- Rewrite the full letter in {language_name}.
+- Correct the detected language mismatch completely.
+- Translate every sentence to {language_name}; do not keep mixed-language phrasing.
+- Keep ONLY verifiable candidate facts.
+- Keep coherent structure (subject/objet, salutation, 2-3 body paragraphs, closing).
+- Keep proper nouns, company names, product names, acronyms, and tool names unchanged when appropriate.
+- Use EXACTLY one language: {language_code}.
+- Output only the final letter text.
+""".strip()
 
     return f"""
 {base_prompt}

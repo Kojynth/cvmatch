@@ -3102,6 +3102,7 @@ class CVGenerationWorker(QThread):
         cover_letter: str,
         language_code: str,
         progress_callback=None,
+        rewrite_reason: str = "",
     ) -> str:
         try:
             from ..utils.cover_letter_pipeline import build_cover_letter_rewrite_prompt
@@ -3112,6 +3113,7 @@ class CVGenerationWorker(QThread):
                 cover_letter=cover_letter,
                 review={},
                 language_code=language_code,
+                rewrite_reason=rewrite_reason,
             )
             return self.qwen_manager.generate_cover_letter(prompt, progress_callback)
         except Exception as exc:
@@ -5415,6 +5417,7 @@ OUTPUT RULES:
             offer_data=self.offer_data if isinstance(self.offer_data, dict) else {},
             template=self.template,
             preferred_language=getattr(self.profile_data, "preferred_language", None),
+            language_code=self._resolve_language_code(),
             profile_name=getattr(self.profile_data, "name", "") or "",
             profile_block=profile_block,
             user_instruction=self.user_instruction,
@@ -5679,6 +5682,7 @@ class CoverLetterGenerationWorker(QThread):
             offer_data=self.offer_data if isinstance(self.offer_data, dict) else {},
             template=self.template,
             preferred_language=getattr(self.profile_data, "preferred_language", None),
+            language_code=self._resolve_letter_language_code(),
             profile_name=getattr(self.profile_data, "name", "") or "",
             profile_block=profile_block,
             user_instruction=self.user_instruction,
@@ -5703,10 +5707,22 @@ class CoverLetterGenerationWorker(QThread):
         analysis_language = (
             analysis.get("language") if isinstance(analysis, dict) else None
         )
-        if isinstance(analysis_language, str) and analysis_language.strip():
-            return _normalize_language(analysis_language)
+        offer_text = (
+            self.offer_data.get("text") if isinstance(self.offer_data, dict) else None
+        )
+        detected = _detect_language_from_text(offer_text)
         preferred = getattr(self.profile_data, "preferred_language", None)
-        return _normalize_language(preferred)
+
+        if isinstance(analysis_language, str) and analysis_language.strip():
+            analysis_norm = _normalize_language(analysis_language)
+            if detected and detected != analysis_norm:
+                return _normalize_language(detected)
+            return analysis_norm
+        if detected:
+            return _normalize_language(detected)
+        if preferred:
+            return _normalize_language(preferred)
+        return "fr"
 
     def _build_cover_letter_generation_audit(
         self,

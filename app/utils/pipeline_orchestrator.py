@@ -971,7 +971,7 @@ class CoverLetterPhase:
         ensure_language_consistency: Optional[Callable[[str, str], str]] = None,
         enforce_alignment: Optional[Callable[[str, str], str]] = None,
         is_structure_coherent: Optional[Callable[[str, str], bool]] = None,
-        critique_and_rewrite: Optional[Callable[[str, str, Any], Any]] = None,
+        critique_and_rewrite: Optional[Callable[..., Any]] = None,
         should_run_critic: Optional[Callable[[], bool]] = None,
     ):
         self._run_subprocess = run_subprocess
@@ -1049,6 +1049,7 @@ class CoverLetterPhase:
                 rewrite_payload = {
                     "cover_letter": state.cover_letter,
                     "language_code": state.language_code,
+                    "rewrite_reason": "language_mismatch",
                 }
                 try:
                     rewrite_result = self._run_subprocess(
@@ -1079,6 +1080,7 @@ class CoverLetterPhase:
                             state.cover_letter,
                             state.language_code,
                             state.progress_callback,
+                            rewrite_reason="language_mismatch",
                         )
                     else:
                         raise
@@ -1087,6 +1089,7 @@ class CoverLetterPhase:
                     state.cover_letter,
                     state.language_code,
                     state.progress_callback,
+                    rewrite_reason="language_mismatch",
                 )
             applied = self._apply_letter_review_result(
                 state,
@@ -1886,8 +1889,11 @@ def build_default_pipeline(
             ensure_language_consistency=worker._ensure_cover_letter_language_consistency,
             enforce_alignment=worker._enforce_cover_letter_offer_alignment,
             is_structure_coherent=worker._is_cover_letter_structure_coherent,
-            critique_and_rewrite=lambda letter, lang, cb: worker.critique_and_rewrite_cover_letter(
-                cover_letter=letter, language_code=lang, progress_callback=cb
+            critique_and_rewrite=lambda letter, lang, cb, rewrite_reason="": worker.critique_and_rewrite_cover_letter(
+                cover_letter=letter,
+                language_code=lang,
+                progress_callback=cb,
+                rewrite_reason=rewrite_reason,
             ),
             should_run_critic=worker._should_run_cover_letter_critic_stage,
         ),
