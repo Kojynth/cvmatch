@@ -466,7 +466,7 @@ COVER_LETTER:
 {_trim_text(cover_letter, max_letter_chars)}
 
 Rules:
-- structure_ok=true only if the letter has subject/objet, salutation, >=2 body paragraphs, and closing.
+- structure_ok=true only if the letter has a subject/objet line, a salutation, at least one body paragraph, and a closing formula.
 - keywords_to_add: only terms relevant to offer and candidate profile.
 - relevance_score in [0..100].
 - language must be "fr" or "en".
@@ -523,7 +523,7 @@ TASK:
 - Correct the detected language mismatch completely.
 - Translate every sentence to {language_name}; do not keep mixed-language phrasing.
 - Keep ONLY verifiable candidate facts.
-- Keep coherent structure (subject/objet, salutation, 2-3 body paragraphs, closing).
+- Keep coherent letter structure with a subject/objet line, a salutation, at least one body paragraph, and a closing formula.
 - Keep proper nouns, company names, product names, acronyms, and tool names unchanged when appropriate.
 - Use EXACTLY one language: {language_code}.
 - Output only the final letter text.
@@ -544,7 +544,7 @@ TASK:
 - Improve relevance to the offer by integrating review keywords/instructions.
 - Ensure at least 4 offer keywords appear in body paragraphs (exact term preferred, professional synonym/acronym allowed).
 - Use EXACTLY one language: {language_code}.
-- Keep coherent structure (subject/objet, salutation, 2-3 body paragraphs, closing).
+- Keep coherent letter structure with a subject/objet line, a salutation, at least one body paragraph, and a closing formula.
 - Output only the final letter text.
 """.strip()
 
@@ -581,7 +581,7 @@ TASK:
 - Use offer keywords and lexical field when facts allow it.
 - Include at least 4 offer keywords in the body (exact terms preferred, professional synonym/acronym allowed).
 - Keep ONLY candidate facts from the provided profile context.
-- Keep coherent structure: subject/objet, salutation, 2-3 body paragraphs, closing.
+- Keep coherent letter structure with a subject/objet line, a salutation, at least one body paragraph, and a closing formula.
 - Use EXACTLY one language: {language_code}.
 - Output only the final letter text.
 """.strip()
