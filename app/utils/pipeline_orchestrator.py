@@ -1140,6 +1140,10 @@ class CoverLetterPhase:
             state.cover_letter = self._ensure_language_consistency(
                 state.cover_letter, state.language_code
             )
+            return {
+                "language_rewrite_applied": True,
+                "skip_critic_stage": True,
+            }
         except Exception as rewrite_exc:
             if self._is_language_mismatch_error(rewrite_exc):
                 warning_reason = "cover_letter_kept_after_language_validation_failure"
@@ -1165,6 +1169,8 @@ class CoverLetterPhase:
                 return {
                     "mode": warning_reason,
                     "warnings": [warning_reason],
+                    "language_rewrite_applied": True,
+                    "skip_critic_stage": True,
                 }
             raise RuntimeError(
                 f"Cover letter language mismatch after rewrite (target={state.language_code}): {rewrite_exc}"
@@ -1338,6 +1344,7 @@ class CoverLetterPhase:
 
         # Post-process
         phase_warnings: List[str] = []
+        skip_critic_stage = False
 
         language_result = self._validate_cover_letter_language(
             state,
@@ -1355,6 +1362,7 @@ class CoverLetterPhase:
                 or "cover_letter_kept_after_language_validation_failure"
             )
             phase_warnings.extend(list(language_result.get("warnings") or []))
+            skip_critic_stage = bool(language_result.get("skip_critic_stage"))
         if self._enforce_alignment:
             state.cover_letter = self._enforce_alignment(
                 state.cover_letter, state.language_code
@@ -1364,7 +1372,11 @@ class CoverLetterPhase:
         should_run_critic = (
             self._should_run_critic() if self._should_run_critic else True
         )
-        if should_run_critic:
+        if should_run_critic and skip_critic_stage:
+            logger.info(
+                "Cover letter critic skipped: language rewrite already consumed rewrite stage."
+            )
+        elif should_run_critic:
             state.emit_progress("[LETTER] Critique + correction...")
             try:
                 if (
