@@ -1141,6 +1141,7 @@ class CoverLetterPhase:
                 state.cover_letter, state.language_code
             )
             return {
+                "mode": "generated_after_language_rewrite",
                 "language_rewrite_applied": True,
                 "skip_critic_stage": True,
             }
@@ -1353,14 +1354,19 @@ class CoverLetterPhase:
             prefer_subprocess_rewrite=not force_inprocess_review,
         )
         if isinstance(language_result, dict):
-            logger.info(
-                "Cover letter generation degraded after language validation failure: length=%s",
-                len(state.cover_letter or ""),
-            )
-            generation_mode = str(
-                language_result.get("mode")
-                or "cover_letter_kept_after_language_validation_failure"
-            )
+            result_mode = language_result.get("mode")
+            if result_mode:
+                generation_mode = str(result_mode)
+            if language_result.get("warnings"):
+                logger.info(
+                    "Cover letter generation degraded after language validation failure: length=%s",
+                    len(state.cover_letter or ""),
+                )
+            elif language_result.get("language_rewrite_applied"):
+                logger.info(
+                    "Cover letter generation language rewrite applied successfully: length=%s",
+                    len(state.cover_letter or ""),
+                )
             phase_warnings.extend(list(language_result.get("warnings") or []))
             skip_critic_stage = bool(language_result.get("skip_critic_stage"))
         if self._enforce_alignment:
