@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import re
-
 
 def is_cover_letter_structure_coherent(text: str, *, language_code: str) -> bool:
     is_en = str(language_code or "").strip().lower().startswith("en")
@@ -31,7 +29,4 @@ def is_cover_letter_structure_coherent(text: str, *, language_code: str) -> bool
             token in " ".join(lines[-3:]).lower()
             for token in ("cordialement", "salutations", "agreer")
         )
-    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", letter) if part.strip()]
-    body_count = max(0, len(paragraphs) - 3)
-    return bool(subject_ok and salutation_ok and closing_ok and body_count >= 2)
-
+    return bool(subject_ok and salutation_ok and closing_ok)

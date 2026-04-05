@@ -473,6 +473,10 @@ CANDIDATE DATA (detailed profile + source CV + source cover letter if provided):
 MANDATORY OUTPUT RULES (plain text only, no Markdown):
 - Use EXACTLY one language throughout the whole letter: {language_code} ({target_language_name}).
 - Write the subject, greeting, body, closing, and signature in {target_language_name} from the very first draft.
+- The first non-empty line must be a `Subject:` line.
+- Add a greeting immediately after the subject.
+- End with a closing formula and signature; do not omit them.
+- Do not output the skeleton placeholders literally.
 - Do NOT mix {target_language_name} and {other_language_name} anywhere in the generated prose.
 - Translate every generated sentence into {target_language_name}. Only proper nouns, official company/product names, established acronyms, and tool names may remain untranslated when necessary.
 - Use only facts present in the candidate data (otherwise {placeholder}).
@@ -529,6 +533,10 @@ SORTIE OBLIGATOIRE (texte uniquement, pas de Markdown):
 - Respecte STRICTEMENT la structure ci-dessous.
 - Utilise EXACTEMENT une seule langue dans toute la lettre: {language_code} ({target_language_name}).
 - Redige l'objet, la salutation, les paragraphes, la formule de politesse et la signature en {target_language_name} des le premier jet.
+- La premiere ligne non vide doit etre une ligne `Objet:`.
+- Ajoute une salutation juste apres l'objet.
+- Termine par une formule de politesse et une signature; ne les omets pas.
+- N'affiche jamais les placeholders du squelette tels quels.
 - Ne melange jamais {target_language_name} et {other_language_name} dans le texte genere.
 - Traduis chaque phrase generee en {target_language_name}. Seuls les noms propres, noms officiels d'entreprise/produit, acronymes etablis et noms d'outils peuvent rester non traduits si necessaire.
 - Utilise uniquement les faits presents dans les donnees candidat (sinon {placeholder}).
