@@ -1472,9 +1472,32 @@ class CoverLetterPhase:
                 )
                 structure_ok = bool(self._is_structure_coherent(state.cover_letter))
             if not structure_ok:
-                raise RuntimeError(
-                    "Cover letter structure not coherent after generation/review."
+                warning_reason = "cover_letter_kept_after_structure_validation_failure"
+                state.add_degraded_reason(warning_reason)
+                state.emit_progress(
+                    "[LETTER] Structure validation failed; keeping the generated letter and continuing..."
                 )
+                logger.warning(
+                    "Cover-letter structure validation failed; keeping generated letter."
+                )
+                phase_warnings.append(warning_reason)
+                if generation_mode in {"generated", "generated_after_language_rewrite"}:
+                    generation_mode = warning_reason
+                if (
+                    not isinstance(state.cover_letter_review, dict)
+                    or not state.cover_letter_review
+                ):
+                    state.cover_letter_review = {
+                        "relevance_score": 0,
+                        "structure_ok": False,
+                        "language": state.language_code,
+                        "validation_warning": "structure_incoherent_after_generation",
+                    }
+                else:
+                    state.cover_letter_review["structure_ok"] = False
+                    state.cover_letter_review.setdefault(
+                        "validation_warning", "structure_incoherent_after_generation"
+                    )
 
         if (
             not isinstance(state.cover_letter_review, dict)
