@@ -34,6 +34,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Protocol, Tuple
 
 from .memory_debug import log_memory_snapshot
+from .cover_letter_output import sanitize_generated_cover_letter
 from .stage_subprocess_utils import is_transient_stage_memory_error
 
 try:
@@ -996,7 +997,9 @@ class CoverLetterPhase:
             review_payload = review_result.get("review")
             if isinstance(review_payload, dict):
                 state.cover_letter_review = review_payload
-            reviewed_letter = str(review_result.get("cover_letter") or "").strip()
+            reviewed_letter = sanitize_generated_cover_letter(
+                str(review_result.get("cover_letter") or "")
+            )
             if reviewed_letter:
                 state.cover_letter = reviewed_letter
                 applied = True
@@ -1004,7 +1007,7 @@ class CoverLetterPhase:
                 logger.info("Cover letter %s applied corrections.", context)
             return applied
 
-        reviewed_letter = str(review_result or "").strip()
+        reviewed_letter = sanitize_generated_cover_letter(str(review_result or ""))
         if reviewed_letter:
             state.cover_letter = reviewed_letter
             logger.info("Cover letter %s applied text rewrite.", context)
