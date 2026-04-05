@@ -1337,6 +1337,8 @@ class CoverLetterPhase:
             raise RuntimeError(f"Cover letter generation failed: {exc}") from exc
 
         # Post-process
+        phase_warnings: List[str] = []
+
         language_result = self._validate_cover_letter_language(
             state,
             allow_rewrite=True,
@@ -1348,16 +1350,11 @@ class CoverLetterPhase:
                 "Cover letter generation degraded after language validation failure: length=%s",
                 len(state.cover_letter or ""),
             )
-            return PhaseResult(
-                phase_name=self.name,
-                status=PipelinePhaseStatus.COMPLETED,
-                duration_seconds=time.time() - start,
-                warnings=list(language_result.get("warnings") or []),
-                metadata={
-                    "mode": str(language_result.get("mode") or "cover_letter_skipped"),
-                    "length": len(state.cover_letter or ""),
-                },
+            generation_mode = str(
+                language_result.get("mode")
+                or "cover_letter_kept_after_language_validation_failure"
             )
+            phase_warnings.extend(list(language_result.get("warnings") or []))
         if self._enforce_alignment:
             state.cover_letter = self._enforce_alignment(
                 state.cover_letter, state.language_code
@@ -1479,6 +1476,7 @@ class CoverLetterPhase:
             phase_name=self.name,
             status=PipelinePhaseStatus.COMPLETED,
             duration_seconds=time.time() - start,
+            warnings=phase_warnings,
             metadata={"mode": generation_mode, "length": len(state.cover_letter or "")},
         )
 
