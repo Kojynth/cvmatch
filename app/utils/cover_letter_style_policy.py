@@ -475,6 +475,7 @@ MANDATORY OUTPUT RULES (plain text only, no Markdown):
 - Write the subject, greeting, body, closing, and signature in {target_language_name} from the very first draft.
 - The first non-empty line must be a `Subject:` line.
 - Add a greeting immediately after the subject.
+- Include at least one body paragraph between the greeting and the closing.
 - End with a closing formula and signature; do not omit them.
 - Do not output the skeleton placeholders literally.
 - Do NOT mix {target_language_name} and {other_language_name} anywhere in the generated prose.
@@ -535,6 +536,7 @@ SORTIE OBLIGATOIRE (texte uniquement, pas de Markdown):
 - Redige l'objet, la salutation, les paragraphes, la formule de politesse et la signature en {target_language_name} des le premier jet.
 - La premiere ligne non vide doit etre une ligne `Objet:`.
 - Ajoute une salutation juste apres l'objet.
+- Inclut au moins un paragraphe de corps entre la salutation et la formule de politesse.
 - Termine par une formule de politesse et une signature; ne les omets pas.
 - N'affiche jamais les placeholders du squelette tels quels.
 - Ne melange jamais {target_language_name} et {other_language_name} dans le texte genere.
