@@ -64,6 +64,7 @@ except ImportError as e:
 from ..utils.generation_role_params import (
     DEFAULT_ROLE_PARAMS as DEFAULT_ROLE_PARAMS_EXTRACTED,
 )
+from ..utils.cover_letter_output import sanitize_generated_cover_letter
 from ..utils.gpu_memory_budget import (
     build_max_memory_map_detailed as build_max_memory_map_util,
 )
@@ -5946,7 +5947,9 @@ Genere la lettre finale (texte uniquement), en respectant la structure demandee.
     @staticmethod
     def _extract_letter_content(generated_text: str) -> str:
         """Delegate to _extract_structured_content (identical implementation)."""
-        return QwenManager._extract_structured_content(generated_text)
+        return sanitize_generated_cover_letter(
+            QwenManager._extract_structured_content(generated_text)
+        )
 
     @staticmethod
     def _extract_structured_content(generated_text: str) -> str:
