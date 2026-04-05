@@ -1011,6 +1011,45 @@ class CoverLetterPhase:
             return True
         return False
 
+    @staticmethod
+    def _is_language_mismatch_error(exc: Exception) -> bool:
+        details = str(exc or "").strip().lower()
+        if not details:
+            return False
+        return "language mismatch" in details
+
+    def _degrade_cover_letter_generation(
+        self,
+        state: PipelineState,
+        *,
+        progress_message: str,
+        warning_message: str,
+        existing_reason: str,
+        skipped_reason: str,
+        existing_mode: str,
+        skipped_mode: str,
+        unavailable_reason: str,
+    ) -> Tuple[str, List[str]]:
+        existing_letter = str(state.existing_snapshot.get("cover_letter") or "").strip()
+        state.emit_progress(progress_message)
+
+        if existing_letter:
+            state.add_degraded_reason(existing_reason)
+            state.cover_letter = existing_letter
+            state.cover_letter_review = self._load_existing_cover_letter_review(state)
+            return existing_mode, [existing_reason]
+
+        state.add_degraded_reason(skipped_reason)
+        state.cover_letter = ""
+        state.cover_letter_review = {
+            "relevance_score": 0,
+            "structure_ok": False,
+            "language": state.language_code,
+            "unavailable_reason": unavailable_reason,
+        }
+        logger.warning("%s", warning_message)
+        return skipped_mode, [skipped_reason]
+
     def _validate_cover_letter_language(
         self,
         state: PipelineState,
@@ -1018,14 +1057,14 @@ class CoverLetterPhase:
         allow_rewrite: bool,
         context: str,
         prefer_subprocess_rewrite: bool = True,
-    ) -> None:
+    ) -> Optional[Dict[str, Any]]:
         if not self._ensure_language_consistency:
-            return
+            return None
         try:
             state.cover_letter = self._ensure_language_consistency(
                 state.cover_letter, state.language_code
             )
-            return
+            return None
         except Exception as exc:
             logger.warning("Cover letter language check failed: %s", exc)
             if not allow_rewrite:
@@ -1034,7 +1073,7 @@ class CoverLetterPhase:
                     "Cover letter language check degraded to fallback (context=%s).",
                     context,
                 )
-                return
+                return None
             if not self._critique_and_rewrite:
                 raise RuntimeError(str(exc)) from exc
 
@@ -1101,7 +1140,39 @@ class CoverLetterPhase:
             state.cover_letter = self._ensure_language_consistency(
                 state.cover_letter, state.language_code
             )
+            return {
+                "mode": "generated_after_language_rewrite",
+                "language_rewrite_applied": True,
+                "skip_critic_stage": True,
+            }
         except Exception as rewrite_exc:
+            if self._is_language_mismatch_error(rewrite_exc):
+                warning_reason = "cover_letter_kept_after_language_validation_failure"
+                state.add_degraded_reason(warning_reason)
+                state.emit_progress(
+                    "[LETTER] Language rewrite still failed validation; keeping the generated letter and continuing..."
+                )
+                logger.warning(
+                    "Cover-letter language rewrite still failed validation; keeping generated letter target=%s detail=%s",
+                    state.language_code,
+                    rewrite_exc,
+                )
+                if (
+                    not isinstance(state.cover_letter_review, dict)
+                    or not state.cover_letter_review
+                ):
+                    state.cover_letter_review = {
+                        "relevance_score": 0,
+                        "structure_ok": True,
+                        "language": state.language_code,
+                        "validation_warning": "language_mismatch_after_rewrite",
+                    }
+                return {
+                    "mode": warning_reason,
+                    "warnings": [warning_reason],
+                    "language_rewrite_applied": True,
+                    "skip_critic_stage": True,
+                }
             raise RuntimeError(
                 f"Cover letter language mismatch after rewrite (target={state.language_code}): {rewrite_exc}"
             ) from rewrite_exc
@@ -1180,6 +1251,35 @@ class CoverLetterPhase:
             metadata={"mode": "cv_only_reuse"},
         )
 
+    def _load_existing_cover_letter_review(
+        self, state: PipelineState
+    ) -> Dict[str, Any]:
+        previous_audit = (
+            state.previous_generation_audit
+            if isinstance(state.previous_generation_audit, dict)
+            else {}
+        )
+        if not previous_audit and isinstance(state.existing_snapshot, dict):
+            snapshot_audit = state.existing_snapshot.get("generation_audit")
+            if isinstance(snapshot_audit, dict):
+                previous_audit = snapshot_audit
+
+        previous_letter = {}
+        breakdown = previous_audit.get("breakdown")
+        if isinstance(breakdown, dict):
+            letter_payload = breakdown.get("letter")
+            if isinstance(letter_payload, dict):
+                previous_letter = dict(letter_payload)
+
+        if previous_letter:
+            return previous_letter
+
+        return {
+            "relevance_score": 80,
+            "structure_ok": True,
+            "language": state.language_code,
+        }
+
     def _execute_generation_mode(
         self, state: PipelineState, start: float
     ) -> PhaseResult:
@@ -1198,33 +1298,41 @@ class CoverLetterPhase:
                     cover_result = self._run_subprocess("cover_letter", cover_payload)
                     state.cover_letter = cover_result.get("cover_letter", "")
                 except Exception as exc:
-                    can_fallback = self._generate_letter is not None
-                    if (
-                        can_fallback
-                        and self._is_transient_cover_letter_subprocess_error(exc)
-                    ):
-                        state.emit_progress(
-                            "[LETTER] Subprocess memory retry exhausted, falling back to in-process generation..."
-                        )
-                        state.add_degraded_reason(
-                            "cover_letter_subprocess_memory_fallback"
-                        )
-                        logger.warning(
+                    if self._is_transient_cover_letter_subprocess_error(exc):
+                        warning_message = (
                             "Cover-letter subprocess failed with transient memory error; "
-                            "falling back to in-process generation: %s",
-                            exc,
+                            "skipping cover-letter generation without in-process fallback "
+                            "to avoid parent model reload."
                         )
-                        force_inprocess_review = True
-                        generation_mode = "generated_inprocess_fallback"
-                        if self._apply_stage_override:
-                            self._apply_stage_override(
-                                "cover_letter", state.progress_callback
-                            )
-                        state.cover_letter = self._generate_letter(
-                            letter_prompt, state.progress_callback
+                        mode, warnings = self._degrade_cover_letter_generation(
+                            state,
+                            progress_message=(
+                                "[LETTER] Subprocess memory retry exhausted; "
+                                "keeping CV result and skipping cover-letter generation..."
+                            ),
+                            warning_message=warning_message,
+                            existing_reason=(
+                                "cover_letter_reused_after_subprocess_memory_exhaustion"
+                            ),
+                            skipped_reason=(
+                                "cover_letter_generation_skipped_after_subprocess_memory_exhaustion"
+                            ),
+                            existing_mode=("cover_letter_reused_after_subprocess_oom"),
+                            skipped_mode=("cover_letter_skipped_after_subprocess_oom"),
+                            unavailable_reason="subprocess_memory_exhausted",
                         )
-                    else:
-                        raise
+                        logger.warning("%s %s", warning_message, exc)
+                        return PhaseResult(
+                            phase_name=self.name,
+                            status=PipelinePhaseStatus.COMPLETED,
+                            duration_seconds=time.time() - start,
+                            warnings=warnings,
+                            metadata={
+                                "mode": mode,
+                                "length": len(state.cover_letter or ""),
+                            },
+                        )
+                    raise
             else:
                 if self._apply_stage_override:
                     self._apply_stage_override("cover_letter", state.progress_callback)
@@ -1236,12 +1344,31 @@ class CoverLetterPhase:
             raise RuntimeError(f"Cover letter generation failed: {exc}") from exc
 
         # Post-process
-        self._validate_cover_letter_language(
+        phase_warnings: List[str] = []
+        skip_critic_stage = False
+
+        language_result = self._validate_cover_letter_language(
             state,
             allow_rewrite=True,
             context="generation",
             prefer_subprocess_rewrite=not force_inprocess_review,
         )
+        if isinstance(language_result, dict):
+            result_mode = language_result.get("mode")
+            if result_mode:
+                generation_mode = str(result_mode)
+            if language_result.get("warnings"):
+                logger.info(
+                    "Cover letter generation degraded after language validation failure: length=%s",
+                    len(state.cover_letter or ""),
+                )
+            elif language_result.get("language_rewrite_applied"):
+                logger.info(
+                    "Cover letter generation language rewrite applied successfully: length=%s",
+                    len(state.cover_letter or ""),
+                )
+            phase_warnings.extend(list(language_result.get("warnings") or []))
+            skip_critic_stage = bool(language_result.get("skip_critic_stage"))
         if self._enforce_alignment:
             state.cover_letter = self._enforce_alignment(
                 state.cover_letter, state.language_code
@@ -1251,7 +1378,11 @@ class CoverLetterPhase:
         should_run_critic = (
             self._should_run_critic() if self._should_run_critic else True
         )
-        if should_run_critic:
+        if should_run_critic and skip_critic_stage:
+            logger.info(
+                "Cover letter critic skipped: language rewrite already consumed rewrite stage."
+            )
+        elif should_run_critic:
             state.emit_progress("[LETTER] Critique + correction...")
             try:
                 if (
@@ -1363,6 +1494,7 @@ class CoverLetterPhase:
             phase_name=self.name,
             status=PipelinePhaseStatus.COMPLETED,
             duration_seconds=time.time() - start,
+            warnings=phase_warnings,
             metadata={"mode": generation_mode, "length": len(state.cover_letter or "")},
         )
 
@@ -1457,6 +1589,13 @@ class AuditAndSavePhase:
 
             application = None
             if self._save_application:
+                preserve_cover_letter = bool(state.cv_only_regen) or any(
+                    reason in getattr(state, "degraded_reasons", [])
+                    for reason in (
+                        "cover_letter_generation_skipped_after_subprocess_memory_exhaustion",
+                        "cover_letter_reused_after_subprocess_memory_exhaustion",
+                    )
+                )
                 application = self._save_application(
                     state.cv_markdown,
                     state.cover_letter,
@@ -1469,7 +1608,7 @@ class AuditAndSavePhase:
                     alignment_audit=state.alignment_audit,
                     cover_letter_review=state.cover_letter_review,
                     application_id=state.application_id,
-                    preserve_cover_letter=bool(state.cv_only_regen),
+                    preserve_cover_letter=preserve_cover_letter,
                 )
 
             application_id = (
