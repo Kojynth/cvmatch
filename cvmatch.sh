@@ -12,6 +12,31 @@ fi
 
 set -e  # Arrêter en cas d'erreur
 
+ensure_utf8_runtime() {
+    local current_locale="${LC_ALL:-${LC_CTYPE:-${LANG:-}}}"
+
+    case "$current_locale" in
+        *.UTF-8|*.utf8)
+            ;;
+        *)
+            if command -v locale >/dev/null 2>&1; then
+                local candidate
+                for candidate in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8 fr_FR.UTF-8 fr_FR.utf8; do
+                    if locale -a 2>/dev/null | grep -Fxq "$candidate"; then
+                        export LANG="$candidate"
+                        export LC_CTYPE="$candidate"
+                        break
+                    fi
+                done
+            fi
+            ;;
+    esac
+
+    export PYTHONUTF8=1
+}
+
+ensure_utf8_runtime
+
 # Couleurs pour l'affichage
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -449,16 +474,16 @@ if [[ -z "$PYTHON_BIN" ]]; then
     echo "python:  $(command -v python 2>/dev/null || echo 'not found')"
     echo ""
     echo "Solutions selon votre distribution:"
-    echo "â€¢ Ubuntu/Debian: sudo apt update && sudo apt install python3 python3-venv python3-pip"
-    echo "â€¢ CentOS/RHEL:   sudo yum install python3 python3-venv python3-pip"
-    echo "â€¢ Arch/Manjaro:  sudo pacman -S python python-virtualenv python-pip"
-    echo "â€¢ macOS:         brew install python3"
+    echo "- Ubuntu/Debian: sudo apt update && sudo apt install python3 python3-venv python3-pip"
+    echo "- CentOS/RHEL:   sudo yum install python3 python3-venv python3-pip"
+    echo "- Arch/Manjaro:  sudo pacman -S python python-virtualenv python-pip"
+    echo "- macOS:         brew install python3"
     exit 1
 fi
 
 PYTHON_VERSION=$($PYTHON_BIN -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
 if ! $PYTHON_BIN -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)"; then
-    log_error "Python 3.10+ requis, version dÃ©tectÃ©e: $PYTHON_VERSION"
+    log_error "Python 3.10+ requis, version detectee: $PYTHON_VERSION"
     exit 1
 fi
 
