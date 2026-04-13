@@ -1,12 +1,37 @@
 #!/bin/bash
 # ================================================================
-# CVMatch - Installateur Linux (recrÃ©e automatiquement)
+# CVMatch - Installateur Linux (recree automatiquement)
 # ================================================================
 if [ -z "${BASH_VERSION:-}" ]; then
     exec bash "$0" "$@"
 fi
 
 set -e
+
+ensure_utf8_runtime() {
+    local current_locale="${LC_ALL:-${LC_CTYPE:-${LANG:-}}}"
+
+    case "$current_locale" in
+        *.UTF-8|*.utf8)
+            ;;
+        *)
+            if command -v locale >/dev/null 2>&1; then
+                local candidate
+                for candidate in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8 fr_FR.UTF-8 fr_FR.utf8; do
+                    if locale -a 2>/dev/null | grep -Fxq "$candidate"; then
+                        export LANG="$candidate"
+                        export LC_CTYPE="$candidate"
+                        break
+                    fi
+                done
+            fi
+            ;;
+    esac
+
+    export PYTHONUTF8=1
+}
+
+ensure_utf8_runtime
 
 echo "CVMatch - Installateur Linux"
 echo "===================================="
@@ -139,7 +164,7 @@ run_with_spinner() {
     return "$rc"
 }
 
-# VÃ©rification Python
+# Verification Python
 PYTHON_BIN=""
 if [[ -n "${CVMATCH_PYTHON:-}" ]]; then
     if [[ -x "$CVMATCH_PYTHON" ]]; then
@@ -177,8 +202,8 @@ if [[ "${CVMATCH_FORCE_GPU:-}" == "1" ]]; then
     esac
 fi
 
-# CrÃ©ation environnement virtuel
-echo "CrÃ©ation environnement virtuel..."
+# Creation environnement virtuel
+echo "Creation environnement virtuel..."
 VENV_DIR="$PROJECT_ROOT/cvmatch_env"
 if [[ -d "$VENV_DIR" ]]; then
     if [[ -z "$PROJECT_ROOT" || "$PROJECT_ROOT" == "/" ]]; then

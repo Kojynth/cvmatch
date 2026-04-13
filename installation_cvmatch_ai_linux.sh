@@ -1,6 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ensure_utf8_runtime() {
+    local current_locale="${LC_ALL:-${LC_CTYPE:-${LANG:-}}}"
+
+    case "$current_locale" in
+        *.UTF-8|*.utf8)
+            ;;
+        *)
+            if command -v locale >/dev/null 2>&1; then
+                local candidate
+                for candidate in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8 fr_FR.UTF-8 fr_FR.utf8; do
+                    if locale -a 2>/dev/null | grep -Fxq "$candidate"; then
+                        export LANG="$candidate"
+                        export LC_CTYPE="$candidate"
+                        break
+                    fi
+                done
+            fi
+            ;;
+    esac
+
+    export PYTHONUTF8=1
+}
+
+ensure_utf8_runtime
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd)"
 CACHE_DIR="${SCRIPT_DIR}/cache/hf_models"
 if [[ -n "${CVMATCH_HF_CACHE:-}" ]]; then

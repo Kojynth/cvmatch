@@ -92,6 +92,10 @@ from ..utils.offer_keywords_quality import (
 )
 from ..utils.offer_keywords_llm_retry import run_offer_keywords_second_pass
 from ..utils.model_quality_routing import resolve_writer_quality_override
+from ..utils.prompt_factory import (
+    build_cv_json_messages as build_cv_json_prompt_messages,
+    build_offer_keywords_messages as build_offer_keywords_prompt_messages,
+)
 from ..utils.cover_letter_style_policy import (
     build_cover_letter_generation_payload,
     COVER_LETTER_STYLE_ANALYSIS_KEY,
@@ -111,6 +115,7 @@ from ..utils.stage_memory_profiles import (
     apply_cover_letter_subprocess_memory_profile,
 )
 from ..utils.memory_debug import log_memory_snapshot
+from ..utils.worker_base import collect_offer_keywords_merged
 
 
 def _normalize_template_name(template: Optional[str]) -> str:
@@ -1402,10 +1407,10 @@ class CVGenerationWorker(QThread):
                     run_env.setdefault("CVMATCH_FORCE_DISK_OFFLOAD", "1")
                     run_env.setdefault("CVMATCH_DISABLE_TORCH_COMPILE", "1")
                     run_env.setdefault("CVMATCH_CPU_HEADROOM_GB", "0.5")
-                    run_env.setdefault("CVMATCH_VRAM_HEADROOM_GB", "2.0")
+                    run_env.setdefault("CVMATCH_VRAM_HEADROOM_GB", "0.5")
                     retry_gpu_cap_gb = 6.5
                     if total_vram_gb > 0:
-                        retry_gpu_cap_gb = max(3.5, min(7.0, total_vram_gb * 0.62))
+                        retry_gpu_cap_gb = max(3.5, min(7.0, total_vram_gb * 0.80))
                     run_env.setdefault(
                         "CVMATCH_MAX_MEMORY_GPU_GB", f"{retry_gpu_cap_gb:.2f}"
                     )
@@ -2946,6 +2951,7 @@ class CVGenerationWorker(QThread):
         try:
             from ..utils.alignment_scoring import build_alignment_audit
             from ..utils.alignment_retry_controller import get_alignment_thresholds
+            from ..utils.cv_language_audit import audit_cv_language_consistency
             from ..utils.keyword_alignment import (
                 normalize_keyword_for_match,
                 normalized_term_in_probe as normalized_term_present,
@@ -3037,6 +3043,35 @@ class CVGenerationWorker(QThread):
                 thresholds=thresholds,
                 term_present_fn=_term_present,
             )
+            raw_target_language = ""
+            offer_data = (
+                getattr(self, "offer_data", None)
+                if isinstance(getattr(self, "offer_data", None), dict)
+                else None
+            )
+            if isinstance(offer_data, dict):
+                analysis = offer_data.get("analysis")
+                if isinstance(analysis, dict):
+                    raw_target_language = str(analysis.get("language") or "").strip()
+            if not raw_target_language:
+                profile_data = getattr(self, "profile_data", None)
+                raw_target_language = str(
+                    getattr(profile_data, "preferred_language", None) or ""
+                ).strip()
+            if not raw_target_language:
+                raw_target_language = self._resolve_language_code()
+            language_audit = audit_cv_language_consistency(
+                cv_json if isinstance(cv_json, dict) else {},
+                target_language=raw_target_language,
+            )
+            audit.update(language_audit)
+            if not audit.get("language_ok", True):
+                penalty = float(audit.get("language_penalty") or 0.0)
+                audit["overall_score"] = round(
+                    max(0.0, float(audit.get("overall_score") or 0.0) - penalty),
+                    2,
+                )
+                audit["sufficient"] = False
             section_exact_scores: Dict[str, float] = {}
             if required_exact_terms:
                 for section_key, probe in section_probes.items():
@@ -4360,34 +4395,12 @@ class CVGenerationWorker(QThread):
         job_title = self.offer_data.get("job_title") or ""
         company = self.offer_data.get("company") or ""
         language_code = self._resolve_language_code()
-
-        system_prompt = (
-            "You analyze job offers. Return JSON only matching the schema. "
-            "Extract concise, high-signal keywords and requirements. "
-            "Do not invent information not present in the offer."
+        return build_offer_keywords_prompt_messages(
+            language_code=language_code,
+            job_title=job_title,
+            company=company,
+            offer_text=offer_text,
         )
-
-        user_prompt = f"""
-LANGUAGE: {language_code}
-JOB_TITLE: {job_title}
-COMPANY: {company}
-JOB_OFFER_TEXT:
-{offer_text}
-
-  OUTPUT RULES:
-  - Return JSON only.
-  - Keep lists short (max 12 items per list).
-  - If JOB_OFFER_TEXT is non-empty, avoid empty extraction lists.
-  - Prefer at least: keywords>=8, skills>=4, tools>=2 when evidence exists in offer text.
-  - Use short noun phrases (2-5 words).
-  - skills = hard skills/tech stack only.
-  - soft_skills = interpersonal traits only.
-  - responsibilities = action verbs or short duties.
-  - language must match LANGUAGE; translate if the offer is in another language.
-  - job_title/company should mirror JOB_TITLE/COMPANY when provided.
-  """.strip()
-
-        return {"system": system_prompt, "user": user_prompt}
 
     def _build_cv_json_messages(
         self,
@@ -4413,19 +4426,6 @@ JOB_OFFER_TEXT:
         matched_keywords = _match_offer_keywords(
             offer_text, _collect_candidate_keywords(self.profile_data)
         )
-        matched_keywords_text = ", ".join(matched_keywords)
-
-        system_prompt = (
-            "You are a CV generator. Return JSON only that matches the schema. "
-            "PROFILE_JSON is the primary anchor for identity, background, chronology, and contact data. "
-            "You may extrapolate plausible details or compact new entries when the profile is incomplete, "
-            "but they must stay coherent with the candidate background and target role. "
-            "Never contradict explicit facts from PROFILE_JSON or alter identity/contact facts. "
-            "Use empty strings for unknown scalar fields and empty lists for missing sections. "
-            "All text must be in LANGUAGE; do not mix languages. "
-            "Select the most relevant items for the job offer. "
-            "CRITIC_JSON is feedback, not content. Do not quote or paraphrase it."
-        )
 
         offer_keywords_block = ""
         if offer_keywords:
@@ -4433,15 +4433,34 @@ JOB_OFFER_TEXT:
                 "\n\nOFFER_KEYWORDS_JSON (job offer summary):\n"
                 f"{_trim_text(json.dumps(offer_keywords, indent=2, ensure_ascii=False), 1400)}"
             )
+        priority_terms = collect_offer_keywords_merged(
+            offer_keywords_json=offer_keywords if isinstance(offer_keywords, dict) else None,
+            offer_analysis=(
+                self.offer_data.get("analysis")
+                if isinstance(self.offer_data, dict)
+                and isinstance(self.offer_data.get("analysis"), dict)
+                else None
+            ),
+            critic_json=critic_json if isinstance(critic_json, dict) else None,
+            job_title=job_title,
+            max_items=18,
+        )
+        priority_terms_block = ""
+        if priority_terms:
+            priority_terms_block = (
+                "\n\nPRIORITY_OFFER_TERMS (reuse this vocabulary when facts support it):\n"
+                f"{_trim_text(', '.join(priority_terms), 600)}"
+            )
         matched_keywords_block = ""
-        if matched_keywords_text:
+        if matched_keywords:
             matched_keywords_block = (
                 "\n\nMATCHED_KEYWORDS (offer x candidate):\n"
-                f"{_trim_text(matched_keywords_text, 400)}"
+                f"{_trim_text(', '.join(matched_keywords), 400)}"
             )
 
         critic_payload: Dict[str, Any] = {}
         critic_block = ""
+        retry_guidance_block = ""
         section_guidance_block = ""
         previous_cv_block = ""
         if critic_json:
@@ -4453,6 +4472,12 @@ JOB_OFFER_TEXT:
                     "\n\nCRITIC_JSON (feedback to apply):\n"
                     f"{_trim_text(json.dumps(critic_payload, indent=2, ensure_ascii=False), 2000)}"
                 )
+                retry_guidance = str(critic_payload.get("retry_guidance") or "").strip()
+                if retry_guidance:
+                    retry_guidance_block = (
+                        "\n\nRETRY_GUIDANCE (highest-priority rewrite direction):\n"
+                        f"{_trim_text(retry_guidance, 600)}"
+                    )
                 section_guidance = format_section_keyword_guidance(
                     critic_payload.get("section_missing_keywords") or {},
                     language_code=language_code,
@@ -4486,74 +4511,22 @@ JOB_OFFER_TEXT:
                 stage,
                 len(user_instruction),
             )
-
-        user_prompt = f"""
-LANGUAGE: {language_code}
-JOB_TITLE: {job_title}
-COMPANY: {company}
-JOB_OFFER_TEXT:
-{offer_text}
-
-PROFILE_JSON (source of truth):
-{profile_block}
-{offer_keywords_block}
-{matched_keywords_block}
-{critic_block}
-{section_guidance_block}
-{previous_cv_block}
-{user_instruction_block}
-
-OUTPUT RULES:
-- Return JSON only.
-- Keep required sections even if empty lists.
-- Align content with job offer (keywords, order, relevance).
-- PROFILE_JSON remains the main factual anchor, but if it is sparse you may synthesize concise, plausible details or compact entries that stay coherent with it and with the target role.
-- contact fields must be copied from PROFILE_JSON.personal_info when available.
-- target_company and target_job_title should reflect the offer; use empty strings if missing.
-- Never use placeholders (no [A COMPLETER], [TO COMPLETE], or bracketed tokens).
-- Skills items must be short noun phrases (no sentences, no "candidate should/must").
-- Keep a dedicated skills section when the profile or offer implies technical, functional, or transferable skills.
-- ats_keywords must be a list of strings from the job offer or OFFER_KEYWORDS_JSON.
-- If OFFER_KEYWORDS_JSON is present, prioritize it for relevance and ATS terms.
-- render_hints.notes can be freeform guidance for rendering.
-- render_hints.section_order/emphasis/tone are structured hints.
-- Do not include review or instruction text in any field (no critique, no "this CV needs", no "should").
-- Summary must be candidate-focused (role, strengths, impact). Do not describe employer mission/history.
-- If MATCHED_KEYWORDS is present, ensure those terms appear in summary/skills/experience when relevant.
-- Route operational tasks and delivery verbs to experience or projects, not to education.
-- Keep education focused on diploma, coursework, thesis, labs, training, or academic specialization.
-- If PROFILE_JSON text is in another language, translate it to LANGUAGE (keep proper nouns, tools, company names).
-- Avoid repetition:
-  - Never repeat the same sentence, clause, or employer description twice.
-  - Do not copy the company mission text into candidate achievements.
-- For each experience item, prefer:
-  - a concise context in summary
-  - 2-4 distinct highlights focused on actions, tools, and outcomes
-- For each language item, keep `certification` when PROFILE_JSON provides one (issuer/certificate name).
-- If USER_REGEN_INSTRUCTION is present, apply it as editorial guidance while preserving factual constraints.
-- Never copy USER_REGEN_INSTRUCTION text verbatim into CV fields.
-- Never output instruction meta-text (for example "please update", "this CV needs", uppercase emphasis markers).
-- When inventing or extrapolating, prefer believable specificity over generic filler; keep chronology and level of seniority coherent.
-- Keep output focused but informative:
-  - experience <= 5 items, highlights <= 4 each.
-  - skills <= 5 categories, items <= 10 each.
-  - education <= 3 items.
-  - projects <= 3 items.
-  - languages <= 4 items.
-  - certifications <= 3 items.
-  - ats_keywords <= 18 items.
-""".strip()
-
-        if stage == "final":
-            user_prompt += (
-                "\n\nRevise using CRITIC_JSON guidance. "
-                "Use SECTION_KEYWORD_GUIDANCE to redistribute missing offer terms into the most appropriate sections. "
-                "If PREVIOUS_CV_JSON is provided, treat it as a baseline candidate: preserve strong sections and improve weak/missing areas rather than restarting from scratch. "
-                "Include must_keep_facts, but also use other relevant facts from PROFILE_JSON. "
-                "Do not include critique or instructions in any field."
-            )
-
-        return {"system": system_prompt, "user": user_prompt}
+        return build_cv_json_prompt_messages(
+            language_code=language_code,
+            job_title=job_title,
+            company=company,
+            offer_text=offer_text,
+            profile_block=profile_block,
+            offer_keywords_block=offer_keywords_block,
+            priority_terms_block=priority_terms_block,
+            matched_keywords_block=matched_keywords_block,
+            critic_block=critic_block,
+            retry_guidance_block=retry_guidance_block,
+            section_guidance_block=section_guidance_block,
+            previous_cv_block=previous_cv_block,
+            user_instruction_block=user_instruction_block,
+            stage=stage,
+        )
 
     def _build_critic_messages(self, *, cv_html: str) -> Dict[str, str]:
         offer_text = self._prepare_offer_text(max_chars=3200)

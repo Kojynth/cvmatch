@@ -32,6 +32,7 @@ class ProfileWorkerData:
     model_version: str = "base"
 
     # Documents de référence
+    master_cv_path: Optional[str] = None
     master_cv_content: Optional[str] = None
     default_cover_letter: Optional[str] = None
 
@@ -94,6 +95,7 @@ class ProfileWorkerData:
             phone=profile.phone,
             linkedin_url=profile.linkedin_url,
             model_version=model_version_value,
+            master_cv_path=getattr(profile, "master_cv_path", None),
             master_cv_content=profile.master_cv_content,
             default_cover_letter=profile.default_cover_letter,
             preferred_template=profile.preferred_template or "modern",

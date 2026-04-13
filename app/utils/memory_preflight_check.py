@@ -166,6 +166,23 @@ def check_memory_before_load(
                     "allowing one quality-first load try.",
                     commit_available_gb,
                 )
+            elif is_survival_mode and stage_attempt >= 2 and commit_available_gb >= 0.05:
+                # Survival retry: commit is low but the model should fit in VRAM.
+                # Bypass the preflight block so the actual load attempt can proceed;
+                # if loading fails (OOM / os error 1455), the transient retry chain
+                # will catch it via is_transient_stage_memory_error().
+                # This avoids the 90-second guard wait that would otherwise repeat
+                # the same failure identically on every retry attempt.
+                warnings.append(
+                    f"Survival retry with low commit ({commit_available_gb:.1f}GB): "
+                    "attempting GPU-first load."
+                )
+                logger.warning(
+                    "Survival retry (attempt=%d) with low commit %.1fGB — "
+                    "bypassing preflight block; GPU-first load will proceed.",
+                    stage_attempt,
+                    commit_available_gb,
+                )
             else:
                 error_msg = (
                     f"Insufficient Windows commit memory: {commit_available_gb:.1f}GB available. "

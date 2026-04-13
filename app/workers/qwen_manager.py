@@ -1271,7 +1271,7 @@ class QwenManager:
             return 3.5 if lowram_level == "critical" else 4.0
 
         if total_vram <= 6.5:
-            abs_cap = 3.5 if lowram_level == "critical" else 4.0
+            abs_cap = 4.5 if lowram_level == "critical" else 5.0
 
         elif total_vram <= 8.5:
             abs_cap = 4.5 if lowram_level in {"tight", "critical"} else 5.0
@@ -1282,7 +1282,7 @@ class QwenManager:
         else:
             abs_cap = 8.0
 
-        percent_cap = 0.55 if lowram_level in {"tight", "critical"} else 0.60
+        percent_cap = 0.72 if lowram_level in {"tight", "critical"} else 0.78
 
         return min(abs_cap, total_vram * percent_cap)
 
@@ -1932,10 +1932,14 @@ class QwenManager:
             except Exception:
                 stage_attempt = 1
 
+            _opt_cfg = self._optimization_config or {}
+            _device = _opt_cfg.get("device") or (
+                "cuda" if (TORCH_AVAILABLE and torch.cuda.is_available()) else "cpu"
+            )
             result = check_memory_before_load_preflight(
                 model_name=self.model_name,
                 model_id=getattr(self, "current_model_id", None),
-                device=(self._optimization_config or {}).get("device", "cpu"),
+                device=_device,
                 custom_parameters=effective_custom,
                 optimization_config=self._optimization_config,
                 is_survival_mode=self._is_survival_mode(),
@@ -2809,11 +2813,68 @@ class QwenManager:
             max_memory = self._build_max_memory_map()
 
             if max_memory:
+                # Low-RAM guard: when available CPU RAM is critically low, bitsandbytes
+                # CUDA DLL loading triggered during from_pretrained shard processing can
+                # crash (0xC0000005 ACCESS_VIOLATION) on Windows in a QThread.
+                # Fix: raise the GPU budget to 88% of free VRAM to reduce CPU-destined layers,
+                # and pre-warm the bitsandbytes CUDA DLL before from_pretrained is called
+                # (handled after _build_model_load_kwargs returns, below).
+                # fp32_cpu_offload remains True — CPU offload is still allowed if needed.
+                _CPU_OFFLOAD_MIN_GB = 1.5
+                details = getattr(self, "_last_max_memory_map_details", {}) or {}
+                # Use None-sentinel rather than 0 so that missing diagnostics do not
+                # trigger the guard. An empty details dict means _build_max_memory_map()
+                # ran without recording stats; in that case the guard must be skipped.
+                _cpu_raw = details.get("cpu_available_ram_gb")
+                _vram_raw = details.get("free_vram_gb")
+                cpu_avail_gb = float(_cpu_raw) if _cpu_raw is not None else None
+                free_vram_gb = float(_vram_raw) if _vram_raw is not None else None
+
+                if (
+                    cpu_avail_gb is not None
+                    and free_vram_gb is not None
+                    and cpu_avail_gb < _CPU_OFFLOAD_MIN_GB
+                    and free_vram_gb >= 3.0
+                ):
+                    safe_gpu_mib = int(free_vram_gb * 1024 * 0.95)
+                    # Preserve a higher GPU budget set by a retry profile (e.g. cover_letter
+                    # attempt 2 sets 4.75 GB via CVMATCH_MAX_MEMORY_GPU_GB). The guard only
+                    # raises the budget, never lowers it. Use key 0 explicitly (not
+                    # list(values())[0]) to avoid matching a "cpu" key in a hybrid map.
+                    try:
+                        _existing_mib = int(
+                            str(max_memory.get(0, "0")).rstrip("MiB") or 0
+                        )
+                        safe_gpu_mib = max(safe_gpu_mib, _existing_mib)
+                    except Exception:
+                        pass
+                    # Preserve non-GPU keys (e.g. "cpu" cap) from the original map so
+                    # device_map="auto" still respects the intended CPU RAM ceiling.
+                    _cpu_keys = {k: v for k, v in max_memory.items() if k != 0}
+                    max_memory = {0: f"{safe_gpu_mib}MiB", **_cpu_keys}
+                    logger.warning(
+                        "Low-RAM guard: cpu_available=%.2fGB < %.1fGB threshold. "
+                        "Raising GPU budget to %dMiB (88%% free VRAM or retry cap). "
+                        "bitsandbytes CUDA DLL will be pre-warmed before model load.",
+                        cpu_avail_gb,
+                        _CPU_OFFLOAD_MIN_GB,
+                        safe_gpu_mib,
+                    )
+                elif (
+                    cpu_avail_gb is not None
+                    and free_vram_gb is not None
+                    and cpu_avail_gb < _CPU_OFFLOAD_MIN_GB
+                    and free_vram_gb < 3.0
+                ):
+                    raise MemoryError(
+                        f"Mémoire insuffisante pour charger le modèle : "
+                        f"RAM disponible {cpu_avail_gb:.1f}GB (minimum {_CPU_OFFLOAD_MIN_GB}GB) "
+                        f"et VRAM libre {free_vram_gb:.1f}GB (minimum 3.0GB). "
+                        "Fermez des applications pour libérer de la mémoire."
+                    )
+
                 model_kwargs["max_memory"] = max_memory
-
                 model_kwargs["low_cpu_mem_usage"] = True
-
-                details = getattr(self, "_last_max_memory_map_details", None)
 
                 if details:
                     logger.info(
@@ -2821,7 +2882,6 @@ class QwenManager:
                         max_memory,
                         details,
                     )
-
                 else:
                     logger.info("Max memory map active: %s", max_memory)
 
@@ -3963,6 +4023,27 @@ class QwenManager:
             # Build model-loading kwargs (device/offload/quantization strategy)
 
             model_kwargs, auto_kwargs = self._build_model_load_kwargs()
+
+            # Windows fix (low-RAM path only): pre-warm bitsandbytes CUDA DLL before shard loading.
+            # When CPU RAM < 1.5 GB, the first DLL load triggered by bitsandbytes during
+            # from_pretrained can crash (0xC0000005 ACCESS_VIOLATION) in a QThread.
+            # Forcing a tiny bitsandbytes CUDA op HERE ensures the DLL is resident before
+            # the shard-loading loop begins. Skipped entirely when RAM is plentiful (no-op
+            # on normal generation paths). Default 99.0 → skip when details unavailable.
+            _prewarm_details = getattr(self, "_last_max_memory_map_details", {}) or {}
+            _prewarm_cpu_gb = float(_prewarm_details.get("cpu_available_ram_gb") or 99.0)
+            _CPU_OFFLOAD_MIN_GB_PW = 1.5  # Must stay in sync with _build_model_load_kwargs
+            if model_kwargs.get("quantization_config") is not None and _prewarm_cpu_gb < _CPU_OFFLOAD_MIN_GB_PW:
+                try:
+                    import torch as _torch_prewarm
+                    if _torch_prewarm.cuda.is_available():
+                        import bitsandbytes.functional as _bnb_func
+                        _probe = _torch_prewarm.zeros(64, dtype=_torch_prewarm.float16, device="cuda")
+                        _bnb_func.quantize_blockwise(_probe)
+                        del _probe, _torch_prewarm, _bnb_func
+                        logger.debug("bitsandbytes CUDA DLL pre-warmed successfully.")
+                except Exception as _prewarm_exc:
+                    logger.debug("bitsandbytes CUDA pre-warm skipped: %s", _prewarm_exc)
 
             # Chargement du modele
 

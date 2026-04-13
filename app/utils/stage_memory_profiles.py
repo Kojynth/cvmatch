@@ -193,12 +193,11 @@ def apply_cover_letter_subprocess_memory_profile(
             "0",
             generic_defaults=_GENERIC_PARENT_DEFAULTS["CVMATCH_PREFER_RAM_OFFLOAD"],
         )
-        _set_stage_value(
-            env,
-            "CVMATCH_FORCE_DISK_OFFLOAD",
-            "1",
-            generic_defaults=_GENERIC_PARENT_DEFAULTS["CVMATCH_FORCE_DISK_OFFLOAD"],
-        )
+        # Do NOT set CVMATCH_FORCE_DISK_OFFLOAD here. draft/final run without it,
+        # so the 4-bit default (disk offload disabled) applies to all three stages.
+        # Adding "1" when the key is absent would diverge from draft/final and force
+        # disk offload with low RAM → os error 1455 (page file exhaustion).
+        # If a parent explicitly passed CVMATCH_FORCE_DISK_OFFLOAD, it is preserved.
         return env
 
     gpu_cap_gb = _recommend_cover_letter_gpu_cap_gb(

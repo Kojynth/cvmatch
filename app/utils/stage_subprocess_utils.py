@@ -160,6 +160,19 @@ def is_transient_stage_memory_error(details: str) -> bool:
         "insufficient for mixed placement",
         "vram cleanup incomplete after wait",
         "fresh subprocess retry required",
+        # Windows page file exhaustion (os error 1455 = ERROR_COMMITMENT_LIMIT).
+        # Raised when Windows cannot extend the page file during model shard loading.
+        # Transient: a retry with a higher GPU budget may fit the model fully in VRAM.
+        "os error 1455",
+        "fichier de pagination",       # French Windows: "paging file is too small"
+        "paging file is too small",    # English Windows variant
+        "error_commitment_limit",      # Win32 error name (may appear in wrapped messages)
+        # Memory guard errors from _ensure_stage_memory_ready() in llm_worker.py.
+        # These indicate Windows commit memory exhaustion detected by our preflight check,
+        # not a raw Python OOM. Transient: survival retry bypasses the 90s guard wait.
+        "memory guard timeout",              # 90-second timeout path
+        "memory guard blocked",              # no-wait path
+        "insufficient windows commit memory", # inner error from memory_preflight_check.py
     )
     return any(marker in lowered for marker in markers)
 
@@ -194,9 +207,9 @@ def build_stage_subprocess_env(
         # while keeping the user-selected model locked.
         run_env.setdefault("CVMATCH_SURVIVAL_MODE", "1")
         run_env.setdefault("CVMATCH_SURVIVAL_IGNORE_SELECTED_MODEL", "0")
-        run_env.setdefault("CVMATCH_VRAM_HEADROOM_GB", "2.5")
+        run_env.setdefault("CVMATCH_VRAM_HEADROOM_GB", "0.75")
     if attempt >= 3:
-        run_env.setdefault("CVMATCH_VRAM_HEADROOM_GB", "2.5")
+        run_env.setdefault("CVMATCH_VRAM_HEADROOM_GB", "0.75")
     return run_env
 
 

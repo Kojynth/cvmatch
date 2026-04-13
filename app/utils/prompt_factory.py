@@ -57,6 +57,8 @@ JOB_OFFER_TEXT:
   OUTPUT RULES:
   - Return JSON only.
   - Keep lists short (max 12 items per list).
+  - Only extract items that are clearly supported by JOB_OFFER_TEXT; do not pad lists to meet a minimum count.
+  - Aim for keywords>=8, skills>=4, tools>=2 only when the offer text clearly provides that many distinct items.
   - Use short noun phrases (2-5 words).
   - skills = hard skills/tech stack only.
   - soft_skills = interpersonal traits only.
@@ -66,6 +68,7 @@ JOB_OFFER_TEXT:
   - keyword_families values must stay factual and aligned with JOB_OFFER_TEXT.
   - For each keyword family, provide 2-6 close terms max, no generic fluff.
   - language must match LANGUAGE; translate if the offer is in another language.
+  - Do not mix languages inside the same extracted item.
   - job_title/company should mirror JOB_TITLE/COMPANY when provided.
   """.strip()
 
@@ -80,16 +83,26 @@ def build_cv_json_messages(
     offer_text: str,
     profile_block: str,
     offer_keywords_block: str = "",
+    priority_terms_block: str = "",
     matched_keywords_block: str = "",
     critic_block: str = "",
+    retry_guidance_block: str = "",
+    section_guidance_block: str = "",
+    previous_cv_block: str = "",
+    user_instruction_block: str = "",
     stage: str = "draft",
 ) -> Dict[str, str]:
     system_prompt = (
         "You are a CV generator. Return JSON only that matches the schema. "
-        "Use only facts from PROFILE_JSON. Do not invent data. "
+        "JOB_OFFER_TEXT and OFFER_KEYWORDS_JSON define the target positioning, vocabulary, and priorities. "
+        "PROFILE_JSON constrains identity, chronology, evidence, and contact facts, but not wording. "
+        "Rewrite supported facts with the job-offer terminology whenever it stays truthful. "
+        "Do not invent data. "
         "Use empty strings for unknown scalar fields and empty lists for missing sections. "
         "All text must be in LANGUAGE; do not mix languages. "
+        "Translate any source-language profile fragments fully into LANGUAGE except proper nouns, official product names, and established acronyms. "
         "Select the most relevant items for the job offer. "
+        "Avoid decorative or bullet characters inside field text. "
         "CRITIC_JSON is feedback, not content. Do not quote or paraphrase it."
     )
 
@@ -103,35 +116,45 @@ JOB_OFFER_TEXT:
 PROFILE_JSON (source of truth):
 {profile_block}
 {offer_keywords_block}
+{priority_terms_block}
 {matched_keywords_block}
 {critic_block}
+{retry_guidance_block}
+{section_guidance_block}
+{previous_cv_block}
+{user_instruction_block}
 
 OUTPUT RULES:
 - Return JSON only.
 - Keep required sections even if empty lists.
 - Align content with job offer (keywords, order, relevance).
+- JOB_OFFER_TEXT and PRIORITY_OFFER_TERMS are the editorial target. PROFILE_JSON is the factual boundary.
 - Do not copy PROFILE_JSON sentences verbatim; rewrite with concise recruiter wording while preserving facts.
+- Prefer the offer vocabulary over the original profile wording when both describe the same evidence.
 - Use the same lexical field as JOB_OFFER_TEXT when evidence exists in PROFILE_JSON.
 - Do not add facts not present in PROFILE_JSON.
 - contact fields must be copied from PROFILE_JSON.personal_info when available.
 - target_company and target_job_title should reflect the offer; use empty strings if missing.
 - Never use placeholders (no [A COMPLETER], [TO COMPLETE], or bracketed tokens).
+- In field text, never use decorative special characters like • « » ^ {{ }} [ ].
 - Skills items must be short noun phrases (no sentences, no "candidate should/must").
 - ats_keywords must be a list of strings from the job offer or OFFER_KEYWORDS_JSON.
 - If OFFER_KEYWORDS_JSON is present, prioritize it for relevance and ATS terms.
 - If OFFER_KEYWORDS_JSON.keyword_families or lexical_field is present, reuse that domain vocabulary in summary/skills/experience when factual.
-- Keyword coverage target: include at least 6 high-signal offer terms across summary/skills/experience.
+- Keyword coverage target: include at least 8 high-signal offer terms across summary/skills/experience when facts support them.
   Exact offer terms are preferred; professional synonyms/acronyms are allowed when they stay factual.
 - render_hints.notes can be freeform guidance for rendering.
 - render_hints.section_order/emphasis/tone are structured hints.
-  - Do not include review or instruction text in any field (no critique, no "this CV needs", no "should").
-  - Summary must be candidate-focused (role, strengths, impact). Do not describe employer mission/history.
+- Do not include review or instruction text in any field (no critique, no "this CV needs", no "should").
+- Summary must be candidate-focused (role, strengths, impact). Do not describe employer mission/history.
 - If MATCHED_KEYWORDS is present, ensure those terms appear in summary/skills/experience when relevant.
+- If RETRY_GUIDANCE is present, treat it as high-priority rewrite direction.
 - For each experience item, keep facts but rewrite to highlight relevance to the offer:
   * summary: 1 compact sentence (scope + context),
   * highlights: 2-3 bullets with action/result phrasing and offer-aligned terms when true.
 - If PROFILE_JSON text is in another language, translate it to LANGUAGE (keep proper nouns, tools, company names).
-  - Keep output compact:
+- Do not leave mixed-language clauses such as English headings with French verbs or nouns in the same sentence.
+- Keep output compact:
   * experience <= 4 items, highlights <= 3 each.
   * skills <= 4 categories, items <= 8 each.
   * education <= 3 items.
@@ -144,6 +167,8 @@ OUTPUT RULES:
     if stage == "final":
         user_prompt += (
             "\n\nRevise using CRITIC_JSON guidance. "
+            "Use SECTION_KEYWORD_GUIDANCE to route missing offer terms to the best sections. "
+            "If PREVIOUS_CV_JSON is provided, improve it rather than starting over. "
             "Include must_keep_facts, but also use other relevant facts from PROFILE_JSON. "
             "Do not include critique or instructions in any field."
         )
@@ -264,4 +289,3 @@ SORTIE OBLIGATOIRE (texte uniquement, pas de Markdown):
 STRUCTURE:
 {letter_skeleton}
 """.strip()
-
