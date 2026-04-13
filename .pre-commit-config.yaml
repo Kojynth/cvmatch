@@ -3,5 +3,29 @@ repos:
     rev: v4.6.0
     hooks:
       - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-added-large-files
       - id: end-of-file-fixer
       - id: trailing-whitespace
+  - repo: local
+    hooks:
+      - id: python-compile
+        name: python-compile
+        entry: python scripts/diagnostics/check_python_compile.py
+        language: system
+        files: \.py$
+      - id: repo-hygiene
+        name: repo-hygiene
+        entry: python scripts/diagnostics/check_repo_hygiene.py
+        language: system
+        pass_filenames: true
+      - id: no-pii-artifacts
+        name: no-pii-artifacts
+        entry: python scripts/diagnostics/check_no_pii_artifacts.py
+        language: system
+        pass_filenames: true
+      - id: import-boundaries
+        name: import-boundaries
+        entry: python scripts/diagnostics/check_import_boundaries.py
+        language: system
+        files: \.py$
