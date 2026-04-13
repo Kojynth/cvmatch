@@ -17,7 +17,12 @@ logger = get_safe_logger(__name__)
 
 @dataclass
 class LinkedInExtractionParams:
-    """Backwards-compatible params (subset used by modular pipeline)."""
+    """Backwards-compatible params accepted by legacy UI call sites.
+
+    The refactored public pipeline only consumes a small subset of these
+    values. The remaining fields stay here to preserve source compatibility
+    with existing controllers and panels.
+    """
 
     method: str = "crawler"
     extract_recommendations: bool = True
@@ -25,6 +30,9 @@ class LinkedInExtractionParams:
     use_headless_browser: bool = True
     extract_connections: bool = False
     respect_robots_txt: bool = True
+    use_existing_session: bool = False
+    user_agent_rotation: bool = True
+    public_only: bool = True
 
 
 class LinkedInExtractor(QThread):
@@ -34,6 +42,7 @@ class LinkedInExtractor(QThread):
     section_extracted = Signal(str, dict)
     extraction_completed = Signal(dict)
     extraction_failed = Signal(str)
+    requires_login = Signal()
 
     def __init__(self, linkedin_url: str, params: Optional[LinkedInExtractionParams] = None):
         super().__init__()
@@ -54,11 +63,7 @@ class LinkedInExtractor(QThread):
 
     def _run_modular_pipeline(self) -> None:
         self.progress_updated.emit(10, "Initialisation pipeline LinkedIn…")
-        params = ModularParams(
-            profile_url=self.linkedin_url,
-            include_recommendations=self.params.extract_recommendations,
-            scrape_timeout=int(max(5, self.params.delay_between_requests * 10)),
-        )
+        params = self._build_modular_params()
         self._modular = ModularLinkedInExtractor(params)
         self.progress_updated.emit(40, "Analyse du profil LinkedIn…")
         data = self._modular.extract()
@@ -80,6 +85,18 @@ class LinkedInExtractor(QThread):
         self.section_extracted.emit("profile", data.get("profile", {}))
         self.extraction_completed.emit(self.results)
         self.progress_updated.emit(100, "Extraction LinkedIn terminée")
+
+    def _build_modular_params(self) -> ModularParams:
+        delay_between_requests = max(0.5, float(self.params.delay_between_requests))
+        if self.params.use_existing_session or not self.params.public_only:
+            logger.info(
+                "Legacy LinkedIn session flags ignored by the public modular pipeline"
+            )
+        return ModularParams(
+            profile_url=self.linkedin_url,
+            include_recommendations=self.params.extract_recommendations,
+            scrape_timeout=int(max(5, delay_between_requests * 10)),
+        )
 
     def cancel(self) -> None:
         if self._modular:

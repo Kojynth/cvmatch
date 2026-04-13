@@ -76,6 +76,10 @@ INTERNAL_MARKER_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+FORBIDDEN_GENERATED_TEXT_CHARS_PATTERN = re.compile(r"[•«»\^\{\}\[\]]+")
+URL_LIKE_PATTERN = re.compile(r"^(?:https?://|www\.)", re.IGNORECASE)
+EMAIL_LIKE_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
 ROLE_LIKE_SKILL_TOKENS = {
     "ingenieur",
     "engineer",
@@ -260,6 +264,14 @@ def clean_text_field(
 
     if check_review_markers and text_has_review_markers(cleaned):
         return ""
+
+    if not URL_LIKE_PATTERN.match(cleaned) and not EMAIL_LIKE_PATTERN.match(cleaned):
+        cleaned = FORBIDDEN_GENERATED_TEXT_CHARS_PATTERN.sub(" ", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        cleaned = re.sub(r"\s+([,.;:!?])", r"\1", cleaned)
+        cleaned = cleaned.strip()
+        if not cleaned:
+            return ""
 
     if max_length > 0 and len(cleaned) > max_length:
         return ""

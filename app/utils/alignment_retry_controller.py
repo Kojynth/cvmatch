@@ -53,6 +53,53 @@ DEFAULT_RETRY_ATTEMPTS = 3
 MAX_RETRY_ATTEMPTS = 3
 MIN_RETRY_ATTEMPTS = 0
 
+_LANGUAGE_DISPLAY_NAMES = {
+    "en": "English",
+    "eng": "English",
+    "english": "English",
+    "fr": "French",
+    "fra": "French",
+    "fre": "French",
+    "french": "French",
+    "francais": "French",
+    "français": "French",
+    "es": "Spanish",
+    "spa": "Spanish",
+    "spanish": "Spanish",
+    "espanol": "Spanish",
+    "español": "Spanish",
+    "de": "German",
+    "ger": "German",
+    "deu": "German",
+    "german": "German",
+    "deutsch": "German",
+    "it": "Italian",
+    "ita": "Italian",
+    "italian": "Italian",
+    "italiano": "Italian",
+    "pt": "Portuguese",
+    "por": "Portuguese",
+    "portuguese": "Portuguese",
+    "nl": "Dutch",
+    "nld": "Dutch",
+    "dut": "Dutch",
+    "dutch": "Dutch",
+    "zh": "Chinese",
+    "zho": "Chinese",
+    "chi": "Chinese",
+    "chinese": "Chinese",
+    "ja": "Japanese",
+    "jpn": "Japanese",
+    "japanese": "Japanese",
+}
+
+
+def _language_display_name(value: Any) -> str:
+    key = str(value or "").strip().lower()
+    if not key:
+        return "the target language"
+    return _LANGUAGE_DISPLAY_NAMES.get(key, key[:1].upper() + key[1:])
+
 
 @dataclass
 class AlignmentRetryConfig:
@@ -275,12 +322,34 @@ def build_alignment_retry_guidance(
     max_terms: int = 8,
 ) -> str:
     """Build a concise regeneration instruction from alignment audit gaps."""
+    target_language = str(audit.get("target_language") or "").strip().lower()
+    language_name = _language_display_name(target_language)
+    mixed_sections = (
+        audit.get("mixed_language_sections")
+        if isinstance(audit.get("mixed_language_sections"), list)
+        else []
+    )
+    language_guidance = ""
+    if audit.get("language_ok") is False:
+        section_text = ", ".join(str(item).strip() for item in mixed_sections[:4] if str(item).strip())
+        if section_text:
+            language_guidance = (
+                f" Rewrite every section fully in {language_name}, especially {section_text}; "
+                "do not leave mixed-language fragments."
+            )
+        else:
+            language_guidance = (
+                f" Rewrite every section fully in {language_name}; "
+                "do not leave mixed-language fragments."
+            )
+
     missing_terms = build_alignment_missing_keywords(audit, max_items=max_terms)
     if not missing_terms:
         return (
             "Coverage remains insufficient. Rebuild the CV more aggressively around the "
             "job offer, especially in summary, experience bullets, skills, education, "
             "certifications, and languages when facts support it."
+            f"{language_guidance}"
         )
 
     joined_terms = ", ".join(missing_terms)
@@ -289,6 +358,7 @@ def build_alignment_retry_guidance(
         "job offer. Prioritize these missing offer terms across summary, experience "
         f"bullets, skills, education, certifications, and languages when profile facts "
         f"support them: {joined_terms}."
+        f"{language_guidance}"
     )
 
 

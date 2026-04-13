@@ -1811,6 +1811,12 @@ class PipelineOrchestrator:
 
         return True
 
+    # RAM threshold below which the in-process initialization load is pre-emptively
+    # skipped. On Windows, bitsandbytes CUDA DLL loading inside a QThread under
+    # extreme memory pressure raises 0xC0000005 (ACCESS_VIOLATION) — a native SEH
+    # exception that kills the process and cannot be caught by Python.
+    _PREEMPT_INPROCESS_RAM_GB = 1.5
+
     def _execute_phase_with_adaptive_recovery(
         self,
         *,
@@ -1818,7 +1824,37 @@ class PipelineOrchestrator:
         state: PipelineState,
         adaptive_enabled: bool,
     ) -> PhaseResult:
+        # Pre-emptive subprocess switch for the initialization phase under low RAM.
+        # The adaptive recovery can only catch Python exceptions; if the in-process
+        # model load crashes with a native ACCESS_VIOLATION, the whole process dies.
+        # When RAM is critically low, skip straight to subprocess mode — which is
+        # isolated from the parent process and is immune to this crash.
+        # If psutil is unavailable the check is skipped (safe fallback to normal path).
+        # If subprocess also fails, use_subprocess is left True to block unsafe in-process retry.
+        if (
+            adaptive_enabled
+            and not bool(getattr(state, "use_subprocess", False))
+            and str(getattr(phase, "name", "")) == "initialization"
+        ):
+            try:
+                import psutil as _psutil
+                _ram_avail_gb = _psutil.virtual_memory().available / (1024 ** 3)
+                if _ram_avail_gb < self._PREEMPT_INPROCESS_RAM_GB:
+                    logger.warning(
+                        "Initialization: pre-emptive subprocess mode activated "
+                        "(ram_avail=%.2fGB < %.1fGB — unsafe to attempt in-process model load).",
+                        _ram_avail_gb,
+                        self._PREEMPT_INPROCESS_RAM_GB,
+                    )
+                    state.use_subprocess = True
+            except Exception:
+                pass
+
         result = phase.execute(state)
+        # If the pre-emptive subprocess attempt failed, do NOT restore use_subprocess.
+        # Leaving it True ensures the adaptive retry guard below (line: "if bool(use_subprocess)")
+        # returns the failure immediately without attempting an in-process fallback —
+        # which would be unsafe under the same low-RAM conditions that triggered the switch.
         if result.status != PipelinePhaseStatus.FAILED:
             return result
 

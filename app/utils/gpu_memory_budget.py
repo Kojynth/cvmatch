@@ -256,17 +256,17 @@ def get_vram_headroom_gb(
     if total <= 0:
         total = get_total_vram_gb()
 
-    # Survival mode: more conservative headroom
+    # Survival mode: conservative headroom (reduced to allow ~82% utilisation)
     if survival_mode:
         if total > 0 and total <= 8.0:
-            return max(2.0, min(3.0, total * 0.35))
+            return max(0.75, min(1.5, total * 0.15))
         if total > 0:
-            return max(1.5, min(3.0, total * 0.22))
-        return 2.0
+            return max(0.5, min(1.5, total * 0.10))
+        return 0.75
 
     # Get headroom factor from params/env
     try:
-        factor = float(custom.get("vram_headroom_factor", 0.15) or 0.15)
+        factor = float(custom.get("vram_headroom_factor", 0.05) or 0.05)
     except Exception:
         factor = 0.15
     env_factor = os.getenv("CVMATCH_VRAM_HEADROOM_FACTOR")
@@ -276,10 +276,10 @@ def get_vram_headroom_gb(
         except Exception:
             pass
     if factor <= 0:
-        factor = 0.15
+        factor = 0.05
 
     # Determine min/max bounds
-    default_min = 0.5
+    default_min = 0.25
     default_max = 1.5 if (total > 0 and total <= 12.0) else 2.5
 
     try:
@@ -720,11 +720,11 @@ def build_max_memory_map_detailed(
 
     # Determine default GPU percentage based on mode and VRAM
     if is_survival_mode:
-        default_gpu_percent = 55 if lowram_level in {"tight", "critical"} else 60
+        default_gpu_percent = 72 if lowram_level in {"tight", "critical"} else 78
     elif total_vram_gb and total_vram_gb <= 8.0:
-        default_gpu_percent = 72
+        default_gpu_percent = 90
     elif total_vram_gb and total_vram_gb <= 12:
-        default_gpu_percent = 78
+        default_gpu_percent = 90
     else:
         default_gpu_percent = 90
 
