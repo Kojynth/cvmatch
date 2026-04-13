@@ -4193,17 +4193,12 @@ class CVGenerationWorker(QThread):
                 section_probes["languages"],
             )
 
-        missing_education_terms_postprocess: List[str] = []
-
-        if (
-            not missing_summary_terms
-            and not missing_experience_terms
-            and not missing_skills_terms
-            and not missing_projects_terms
-            and not missing_education_terms_postprocess
-            and not missing_certification_terms
-            and not missing_language_terms
-        ):
+        # Guard: only skip if no offer data exists at all.
+        # Do NOT skip based on missing_* lists being empty — that happens when the LLM
+        # copied profile text verbatim (keywords are "present" but not reformulated).
+        # enforce_cv_offer_adaptation must run whenever offer keywords exist so it can
+        # reorder, reformat, and reinforce alignment even on verbatim-copied content.
+        if not offer_keywords and not critic_missing:
             return
 
         enforce_cv_offer_adaptation(

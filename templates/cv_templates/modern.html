@@ -60,6 +60,7 @@
             {% if exp.start_date or exp.end_date %}
               {% set date_part = exp.start_date %}
               {% if exp.end_date %}{% set date_part = date_part ~ ' - ' ~ exp.end_date %}{% endif %}
+              {% if exp.duration %}{% set date_part = date_part ~ ' (' ~ exp.duration ~ ')' %}{% endif %}
               {% set _ = meta_parts.append(date_part) %}
             {% endif %}
             {% if exp.location %}{% set _ = meta_parts.append(exp.location) %}{% endif %}

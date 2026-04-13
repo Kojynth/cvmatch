@@ -845,6 +845,15 @@ def sanitize_cv_json_output(
                     cleaned_keywords.append(text)
         cv_json["ats_keywords"] = _dedup_preserve(cleaned_keywords)
 
+    # Clean render_hints.notes of forbidden chars (^{}[] artifacts from LLM/extraction)
+    render_hints = cv_json.get("render_hints")
+    if isinstance(render_hints, dict):
+        notes = render_hints.get("notes")
+        if isinstance(notes, str):
+            cleaned_notes = FORBIDDEN_GENERATED_TEXT_CHARS_PATTERN.sub(" ", notes)
+            cleaned_notes = re.sub(r"\s+", " ", cleaned_notes).strip()
+            render_hints["notes"] = cleaned_notes
+
 
 def merge_cv_json_missing_sections(
     cv_json_final: Dict[str, Any],
@@ -1910,6 +1919,147 @@ def rebalance_cv_narrative(
         )
 
 
+def _compute_experience_durations(
+    cv_json: Dict[str, Any],
+    language_code: str = "fr",
+) -> None:
+    """Compute and inject duration field for experience entries from start/end dates.
+
+    Skips entries that already have a duration set (respects LLM-generated values).
+    Uses _normalize_single_date from rules.date_normalize for robust date parsing.
+    """
+    import datetime as _dt
+
+    try:
+        from ..rules.date_normalize import _normalize_single_date
+    except Exception:
+        return
+
+    is_en = language_code == "en"
+
+    def _parse_yyyymm(s: str) -> Optional[_dt.date]:
+        if not s:
+            return None
+        norm = _normalize_single_date(s)
+        if not norm or len(norm) < 7:
+            return None
+        try:
+            return _dt.date(int(norm[:4]), int(norm[5:7]), 1)
+        except (ValueError, IndexError):
+            return None
+
+    def _fmt(months: int) -> str:
+        years, rem = divmod(months, 12)
+        if is_en:
+            parts: List[str] = []
+            if years:
+                parts.append(f"{years} yr{'s' if years > 1 else ''}")
+            if rem:
+                parts.append(f"{rem} mo{'s' if rem > 1 else ''}")
+            return " ".join(parts) if parts else "1 mo"
+        parts = []
+        if years:
+            parts.append(f"{years} an{'s' if years > 1 else ''}")
+        if rem:
+            parts.append(f"{rem} mois")
+        return " ".join(parts) if parts else "1 mois"
+
+    today = _dt.date.today()
+    present_tokens = {
+        "present", "aujourd'hui", "maintenant", "current",
+        "en cours", "aujourd hui",
+    }
+    for entry in cv_json.get("experience") or []:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("duration"):
+            continue  # already set — respect existing value
+        start = _parse_yyyymm(str(entry.get("start_date") or ""))
+        end_raw = str(entry.get("end_date") or "").strip().lower()
+        end = today if (not end_raw or end_raw in present_tokens) else _parse_yyyymm(end_raw)
+        if start and end and end >= start:
+            months = (end.year - start.year) * 12 + (end.month - start.month)
+            if months >= 1:
+                entry["duration"] = _fmt(months)
+
+
+def _normalize_experience_date_formats(cv_json: Dict[str, Any]) -> None:
+    """Rewrite start_date/end_date in experience and education to uniform MM/YYYY.
+
+    Year-only dates (e.g. "2023") are left unchanged.
+    Present/current tokens are preserved as-is.
+    Must be called AFTER _compute_experience_durations to avoid corrupting date input.
+    """
+    try:
+        from ..rules.date_normalize import _normalize_single_date
+    except Exception:
+        return
+
+    present_tokens = {"present", "aujourd'hui", "maintenant", "current", "en cours"}
+
+    def _to_display(raw: str) -> str:
+        s = raw.strip()
+        if not s or s.lower() in present_tokens:
+            return s
+        norm = _normalize_single_date(s)
+        if not norm:
+            return s
+        # Year-only source → keep as-is (e.g. "2023")
+        if norm.endswith("-01") and re.match(r"^\d{4}$", s):
+            return s
+        # YYYY-MM → MM/YYYY
+        return f"{norm[5:7]}/{norm[:4]}"
+
+    for section in ("experience", "education"):
+        for entry in cv_json.get(section) or []:
+            if not isinstance(entry, dict):
+                continue
+            for field in ("start_date", "end_date"):
+                raw = str(entry.get(field) or "")
+                if raw:
+                    entry[field] = _to_display(raw)
+
+
+def _ensure_company_name_in_summary(
+    cv_json: Dict[str, Any],
+    company: str,
+    language_code: str = "fr",
+) -> None:
+    """Append a brief targeting phrase if the company name is absent from all visible text.
+
+    Checks summary, experience summaries, and highlights. Only appends to a non-empty
+    summary. Must be called before rebalance_cv_narrative so that any overflow trimming
+    happens naturally on the enriched text.
+    """
+    if not isinstance(cv_json, dict) or not company:
+        return
+    company_norm = _normalize_for_match(company)
+    if not company_norm:
+        return
+
+    parts = [str(cv_json.get("summary") or "")]
+    for exp in cv_json.get("experience") or []:
+        if not isinstance(exp, dict):
+            continue
+        parts.append(str(exp.get("summary") or ""))
+        for h in exp.get("highlights") or []:
+            parts.append(str(h or ""))
+
+    if company_norm in _normalize_for_match(" ".join(parts)):
+        return  # company name already present
+
+    summary = str(cv_json.get("summary") or "")
+    if not summary:
+        return  # nothing to append to
+
+    phrase = (
+        f"Application targeting {company}."
+        if language_code == "en"
+        else f"Candidature ciblée chez {company}."
+    )
+    cv_json["summary"] = summary.rstrip(" .") + f" {phrase}"
+
+
 def coerce_generated_cv_payload(
     *,
     payload: Dict[str, Any],
@@ -2020,6 +2170,14 @@ def coerce_generated_cv_payload(
         profile_linkedin=profile_linkedin,
     )
     apply_target_fallback(merged, job_title=job_title, company=company)
+
+    # Compute durations before date normalization (parser needs original date strings).
+    _compute_experience_durations(merged, language_code=language_code)
+    # Normalize date formats to MM/YYYY after duration is already computed.
+    _normalize_experience_date_formats(merged)
+    # Inject company name into visible summary text if absent.
+    # Must run before rebalance_cv_narrative which may trim the summary.
+    _ensure_company_name_in_summary(merged, company=company, language_code=language_code)
 
     # Sanitize
     sanitize_cv_json_output(merged, language_code=language_code)

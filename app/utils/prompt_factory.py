@@ -149,19 +149,36 @@ OUTPUT RULES:
 - Summary must be candidate-focused (role, strengths, impact). Do not describe employer mission/history.
 - If MATCHED_KEYWORDS is present, ensure those terms appear in summary/skills/experience when relevant.
 - If RETRY_GUIDANCE is present, treat it as high-priority rewrite direction.
-- For each experience item, keep facts but rewrite to highlight relevance to the offer:
-  * summary: 1 compact sentence (scope + context),
-  * highlights: 2-3 bullets with action/result phrasing and offer-aligned terms when true.
+- MANDATORY for each experience item: rewrite entirely — never copy source description text verbatim.
+  * summary: 1 compact sentence (scope + context, offer-aligned vocabulary).
+  * highlights: exactly 2-3 short bullet strings; each must start with an action verb
+    and include at least one term from PRIORITY_OFFER_TERMS or JOB_OFFER_TEXT when factual.
+  * If source description is a long paragraph or dash-separated list, condense into these 2-3 bullets.
 - If PROFILE_JSON text is in another language, translate it to LANGUAGE (keep proper nouns, tools, company names).
 - Do not leave mixed-language clauses such as English headings with French verbs or nouns in the same sentence.
 - Keep output compact:
   * experience <= 4 items, highlights <= 3 each.
-  * skills <= 4 categories, items <= 8 each.
+  * skills <= 4 categories, items <= 6 each, ordered by relevance to JOB_OFFER_TEXT.
   * education <= 3 items.
   * projects <= 3 items.
   * languages <= 4 items.
   * certifications <= 3 items.
   * ats_keywords <= 15 items.
+- Structure and ordering:
+  * Experience and projects must be in reverse chronological order (most recent first).
+  * For each experience or project item, include a duration field or mention it in summary when reliable start/end dates are available (e.g. "2 ans", "6 mois", "3 ans").
+  * Use a single consistent date format across the entire CV (prefer MM/YYYY or YYYY only; never mix formats).
+- Writing quality — apply to all free-text fields:
+  * Never use first-person pronouns (je, moi, mon, nous, notre, j'); start every bullet with a conjugated action verb or an infinitive.
+  * Use present tense for the current or ongoing role; use past tense (passé composé or imparfait) for all former roles.
+  * Avoid cliché adjectives and filler intensifiers: do not use passionné, dynamique, motivé, polyvalent, rigoureux, très, vraiment, extrêmement, or similar; replace with concrete evidence instead.
+  * Vary action verbs — do not repeat the same verb more than twice across all highlights and summary combined.
+  * Use consistent punctuation style: if bullets end without a period, apply that to all; never mix styles.
+  * Prefer direct, concrete phrasing; remove decorative filler.
+- Impact and personalization:
+  * Bullet structure preference when facts support it: "action verb + what was done + measurable result/impact".
+  * Include quantitative evidence when available: team size, percentages, user count, volumes, time saved, revenue figures.
+  * Mention the target company (COMPANY) at least once — in summary or in a highlight — to reinforce personalization; do not invent facts.
 """.strip()
 
     if stage == "final":
