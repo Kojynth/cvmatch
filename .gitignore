@@ -92,7 +92,6 @@ CV/*.odt
 exports/**
 output/**
 !exports/.gitkeep
-!output/.gitkeep
 
 # Job applications and cover letters (contain personalized CVs)
 job_applications/**
@@ -241,7 +240,6 @@ reset_history.json
 *session*.log
 logs/sessionlog/
 archive/*.log
-!logs/.gitkeep
 !archive/.gitkeep
 
 # =============================================================================

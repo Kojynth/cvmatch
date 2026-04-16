@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import py_compile
 from pathlib import Path
 from typing import Iterable
 
@@ -41,7 +40,7 @@ class SyntaxValidator:
             try:
                 source = file_path.read_text(encoding="utf-8-sig")
                 ast.parse(source, filename=str(file_path))
-                py_compile.compile(str(file_path), doraise=True)
+                compile(source, str(file_path), "exec")
             except Exception as exc:
                 failures.append(f"{file_path}: {exc}")
         return {
