@@ -52,6 +52,7 @@ class ProjectItem(BaseModel):
     description: str = ""
     technologies: str = ""
     url: str = ""
+    duration: str = ""
 
 
 class LanguageItem(BaseModel):

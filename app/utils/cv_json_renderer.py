@@ -18,6 +18,14 @@ def _normalize_description_line(value: Any) -> str:
     return text
 
 
+def _strip_ats_unsafe_bullet_markers(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"^[\s\-\*\u2022\u25aa\u279c\u2713\u25ba\u25b8\u25e6\u2023]+", "", text)
+    return text.strip()
+
+
 def _dedupe_description_lines(lines: List[str]) -> List[str]:
     deduped: List[str] = []
     seen_norms: List[str] = []
@@ -237,17 +245,22 @@ def cv_json_to_cv_data(
         description: List[str] = []
         summary = item.get("summary")
         if isinstance(summary, str) and summary.strip():
-            description.append(summary.strip())
+            cleaned_summary = _strip_ats_unsafe_bullet_markers(summary)
+            if cleaned_summary:
+                description.append(cleaned_summary)
         for highlight in item.get("highlights", []) or []:
             if isinstance(highlight, str) and highlight.strip():
-                description.append(highlight.strip())
-        description = _dedupe_description_lines(description)
+                cleaned_highlight = _strip_ats_unsafe_bullet_markers(highlight)
+                if cleaned_highlight:
+                    description.append(cleaned_highlight)
+        description = _dedupe_description_lines(description)[:4]
         experience_section.append(
             {
                 "title": item.get("title") or "",
                 "company": item.get("company") or "",
                 "start_date": item.get("start_date") or "",
                 "end_date": item.get("end_date") or "",
+                "duration": item.get("duration") or "",
                 "location": item.get("location") or "",
                 "description": description,
             }
@@ -294,6 +307,7 @@ def cv_json_to_cv_data(
                 "description": item.get("description") or "",
                 "technologies": item.get("technologies") or "",
                 "url": item.get("url") or "",
+                "duration": item.get("duration") or "",
             }
         )
 
@@ -397,6 +411,11 @@ def cv_json_to_markdown(cv_json: Dict[str, Any], language: Optional[str] = None)
             period = " - ".join(
                 [part for part in [exp.get("start_date"), exp.get("end_date")] if part]
             )
+            duration = exp.get("duration") or ""
+            if period and duration:
+                period = f"{period} ({duration})"
+            elif duration:
+                period = str(duration)
             lines.append(f"### {title}".strip())
             meta = " | ".join([part for part in [company, period] if part])
             if meta:
@@ -432,7 +451,11 @@ def cv_json_to_markdown(cv_json: Dict[str, Any], language: Optional[str] = None)
         lines.append(f"## {labels['projects']}")
         for proj in data["projects"]:
             name = proj.get("name") or ""
-            lines.append(f"### {name}".strip())
+            duration = proj.get("duration") or ""
+            header = f"### {name}"
+            if duration:
+                header += f"  _{duration}_"
+            lines.append(header.strip())
             desc = proj.get("description") or ""
             if desc:
                 lines.append(desc)

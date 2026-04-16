@@ -32,7 +32,10 @@ except ImportError:
     logger = logging.getLogger(__name__)
 
 
-# Review marker patterns that indicate LLM produced meta-commentary instead of content
+# Review marker patterns that indicate LLM produced meta-commentary instead of content.
+#
+# PHRASE markers: safe to use as plain substrings — these multi-word sequences
+# never appear legitimately inside a CV bullet.
 REVIEW_MARKERS_EN = (
     "the cv",
     "this cv",
@@ -44,10 +47,6 @@ REVIEW_MARKERS_EN = (
     "should be",
     "should include",
     "must be",
-    "needs",
-    "missing",
-    "revise",
-    "improve",
     "job offer",
     "job description",
 )
@@ -56,14 +55,18 @@ REVIEW_MARKERS_FR = (
     "le cv",
     "ce cv",
     "le candidat",
-    "devrait",
-    "doit",
-    "manque",
     "a revoir",
-    "ameliorer",
 )
 
 REVIEW_MARKERS = REVIEW_MARKERS_EN + REVIEW_MARKERS_FR
+
+# SINGLE-WORD markers: must use word-boundary matching to avoid false positives
+# on past-tense action verbs common in CV bullets (e.g. "improved", "revised",
+# "missing from …", "manquant").
+_REVIEW_WORD_PATTERN = re.compile(
+    r"\b(should|must|needs|improve|revise|missing|ameliorer|manque|devrait|doit)\b",
+    re.IGNORECASE,
+)
 
 # Placeholder patterns to strip from generated text
 PLACEHOLDER_PATTERN = re.compile(
@@ -200,12 +203,14 @@ def text_has_review_markers(text: str) -> bool:
 
     lowered = text.strip().lower()
 
-    # Check for common markers
+    # Check for phrase markers (safe substring match — these are unambiguous phrases
+    # that never appear in legitimate CV bullets).
     if any(marker in lowered for marker in REVIEW_MARKERS):
         return True
 
-    # Check for English modal patterns
-    if re.search(r"\b(should|must|needs)\b", lowered):
+    # Check for single-word markers using word boundaries to avoid false positives
+    # on past-tense action verbs (e.g. "improved" must not match "improve").
+    if _REVIEW_WORD_PATTERN.search(lowered):
         return True
 
     return False
@@ -387,8 +392,17 @@ def apply_target_fallback(
     if not isinstance(cv_json, dict):
         return
 
+    try:
+        from .cv_quality_audit import clean_target_job_title
+    except Exception:
+        clean_target_job_title = lambda value: str(value or "").strip()
+
     if not cv_json.get("target_job_title") and job_title:
-        cv_json["target_job_title"] = job_title
+        cv_json["target_job_title"] = clean_target_job_title(job_title)
+    elif cv_json.get("target_job_title"):
+        cv_json["target_job_title"] = clean_target_job_title(
+            cv_json.get("target_job_title")
+        )
     if not cv_json.get("target_company") and company:
         cv_json["target_company"] = company
 
@@ -729,6 +743,7 @@ def sanitize_cv_json_output(
             "company": clean_text_field(entry.get("company") or ""),
             "start_date": clean_text_field(entry.get("start_date") or ""),
             "end_date": clean_text_field(entry.get("end_date") or ""),
+            "duration": clean_text_field(entry.get("duration") or ""),
             "location": clean_text_field(entry.get("location") or ""),
             "summary": clean_text_field(
                 entry.get("summary") or "",
@@ -797,6 +812,7 @@ def sanitize_cv_json_output(
             ),
             "technologies": clean_text_field(entry.get("technologies") or ""),
             "url": clean_text_field(entry.get("url") or ""),
+            "duration": clean_text_field(entry.get("duration") or ""),
         }
         if any(cleaned_entry.values()):
             cleaned_projects.append(cleaned_entry)
@@ -1035,6 +1051,56 @@ def _select_action_summary(
     return ""
 
 
+def _derive_profile_date_support(start_date: Any, end_date: Any) -> Dict[str, Any]:
+    try:
+        from .profile_json import derive_date_support_fields
+
+        return derive_date_support_fields(start_date, end_date)
+    except Exception:
+        return {
+            "start_date_raw": str(start_date or "").strip(),
+            "end_date_raw": str(end_date or "").strip(),
+            "start_date_norm": "",
+            "end_date_norm": "",
+            "is_current": False,
+            "start_date_precision": "",
+            "end_date_precision": "",
+            "date_precision": "",
+            "duration_months": None,
+        }
+
+
+def _format_duration_label(months: int, *, language_code: str = "fr") -> str:
+    is_en = language_code == "en"
+    years, rem = divmod(months, 12)
+    if is_en:
+        parts: List[str] = []
+        if years:
+            parts.append(f"{years} yr{'s' if years > 1 else ''}")
+        if rem:
+            parts.append(f"{rem} mo{'s' if rem > 1 else ''}")
+        return " ".join(parts) if parts else "1 mo"
+    parts = []
+    if years:
+        parts.append(f"{years} an{'s' if years > 1 else ''}")
+    if rem:
+        parts.append(f"{rem} mois")
+    return " ".join(parts) if parts else "1 mois"
+
+
+def _compute_duration_label(
+    start_date: Any,
+    end_date: Any,
+    *,
+    language_code: str = "fr",
+) -> str:
+    date_support = _derive_profile_date_support(start_date, end_date)
+    months = date_support.get("duration_months")
+    if isinstance(months, int) and months >= 1:
+        return _format_duration_label(months, language_code=language_code)
+    return ""
+
+
 def _extract_profile_experiences(profile_json: Dict[str, Any]) -> List[Dict[str, str]]:
     rows: List[Dict[str, str]] = []
     if not isinstance(profile_json, dict):
@@ -1054,6 +1120,10 @@ def _extract_profile_experiences(profile_json: Dict[str, Any]) -> List[Dict[str,
                 dedupe_narrative=True,
             ),
         }
+        date_support = _derive_profile_date_support(
+            row.get("start_date") or "",
+            row.get("end_date") or "",
+        )
         if not any(
             row.get(field)
             for field in (
@@ -1068,8 +1138,13 @@ def _extract_profile_experiences(profile_json: Dict[str, Any]) -> List[Dict[str,
             continue
         row["_title_norm"] = _normalize_for_match(row["title"])
         row["_company_norm"] = _normalize_for_match(row["company"])
-        row["_start_norm"] = _normalize_for_match(row["start_date"])
-        row["_end_norm"] = _normalize_for_match(row["end_date"])
+        row["_start_norm"] = date_support.get("start_date_norm") or _normalize_for_match(
+            row["start_date"]
+        )
+        row["_end_norm"] = date_support.get("end_date_norm") or _normalize_for_match(
+            row["end_date"]
+        )
+        row["_date_support"] = date_support
         rows.append(row)
     return rows
 
@@ -1081,8 +1156,16 @@ def _score_profile_experience_match(
 
     title_norm = _normalize_for_match(entry.get("title"))
     company_norm = _normalize_for_match(entry.get("company"))
-    start_norm = _normalize_for_match(entry.get("start_date"))
-    end_norm = _normalize_for_match(entry.get("end_date"))
+    entry_date_support = _derive_profile_date_support(
+        entry.get("start_date") or "",
+        entry.get("end_date") or "",
+    )
+    start_norm = entry_date_support.get("start_date_norm") or _normalize_for_match(
+        entry.get("start_date")
+    )
+    end_norm = entry_date_support.get("end_date_norm") or _normalize_for_match(
+        entry.get("end_date")
+    )
 
     profile_title = profile_entry.get("_title_norm", "")
     profile_company = profile_entry.get("_company_norm", "")
@@ -1109,8 +1192,62 @@ def _score_profile_experience_match(
     return score
 
 
+def _is_profile_experience_match_ambiguous(
+    entry: Dict[str, Any],
+    matched_profile: Dict[str, Any],
+    profile_experiences: List[Dict[str, Any]],
+) -> bool:
+    if not isinstance(entry, dict) or not isinstance(matched_profile, dict):
+        return True
+
+    best_title = matched_profile.get("_title_norm") or ""
+    best_company = matched_profile.get("_company_norm") or ""
+    best_dates = (
+        matched_profile.get("_start_norm") or "",
+        matched_profile.get("_end_norm") or "",
+    )
+    if not best_title and not best_company:
+        return True
+
+    entry_date_support = _derive_profile_date_support(
+        entry.get("start_date") or "",
+        entry.get("end_date") or "",
+    )
+    entry_start = entry_date_support.get("start_date_norm") or ""
+    entry_end = entry_date_support.get("end_date_norm") or ""
+
+    competing_dates: List[Tuple[str, str]] = []
+    for profile_entry in profile_experiences:
+        if not isinstance(profile_entry, dict) or profile_entry is matched_profile:
+            continue
+        if best_title and profile_entry.get("_title_norm") != best_title:
+            continue
+        if best_company and profile_entry.get("_company_norm") != best_company:
+            continue
+        other_dates = (
+            profile_entry.get("_start_norm") or "",
+            profile_entry.get("_end_norm") or "",
+        )
+        if other_dates != best_dates:
+            competing_dates.append(other_dates)
+
+    if not competing_dates:
+        return False
+
+    if entry_start and best_dates[0] and entry_start != best_dates[0]:
+        return True
+    if entry_end and best_dates[1] and entry_end != best_dates[1]:
+        return True
+    if not entry_start and not entry_end:
+        return True
+    return False
+
+
 def _reconcile_experience_section(
-    cv_json: Dict[str, Any], profile_json: Dict[str, Any]
+    cv_json: Dict[str, Any],
+    profile_json: Dict[str, Any],
+    *,
+    language_code: str = "fr",
 ) -> None:
     if not isinstance(cv_json, dict):
         return
@@ -1134,6 +1271,7 @@ def _reconcile_experience_section(
             "company": clean_text_field(raw_entry.get("company") or ""),
             "start_date": clean_text_field(raw_entry.get("start_date") or ""),
             "end_date": clean_text_field(raw_entry.get("end_date") or ""),
+            "duration": clean_text_field(raw_entry.get("duration") or ""),
             "location": clean_text_field(raw_entry.get("location") or ""),
             "summary": clean_text_field(
                 raw_entry.get("summary") or "",
@@ -1164,11 +1302,20 @@ def _reconcile_experience_section(
             if best_idx >= 0 and best_score >= 0.45
             else None
         )
+        if matched_profile and _is_profile_experience_match_ambiguous(
+            entry,
+            matched_profile,
+            profile_experiences,
+        ):
+            matched_profile = None
         expected_description = ""
         if matched_profile:
             expected_description = matched_profile.get("description") or ""
-            for field in ("title", "company", "start_date", "end_date", "location"):
+            for field in ("title", "company", "location"):
                 if not entry.get(field) and matched_profile.get(field):
+                    entry[field] = matched_profile[field]
+            for field in ("start_date", "end_date"):
+                if matched_profile.get(field):
                     entry[field] = matched_profile[field]
 
         if expected_description:
@@ -1246,6 +1393,13 @@ def _reconcile_experience_section(
 
         entry["summary"] = _trim_text(summary_text, 420)
         entry["highlights"] = _dedup_preserve(cleaned_highlights)[:4]
+        duration = _compute_duration_label(
+            entry.get("start_date") or "",
+            entry.get("end_date") or "",
+            language_code=language_code,
+        )
+        if duration:
+            entry["duration"] = duration
 
         if (
             any(
@@ -1255,6 +1409,7 @@ def _reconcile_experience_section(
                     "company",
                     "start_date",
                     "end_date",
+                    "duration",
                     "location",
                     "summary",
                 )
@@ -1648,11 +1803,18 @@ def _reconcile_languages_section(
 
 
 def reconcile_cv_sections_with_profile(
-    cv_json: Dict[str, Any], profile_json: Dict[str, Any]
+    cv_json: Dict[str, Any],
+    profile_json: Dict[str, Any],
+    *,
+    language_code: str = "fr",
 ) -> None:
     if not isinstance(cv_json, dict) or not isinstance(profile_json, dict):
         return
-    _reconcile_experience_section(cv_json, profile_json)
+    _reconcile_experience_section(
+        cv_json,
+        profile_json,
+        language_code=language_code,
+    )
     _reconcile_education_section(cv_json, profile_json)
     _reconcile_languages_section(cv_json, profile_json)
 
@@ -1703,6 +1865,8 @@ def _best_profile_match(
 def _seed_experience_from_profile(
     cv_json: Dict[str, Any],
     profile_json: Dict[str, Any],
+    *,
+    language_code: str = "fr",
 ) -> int:
     if not isinstance(cv_json, dict):
         return 0
@@ -1735,6 +1899,11 @@ def _seed_experience_from_profile(
                 "company": item.get("company") or "",
                 "start_date": item.get("start_date") or "",
                 "end_date": item.get("end_date") or "",
+                "duration": _compute_duration_label(
+                    item.get("start_date") or "",
+                    item.get("end_date") or "",
+                    language_code=language_code,
+                ),
                 "location": item.get("location") or "",
                 "summary": _trim_text(summary, 280),
                 "highlights": highlights[:4],
@@ -1750,6 +1919,7 @@ def rebalance_cv_narrative(
     cv_json: Dict[str, Any],
     *,
     profile_json: Dict[str, Any],
+    language_code: str = "fr",
 ) -> None:
     """Rebalance narrative density between summary and experience bullets.
 
@@ -1783,7 +1953,11 @@ def rebalance_cv_narrative(
     else:
         cv_json["summary"] = _trim_text(summary, 420)
 
-    seeded_count = _seed_experience_from_profile(cv_json, profile_json)
+    seeded_count = _seed_experience_from_profile(
+        cv_json,
+        profile_json,
+        language_code=language_code,
+    )
     if seeded_count:
         logger.info(
             "Experience section rebuilt from profile data: entries=%s", seeded_count
@@ -1887,6 +2061,13 @@ def rebalance_cv_narrative(
             for field in ("title", "company", "start_date", "end_date", "location"):
                 if not entry.get(field) and matched_profile.get(field):
                     entry[field] = matched_profile.get(field)
+        duration = _compute_duration_label(
+            entry.get("start_date") or "",
+            entry.get("end_date") or "",
+            language_code=language_code,
+        )
+        if duration:
+            entry["duration"] = duration
 
     if summary_overflow and experience_entries:
         first = (
@@ -1923,89 +2104,44 @@ def _compute_experience_durations(
     cv_json: Dict[str, Any],
     language_code: str = "fr",
 ) -> None:
-    """Compute and inject duration field for experience entries from start/end dates.
+    """Compute deterministic duration labels from normalized date support."""
 
-    Skips entries that already have a duration set (respects LLM-generated values).
-    Uses _normalize_single_date from rules.date_normalize for robust date parsing.
-    """
-    import datetime as _dt
-
-    try:
-        from ..rules.date_normalize import _normalize_single_date
-    except Exception:
-        return
-
-    is_en = language_code == "en"
-
-    def _parse_yyyymm(s: str) -> Optional[_dt.date]:
-        if not s:
-            return None
-        norm = _normalize_single_date(s)
-        if not norm or len(norm) < 7:
-            return None
-        try:
-            return _dt.date(int(norm[:4]), int(norm[5:7]), 1)
-        except (ValueError, IndexError):
-            return None
-
-    def _fmt(months: int) -> str:
-        years, rem = divmod(months, 12)
-        if is_en:
-            parts: List[str] = []
-            if years:
-                parts.append(f"{years} yr{'s' if years > 1 else ''}")
-            if rem:
-                parts.append(f"{rem} mo{'s' if rem > 1 else ''}")
-            return " ".join(parts) if parts else "1 mo"
-        parts = []
-        if years:
-            parts.append(f"{years} an{'s' if years > 1 else ''}")
-        if rem:
-            parts.append(f"{rem} mois")
-        return " ".join(parts) if parts else "1 mois"
-
-    today = _dt.date.today()
-    present_tokens = {
-        "present", "aujourd'hui", "maintenant", "current",
-        "en cours", "aujourd hui",
-    }
     for entry in cv_json.get("experience") or []:
         if not isinstance(entry, dict):
             continue
-        if entry.get("duration"):
-            continue  # already set — respect existing value
-        start = _parse_yyyymm(str(entry.get("start_date") or ""))
-        end_raw = str(entry.get("end_date") or "").strip().lower()
-        end = today if (not end_raw or end_raw in present_tokens) else _parse_yyyymm(end_raw)
-        if start and end and end >= start:
-            months = (end.year - start.year) * 12 + (end.month - start.month)
-            if months >= 1:
-                entry["duration"] = _fmt(months)
-
+        duration = _compute_duration_label(
+            entry.get("start_date") or "",
+            entry.get("end_date") or "",
+            language_code=language_code,
+        )
+        if duration:
+            entry["duration"] = duration
+    return
 
 def _normalize_experience_date_formats(cv_json: Dict[str, Any]) -> None:
     """Rewrite start_date/end_date in experience and education to uniform MM/YYYY.
 
-    Year-only dates (e.g. "2023") are left unchanged.
+    Year-only dates are rendered as 01/YYYY to keep one display format.
     Present/current tokens are preserved as-is.
     Must be called AFTER _compute_experience_durations to avoid corrupting date input.
     """
     try:
-        from ..rules.date_normalize import _normalize_single_date
+        from ..rules.date_normalize import _normalize_single_date, normalize_present_token
     except Exception:
         return
 
-    present_tokens = {"present", "aujourd'hui", "maintenant", "current", "en cours"}
-
     def _to_display(raw: str) -> str:
         s = raw.strip()
-        if not s or s.lower() in present_tokens:
+        if not s:
+            return s
+        normalized_present = normalize_present_token(s)
+        if str(normalized_present or "").strip().upper() == "PRESENT":
+            return s
+        # Year-only source → keep as bare YYYY (no invented month placeholder)
+        if re.fullmatch(r"\d{4}", s):
             return s
         norm = _normalize_single_date(s)
         if not norm:
-            return s
-        # Year-only source → keep as-is (e.g. "2023")
-        if norm.endswith("-01") and re.match(r"^\d{4}$", s):
             return s
         # YYYY-MM → MM/YYYY
         return f"{norm[5:7]}/{norm[:4]}"
@@ -2181,7 +2317,11 @@ def coerce_generated_cv_payload(
 
     # Sanitize
     sanitize_cv_json_output(merged, language_code=language_code)
-    reconcile_cv_sections_with_profile(merged, profile_json)
+    reconcile_cv_sections_with_profile(
+        merged,
+        profile_json,
+        language_code=language_code,
+    )
 
     # Apply keyword alignment if provided
     if keyword_alignment_fn:
@@ -2195,24 +2335,38 @@ def coerce_generated_cv_payload(
     rebalance_cv_narrative(
         merged,
         profile_json=profile_json,
+        language_code=language_code,
     )
 
     # Re-sanitize after optional post-merge transformations.
     sanitize_cv_json_output(merged, language_code=language_code)
-    reconcile_cv_sections_with_profile(merged, profile_json)
+    reconcile_cv_sections_with_profile(
+        merged,
+        profile_json,
+        language_code=language_code,
+    )
 
     # Second offer-adaptation pass: rebalance/reconcile may overwrite
     # earlier keyword injections in summary/experience.
     if offer_adaptation_fn:
         offer_adaptation_fn(merged, critic_json)
         sanitize_cv_json_output(merged, language_code=language_code)
-        reconcile_cv_sections_with_profile(merged, profile_json)
+        reconcile_cv_sections_with_profile(
+            merged,
+            profile_json,
+            language_code=language_code,
+        )
         rebalance_cv_narrative(
             merged,
             profile_json=profile_json,
+            language_code=language_code,
         )
         sanitize_cv_json_output(merged, language_code=language_code)
-        reconcile_cv_sections_with_profile(merged, profile_json)
+        reconcile_cv_sections_with_profile(
+            merged,
+            profile_json,
+            language_code=language_code,
+        )
 
     if callable(classify_cv_payload_source):
         try:
@@ -2248,8 +2402,13 @@ def extract_experience_highlights(description: str) -> List[str]:
     if not description:
         return []
 
+    normalized = str(description or "").replace("•", "-").replace("▪", "-")
+    normalized = normalized.replace("➜", "-").replace("✓", "-")
+    normalized = re.sub(r"\s*;\s*", "\n", normalized)
+    normalized = re.sub(r"(?:(?<=:)|^)\s*-\s+", "\n", normalized)
+
     highlights: List[str] = []
-    for part in re.split(r"[\r\n]+|(?<=[\.\!\?])\s+", description):
+    for part in re.split(r"[\r\n]+|(?<=[\.\!\?])\s+", normalized):
         cleaned = part.strip(" -*\t")
         if cleaned:
             highlights.append(cleaned)

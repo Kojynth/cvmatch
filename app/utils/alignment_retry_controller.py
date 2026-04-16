@@ -343,23 +343,58 @@ def build_alignment_retry_guidance(
                 "do not leave mixed-language fragments."
             )
 
+    quality_audit = audit.get("quality_audit") if isinstance(audit, dict) else {}
+    quality_rewrite: List[str] = []
+    if isinstance(quality_audit, dict):
+        if quality_audit.get("date_format_ok") is False:
+            quality_rewrite.append(
+                "Use one consistent date format across the whole CV while preserving the true chronology."
+            )
+        if quality_audit.get("duration_missing"):
+            quality_rewrite.append(
+                "Add an explicit duration for each role or project whenever the dates make it reliable."
+            )
+        if (
+            quality_audit.get("bullet_count_issues")
+            or quality_audit.get("bullet_length_issues")
+            or quality_audit.get("ats_text_issues")
+        ):
+            quality_rewrite.append(
+                "Rewrite every experience into 2-4 concise ATS-safe highlights using plain text only, with one idea per line and no inline pseudo-bullet paragraphs."
+            )
+        if quality_audit.get("summary_length_issues"):
+            quality_rewrite.append(
+                "Keep the summary compact, candidate-focused, and free of employer history or long paragraphs."
+            )
+        if quality_audit.get("personal_pronoun_sections"):
+            quality_rewrite.append(
+                "Remove first-person pronouns and keep recruiter-facing phrasing."
+            )
+        if quality_audit.get("cliche_sections"):
+            quality_rewrite.append(
+                "Replace cliches and filler with concrete evidence or grounded impact."
+            )
+
     missing_terms = build_alignment_missing_keywords(audit, max_items=max_terms)
-    if not missing_terms:
-        return (
+    if missing_terms:
+        joined_terms = ", ".join(missing_terms)
+        base = (
+            "Coverage remains insufficient. Rebuild the CV more aggressively around the "
+            "job offer. Prioritize these missing offer terms across summary, experience "
+            f"bullets, skills, education, certifications, and languages when profile facts "
+            f"support them: {joined_terms}."
+        )
+    else:
+        base = (
             "Coverage remains insufficient. Rebuild the CV more aggressively around the "
             "job offer, especially in summary, experience bullets, skills, education, "
             "certifications, and languages when facts support it."
-            f"{language_guidance}"
         )
 
-    joined_terms = ", ".join(missing_terms)
-    return (
-        "Coverage remains insufficient. Rebuild the CV more aggressively around the "
-        "job offer. Prioritize these missing offer terms across summary, experience "
-        f"bullets, skills, education, certifications, and languages when profile facts "
-        f"support them: {joined_terms}."
-        f"{language_guidance}"
-    )
+    if quality_rewrite:
+        base = f"{base} Quality fixes: {' '.join(dedup_preserve(quality_rewrite))}"
+
+    return f"{base}{language_guidance}"
 
 
 def augment_critic_with_alignment_feedback(

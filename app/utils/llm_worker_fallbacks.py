@@ -13,6 +13,32 @@ from .cv_fallback_generator import generate_fallback_cv_json
 from .offer_keywords_utils import dedup_preserve
 
 
+_TOOL_PATTERNS: Dict[str, re.Pattern[str]] = {
+    "Snowflake": re.compile(r"\bsnowflake\b", re.IGNORECASE),
+    "dbt": re.compile(r"\bdbt\b", re.IGNORECASE),
+    "AWS": re.compile(r"\baws\b|\bamazon web services\b", re.IGNORECASE),
+    "Airflow": re.compile(r"\bairflow\b", re.IGNORECASE),
+    "IICS": re.compile(r"\biics\b", re.IGNORECASE),
+    "Python": re.compile(r"\bpython\b", re.IGNORECASE),
+    "SQL": re.compile(r"\bsql\b", re.IGNORECASE),
+    "GitHub Actions": re.compile(r"\bgithub actions\b", re.IGNORECASE),
+    "Terraform": re.compile(r"\bterraform\b", re.IGNORECASE),
+    "Vector Databases": re.compile(r"\bvector databases?\b", re.IGNORECASE),
+    "ML Workflows": re.compile(r"\bmachine learning workflows?\b", re.IGNORECASE),
+    "ETL": re.compile(r"\betl\b", re.IGNORECASE),
+    "ELT": re.compile(r"\belt\b", re.IGNORECASE),
+}
+
+_KEYWORD_FAMILY_HINTS: Dict[str, List[str]] = {
+    "cloud": ["AWS", "Azure", "GCP", "cloud"],
+    "data warehousing": ["Snowflake", "data warehouse", "warehousing"],
+    "etl/elt": ["ETL", "ELT", "dbt", "IICS", "data ingestion"],
+    "orchestration": ["Airflow", "orchestration", "monitoring"],
+    "generative ai": ["Generative AI", "GenAI", "Vector Databases", "AI ready data"],
+    "platform engineering": ["GitHub Actions", "CI/CD", "Terraform", "infrastructure as code"],
+}
+
+
 def _extend_terms(target: List[str], value: Any) -> None:
     if value is None:
         return
@@ -62,6 +88,37 @@ def _extract_offer_text_keywords(offer_text: str) -> List[str]:
     return tokens
 
 
+def _extract_offer_text_tools(offer_text: str) -> List[str]:
+    tools: List[str] = []
+    text = str(offer_text or "")
+    for label, pattern in _TOOL_PATTERNS.items():
+        if pattern.search(text):
+            tools.append(label)
+    return dedup_preserve(tools, max_items=10)
+
+
+def _extract_keyword_families(
+    offer_text: str,
+    tools: List[str],
+) -> Dict[str, List[str]]:
+    families: Dict[str, List[str]] = {}
+    haystack = str(offer_text or "")
+    tool_set = {str(item or "").strip().lower() for item in tools if str(item or "").strip()}
+
+    for family, hints in _KEYWORD_FAMILY_HINTS.items():
+        matched: List[str] = []
+        for hint in hints:
+            hint_text = str(hint or "").strip()
+            if not hint_text:
+                continue
+            if hint_text.lower() in tool_set or re.search(rf"\b{re.escape(hint_text)}\b", haystack, re.IGNORECASE):
+                matched.append(hint_text)
+        deduped = dedup_preserve(matched, max_items=6)
+        if deduped:
+            families[family] = deduped
+    return families
+
+
 def build_offer_keywords_fallback(
     *,
     offer_data: Optional[Mapping[str, Any]],
@@ -77,6 +134,7 @@ def build_offer_keywords_fallback(
     extracted_skills: List[str] = []
     extracted_tools: List[str] = []
     extracted_lexical: List[str] = []
+    extracted_families: Dict[str, List[str]] = {}
 
     if isinstance(offer_data, Mapping):
         job_title = str(offer_data.get("job_title") or "")
@@ -100,6 +158,7 @@ def build_offer_keywords_fallback(
         offer_text = str(offer_data.get("text") or "")
         if offer_text:
             extracted_keywords.extend(_extract_offer_text_keywords(offer_text))
+            extracted_tools.extend(_extract_offer_text_tools(offer_text))
         if job_title:
             extracted_keywords.extend(part for part in re.split(r"\s+", job_title) if part.strip())
 
@@ -110,7 +169,17 @@ def build_offer_keywords_fallback(
         else extracted_keywords[:8]
     )
     extracted_tools = dedup_preserve(extracted_tools, max_items=8)
+    if extracted_tools:
+        extracted_skills = dedup_preserve(
+            [*extracted_skills, *extracted_tools],
+            max_items=10,
+        )
     extracted_lexical = dedup_preserve(extracted_lexical + extracted_keywords, max_items=20)
+    if isinstance(offer_data, Mapping):
+        extracted_families = _extract_keyword_families(
+            str(offer_data.get("text") or ""),
+            extracted_tools,
+        )
 
     payload: Dict[str, Any] = {
         "schema_version": "offer_keywords.v1",
@@ -126,7 +195,7 @@ def build_offer_keywords_fallback(
         "education": [],
         "certifications": [],
         "lexical_field": extracted_lexical,
-        "keyword_families": {},
+        "keyword_families": extracted_families,
     }
 
     try:

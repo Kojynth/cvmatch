@@ -135,6 +135,7 @@
           {% for proj in projects %}
           <div class="entry">
             <h3>{{ proj.name }}</h3>
+            {% if proj.duration %}<p class="meta">{{ proj.duration }}</p>{% endif %}
             {% if proj.technologies %}<p class="meta">{{ proj.technologies }}</p>{% endif %}
             {% if proj.description %}<p>{{ proj.description }}</p>{% endif %}
             {% if proj.url %}<p><a href="{{ proj.url }}">{{ proj.url }}</a></p>{% endif %}

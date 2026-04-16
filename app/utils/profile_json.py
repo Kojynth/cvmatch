@@ -7,7 +7,7 @@ import unicodedata
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from pydantic import ValidationError
 
@@ -117,6 +117,14 @@ HEADER_TOKENS = {
     "publication",
     "publications",
 }
+
+def derive_date_support_fields(start_date: Any, end_date: Any) -> Dict[str, Any]:
+    """Compatibility wrapper around profile-domain date support metadata."""
+    from ..domain.profile.date_support import derive_date_support_fields as _derive
+
+    return _derive(start_date, end_date)
+
+
 CERT_KEYWORDS = {
     "certif",
     "certification",
@@ -168,75 +176,24 @@ def load_profile_json_model() -> Dict[str, Any]:
 
 
 def build_empty_profile_json() -> Dict[str, Any]:
-    data: Dict[str, Any] = {"schema_version": SCHEMA_VERSION}
-    data["personal_info"] = {field: "" for field in PERSONAL_INFO_FIELDS}
-    data["personal_info"]["links"] = []
-    for section in LIST_SECTIONS:
-        data[section] = []
-    return data
+    """Compatibility wrapper around profile-domain empty-contract builder."""
+    from ..domain.profile.roundtrip import build_empty_profile_json as _build
+
+    return _build()
 
 
 def normalize_profile_json(data: Dict[str, Any]) -> Dict[str, Any]:
-    normalized = build_empty_profile_json()
-    if not isinstance(data, dict):
-        return normalized
+    """Compatibility wrapper around profile-domain normalization."""
+    from ..domain.profile.roundtrip import normalize_profile_json as _normalize
 
-    normalized["schema_version"] = str(data.get("schema_version") or SCHEMA_VERSION)
-
-    personal = data.get("personal_info")
-    if isinstance(personal, dict):
-        for field in PERSONAL_INFO_FIELDS:
-            value = _clean_text(personal.get(field))
-            if value:
-                normalized["personal_info"][field] = value
-        normalized["personal_info"]["links"] = _normalize_links(
-            personal.get("links")
-        )
-    else:
-        normalized["personal_info"]["links"] = _normalize_links(data.get("links"))
-
-    for section in LIST_SECTIONS:
-        raw_items = data.get(section)
-        if section == "interests":
-            normalized["interests"] = _normalize_interests(raw_items)
-            continue
-
-        items = []
-        for item in _as_list(raw_items):
-            if not isinstance(item, dict):
-                continue
-            cleaned = {}
-            for field in SECTION_FIELDS[section]:
-                value = _clean_text(item.get(field))
-                if value:
-                    cleaned[field] = value
-            if cleaned:
-                items.append(cleaned)
-        normalized[section] = items
-
-    return normalized
+    return _normalize(data)
 
 
 def merge_profile_json(base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]:
-    base_norm = normalize_profile_json(base)
-    overlay_norm = normalize_profile_json(overlay)
+    """Compatibility wrapper around profile-domain merge."""
+    from ..domain.profile.roundtrip import merge_profile_json as _merge
 
-    merged = build_empty_profile_json()
-    merged["schema_version"] = overlay_norm.get("schema_version") or base_norm.get("schema_version")
-
-    for field in PERSONAL_INFO_FIELDS:
-        merged["personal_info"][field] = overlay_norm["personal_info"].get(field) or base_norm["personal_info"].get(field) or ""
-    merged["personal_info"]["links"] = _merge_personal_links(
-        _normalize_links(base_norm.get("personal_info", {}).get("links")),
-        _normalize_links(overlay_norm.get("personal_info", {}).get("links")),
-    )
-
-    for section in LIST_SECTIONS:
-        overlay_list = overlay_norm.get(section, [])
-        base_list = base_norm.get(section, [])
-        merged[section] = _merge_section_items(section, base_list, overlay_list)
-
-    return merged
+    return _merge(base, overlay)
 
 
 def _merge_section_items(section: str, base_list: List[Any], overlay_list: List[Any]) -> List[Any]:
@@ -328,73 +285,17 @@ def _is_reasonable_section_item(section: str, item: Any) -> bool:
 
 
 def has_profile_json_content(data: Dict[str, Any]) -> bool:
-    if not isinstance(data, dict):
-        return False
-    personal = data.get("personal_info", {})
-    if isinstance(personal, dict):
-        if any(_clean_text(personal.get(field)) for field in PERSONAL_INFO_FIELDS):
-            return True
-        if _normalize_links(personal.get("links")):
-            return True
-    for section in LIST_SECTIONS:
-        items = data.get(section)
-        if section == "interests":
-            if _normalize_interests(items):
-                return True
-            continue
-        if isinstance(items, list) and any(isinstance(item, dict) and item for item in items):
-            return True
-    return False
+    """Compatibility wrapper around profile-domain content detection."""
+    from ..domain.profile.roundtrip import has_profile_json_content as _has
+
+    return _has(data)
 
 
 def apply_profile_json_to_profile(profile: Any, data: Dict[str, Any]) -> None:
-    raw_personal = data.get("personal_info") if isinstance(data, dict) else {}
-    raw_links = None
-    if isinstance(raw_personal, dict) and "links" in raw_personal:
-        raw_links = raw_personal.get("links")
-    elif isinstance(data, dict) and "links" in data:
-        raw_links = data.get("links")
-    incoming_links = _normalize_links(raw_links)
+    """Compatibility wrapper around profile-domain apply-to-profile."""
+    from ..domain.profile.roundtrip import apply_profile_json_to_profile as _apply
 
-    normalized = normalize_profile_json(data)
-    if not hasattr(profile, "extracted_personal_info"):
-        return
-
-    existing_personal = getattr(profile, "extracted_personal_info", None) or {}
-    merged_personal = dict(existing_personal)
-    for field in PERSONAL_INFO_FIELDS:
-        value = _clean_text(normalized["personal_info"].get(field))
-        if value:
-            merged_personal[field] = value
-    if incoming_links:
-        merged_personal["links"] = incoming_links
-    else:
-        existing_links = _normalize_links(merged_personal.get("links"))
-        if existing_links:
-            merged_personal["links"] = existing_links
-        else:
-            merged_personal.pop("links", None)
-    profile.extracted_personal_info = merged_personal
-
-    attr_map = {
-        "experiences": "extracted_experiences",
-        "education": "extracted_education",
-        "skills": "extracted_skills",
-        "soft_skills": "extracted_soft_skills",
-        "languages": "extracted_languages",
-        "projects": "extracted_projects",
-        "certifications": "extracted_certifications",
-        "publications": "extracted_publications",
-        "volunteering": "extracted_volunteering",
-        "interests": "extracted_interests",
-        "awards": "extracted_awards",
-        "references": "extracted_references",
-    }
-
-    for section, attr in attr_map.items():
-        value = normalized.get(section, [])
-        if value:
-            setattr(profile, attr, value)
+    return _apply(profile, data)
 
 
 def map_payload_to_profile_json(payload: Dict[str, Any], source: str = "") -> Dict[str, Any]:
@@ -733,446 +634,125 @@ def _split_date_range(value: Any, *, single_date_is_end: bool = False) -> Tuple[
 
 
 def _extract_personal_info(payload: Dict[str, Any]) -> Dict[str, Any]:
-    candidates = [
-        payload.get("personal_info"),
-        payload.get("contact_info"),
-        payload.get("contact"),
-        payload.get("basic_info"),
-        payload.get("profile"),
-    ]
-    personal: Dict[str, Any] = {}
-    for item in candidates:
-        if isinstance(item, dict):
-            personal = item
-            break
+    """Compatibility wrapper around profile-domain personal-info extraction."""
+    from ..domain.profile.personal_info import extract_personal_info as _extract
 
-    data: Dict[str, Any] = {field: "" for field in PERSONAL_INFO_FIELDS}
-    data["links"] = []
-    if not personal:
-        data["links"] = _normalize_links(payload.get("links"))
-        return data
-
-    data["full_name"] = _pick_first(personal, ["full_name", "name", "fullname"])
-    data["email"] = _pick_first(personal, ["email", "mail"])
-    data["phone"] = _pick_first(personal, ["phone", "telephone", "tel"])
-    data["linkedin_url"] = _pick_first(personal, ["linkedin_url", "linkedin", "url", "profile_url"])
-    data["location"] = _pick_first(personal, ["location", "city", "address", "city_country"])
-    data["links"] = _normalize_links(
-        personal.get("links") if isinstance(personal, dict) else payload.get("links")
-    )
-    if not data["links"]:
-        data["links"] = _normalize_links(payload.get("links"))
-    if not data["links"]:
-        fallback_links: List[Dict[str, str]] = []
-        github = _pick_first(personal, ["github_url", "github", "github_profile"])
-        portfolio = _pick_first(personal, ["portfolio_url", "portfolio", "website", "site_web"])
-        if github:
-            fallback_links.append({"label": "GitHub", "url": github})
-        if portfolio:
-            fallback_links.append({"label": "Portfolio", "url": portfolio})
-        data["links"] = _normalize_links(fallback_links)
-    return data
+    return _extract(payload)
 
 
 def _map_experiences(raw_items: List[Any], source: str) -> List[Dict[str, str]]:
-    items = []
-    for item in raw_items:
-        if isinstance(item, dict):
-            title = _pick_first(item, ["title", "position", "role", "job_title"])
-            company = _pick_first(item, ["company", "employer", "organization", "institution", "enterprise"])
-            location = _pick_first(item, ["location", "city", "place"])
-            description = _pick_first(item, ["description", "summary", "details", "responsibilities"])
-            if not description:
-                achievements = item.get("achievements") or item.get("accomplishments")
-                if isinstance(achievements, list):
-                    description = "\n".join(_clean_text(a) for a in achievements if _clean_text(a))
-                elif achievements:
-                    description = _clean_text(achievements)
+    """Compatibility wrapper around profile-domain experience mapping."""
+    from ..domain.profile.section_mappers import map_experiences as _map
 
-            start_date = _pick_first(item, ["start_date", "date_start", "begin_date", "from_date"])
-            end_date = _pick_first(item, ["end_date", "date_end", "finish_date", "to_date"])
-            if not start_date and not end_date:
-                # If a single date is provided for experience, treat it as the start date by default.
-                start_date, end_date = _split_date_range(
-                    _pick_first(item, ["dates", "date_range", "period"]),
-                    single_date_is_end=False,
-                )
-
-            if not any([title, company, description]):
-                continue
-
-            mapped = {
-                "title": title,
-                "company": company,
-                "start_date": start_date,
-                "end_date": end_date,
-                "location": location,
-                "description": description,
-            }
-            src_value = _clean_text(item.get("source") or source)
-            if src_value:
-                mapped["source"] = src_value
-            items.append(mapped)
-            continue
-
-        text = _clean_text(item)
-        if text:
-            mapped = {"title": text}
-            if source:
-                mapped["source"] = source
-            items.append(mapped)
-
-    return items
+    return _map(raw_items, source)
 
 
 def _map_education(raw_items: List[Any], source: str) -> List[Dict[str, str]]:
-    items = []
-    for item in raw_items:
-        if not isinstance(item, dict):
-            continue
-        degree = _pick_first(item, ["degree", "diploma", "qualification", "title"])
-        school = _pick_first(item, ["school", "institution", "university", "college"])
-        field_of_study = _pick_first(item, ["field_of_study", "major", "specialization", "domain"])
-        grade = _pick_first(item, ["grade", "gpa", "mention"])
-        start_date = _pick_first(item, ["start_date", "start_year", "date_start", "begin_date"])
-        end_date = _pick_first(item, ["end_date", "end_year", "date_end", "finish_date", "year"])
-        if not start_date and not end_date:
-            # Education entries often expose a single graduation year; treat it as the end date.
-            start_date, end_date = _split_date_range(
-                _pick_first(item, ["dates", "date_range", "period"]),
-                single_date_is_end=True,
-            )
+    """Compatibility wrapper around profile-domain education mapping."""
+    from ..domain.profile.section_mappers import map_education as _map
 
-        if not any([degree, school, field_of_study]):
-            continue
-
-        mapped = {
-            "school": school,
-            "degree": degree,
-            "field_of_study": field_of_study,
-            "start_date": start_date,
-            "end_date": end_date,
-            "grade": grade,
-        }
-        src_value = _clean_text(item.get("source") or source)
-        if src_value:
-            mapped["source"] = src_value
-        items.append(mapped)
-    return items
+    return _map(raw_items, source)
 
 
 def _map_skills(raw_skills: Any) -> List[Dict[str, str]]:
-    flattened: List[Any] = []
-    if isinstance(raw_skills, dict):
-        for value in raw_skills.values():
-            flattened.extend(_as_list(value))
-    else:
-        flattened = _as_list(raw_skills)
+    """Compatibility wrapper around profile-domain skills mapping."""
+    from ..domain.profile.skill_language_mappers import map_skills as _map
 
-    items: List[Dict[str, str]] = []
-    for entry in flattened:
-        if isinstance(entry, dict):
-            nested = entry.get("items") or entry.get("skills") or entry.get("skills_list")
-            if nested:
-                flattened.extend(_as_list(nested))
-                continue
-            name = _pick_first(entry, ["name", "skill"])
-            level = _pick_first(entry, ["level", "proficiency", "skill_level"])
-        else:
-            name = _clean_text(entry)
-            level = ""
-
-        if not name:
-            continue
-        items.append({"name": name, "level": level})
-
-    return _dedup_items(items, key="name")
+    return _map(raw_skills)
 
 
 def _map_soft_skills(raw_soft_skills: Any) -> List[Dict[str, str]]:
-    flattened: List[Any] = []
-    if isinstance(raw_soft_skills, dict):
-        for value in raw_soft_skills.values():
-            flattened.extend(_as_list(value))
-    else:
-        flattened = _as_list(raw_soft_skills)
+    """Compatibility wrapper around profile-domain soft-skills mapping."""
+    from ..domain.profile.skill_language_mappers import map_soft_skills as _map
 
-    items: List[Dict[str, str]] = []
-    for entry in flattened:
-        if isinstance(entry, dict):
-            nested = entry.get("items") or entry.get("skills") or entry.get("skills_list")
-            if nested:
-                flattened.extend(_as_list(nested))
-                continue
-            name = _pick_first(entry, ["name", "skill"])
-            level = _pick_first(entry, ["level", "proficiency", "skill_level"])
-        else:
-            name = _clean_text(entry)
-            level = ""
-
-        if not name:
-            continue
-        items.append({"name": name, "level": level})
-
-    return _dedup_items(items, key="name")
+    return _map(raw_soft_skills)
 
 
 def _map_languages(raw_languages: Any) -> List[Dict[str, str]]:
-    items: List[Dict[str, str]] = []
-    for entry in _as_list(raw_languages):
-        if isinstance(entry, dict):
-            language = _pick_first(entry, ["language", "name"])
-            proficiency = _pick_first(entry, ["proficiency", "level"])
-            certification = _pick_first(
-                entry,
-                ["certification", "certificate", "organization", "issuer"],
-            )
-        else:
-            language, proficiency = _parse_language_string(_clean_text(entry))
-            certification = ""
+    """Compatibility wrapper around profile-domain language mapping."""
+    from ..domain.profile.skill_language_mappers import map_languages as _map
 
-        if not language:
-            continue
-        items.append(
-            {
-                "language": language,
-                "proficiency": proficiency,
-                "certification": certification,
-            }
-        )
-
-    return _dedup_items(items, key="language")
+    return _map(raw_languages)
 
 
 def _parse_language_string(text: str) -> Tuple[str, str]:
-    if not text:
-        return "", ""
-    level = ""
-    level_match = CEFR_RE.search(text)
-    if level_match:
-        level = level_match.group(1).upper()
-        text = CEFR_RE.sub("", text)
-    elif NATIVE_RE.search(text):
-        level = "Natif"
-        text = NATIVE_RE.sub("", text)
-    language = text.strip(" -:;|")
-    return language, level
+    """Compatibility wrapper around profile-domain language string parsing."""
+    from ..domain.profile.skill_language_mappers import parse_language_string as _parse
+
+    return _parse(text)
 
 
 def _map_projects(raw_items: List[Any]) -> List[Dict[str, str]]:
-    items: List[Dict[str, str]] = []
-    for item in raw_items:
-        if not isinstance(item, dict):
-            continue
-        name = _pick_first(item, ["name", "title"])
-        url = _pick_first(item, ["url", "link"])
-        technologies = item.get("technologies") or item.get("tech_stack") or item.get("skills")
-        if isinstance(technologies, list):
-            technologies = ", ".join(_clean_text(t) for t in technologies if _clean_text(t))
-        description = _pick_first(item, ["description", "summary", "details"])
-        if not any([name, description, url]):
-            continue
-        items.append(
-            {
-                "name": name,
-                "url": _clean_text(url),
-                "technologies": _clean_text(technologies),
-                "description": description,
-            }
-        )
-    return items
+    """Compatibility wrapper around profile-domain project mapping."""
+    from ..domain.profile.artifact_mappers import map_projects as _map
+
+    return _map(raw_items)
 
 
 def _map_certifications(raw_items: List[Any]) -> List[Dict[str, str]]:
-    items: List[Dict[str, str]] = []
-    for item in raw_items:
-        if not isinstance(item, dict):
-            text = _clean_text(item)
-            if text:
-                items.append({"name": text})
-            continue
-        name = _pick_first(item, ["name", "title"])
-        organization = _pick_first(item, ["organization", "issuer", "company"])
-        date = _pick_first(item, ["date", "issued_date", "year"])
-        url = _pick_first(item, ["url", "link"])
-        if not name:
-            continue
-        items.append(
-            {
-                "name": name,
-                "organization": organization,
-                "date": date,
-                "url": url,
-            }
-        )
-    return items
+    """Compatibility wrapper around profile-domain certification mapping."""
+    from ..domain.profile.artifact_mappers import map_certifications as _map
+
+    return _map(raw_items)
 
 
 def _map_publications(raw_items: List[Any]) -> List[Dict[str, str]]:
-    items: List[Dict[str, str]] = []
-    for item in raw_items:
-        if not isinstance(item, dict):
-            text = _clean_text(item)
-            if text:
-                items.append({"title": text})
-            continue
-        title = _pick_first(item, ["title", "name"])
-        authors = _pick_first(item, ["authors", "author"])
-        journal = _pick_first(item, ["journal", "conference", "publisher"])
-        date = _pick_first(item, ["date", "year"])
-        url = _pick_first(item, ["url", "link"])
-        if not title:
-            continue
-        items.append(
-            {
-                "title": title,
-                "authors": authors,
-                "journal": journal,
-                "date": date,
-                "url": url,
-            }
-        )
-    return items
+    """Compatibility wrapper around profile-domain publication mapping."""
+    from ..domain.profile.artifact_mappers import map_publications as _map
+
+    return _map(raw_items)
 
 
 def _map_volunteering(raw_items: List[Any]) -> List[Dict[str, str]]:
-    items: List[Dict[str, str]] = []
-    for item in raw_items:
-        if not isinstance(item, dict):
-            continue
-        organization = _pick_first(item, ["organization", "company", "institution"])
-        role = _pick_first(item, ["role", "title", "position"])
-        period = _pick_first(item, ["period", "dates", "date_range"])
-        if not period:
-            start_date = _pick_first(item, ["start_date", "date_start"])
-            end_date = _pick_first(item, ["end_date", "date_end"])
-            if start_date or end_date:
-                period = " - ".join(p for p in [start_date, end_date] if p)
-        description = _pick_first(item, ["description", "summary", "details"])
-        if not any([organization, role, description]):
-            continue
-        items.append(
-            {
-                "organization": organization,
-                "role": role,
-                "period": period,
-                "description": description,
-            }
-        )
-    return items
+    """Compatibility wrapper around profile-domain volunteering mapping."""
+    from ..domain.profile.artifact_mappers import map_volunteering as _map
+
+    return _map(raw_items)
 
 
 def _map_awards(raw_items: List[Any]) -> List[Dict[str, str]]:
-    items: List[Dict[str, str]] = []
-    for item in raw_items:
-        if not isinstance(item, dict):
-            text = _clean_text(item)
-            if text:
-                items.append({"name": text})
-            continue
-        name = _pick_first(item, ["name", "title"])
-        organization = _pick_first(item, ["organization", "issuer", "company"])
-        date = _pick_first(item, ["date", "year"])
-        description = _pick_first(item, ["description", "summary"])
-        if not name:
-            continue
-        items.append(
-            {
-                "name": name,
-                "organization": organization,
-                "date": date,
-                "description": description,
-            }
-        )
-    return items
+    """Compatibility wrapper around profile-domain awards mapping."""
+    from ..domain.profile.artifact_mappers import map_awards as _map
+
+    return _map(raw_items)
 
 
 def _map_references(raw_items: List[Any]) -> List[Dict[str, str]]:
-    items: List[Dict[str, str]] = []
-    for item in raw_items:
-        if not isinstance(item, dict):
-            continue
-        name = _pick_first(item, ["name", "author"])
-        title = _pick_first(item, ["title", "role", "relationship"])
-        company = _pick_first(item, ["company", "organization", "employer"])
-        email = _pick_first(item, ["email", "mail"])
-        phone = _pick_first(item, ["phone", "telephone", "tel"])
-        if not name and not title and not company:
-            continue
-        items.append(
-            {
-                "name": name,
-                "title": title,
-                "company": company,
-                "email": email,
-                "phone": phone,
-            }
-        )
-    return items
+    """Compatibility wrapper around profile-domain references mapping."""
+    from ..domain.profile.artifact_mappers import map_references as _map
+
+    return _map(raw_items)
 
 
 def _normalize_interests(raw_items: Any) -> List[str]:
-    interests: List[str] = []
-    for item in _as_list(raw_items):
-        if isinstance(item, dict):
-            label = _pick_first(item, ["name", "label"])
-            if label:
-                interests.append(label)
-            continue
-        text = _clean_text(item)
-        if text:
-            interests.extend(part.strip() for part in text.split(",") if part.strip())
-    return _dedup_list(interests)
+    """Compatibility wrapper around profile-domain interest normalization."""
+    from ..domain.profile.artifact_mappers import normalize_interests as _normalize
+
+    return _normalize(raw_items)
 
 
 def _normalize_link_url(value: Any) -> str:
-    url = _clean_text(value)
-    if not url:
-        return ""
-    lowered = url.lower()
-    if lowered.startswith(("http://", "https://")):
-        return url
-    if lowered.startswith("www."):
-        return f"https://{url}"
-    if re.match(r"^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}(?:[/?#].*)?$", lowered):
-        return f"https://{url}"
-    return url
+    """Compatibility wrapper around profile-domain link URL normalization."""
+    from ..domain.profile.personal_info import normalize_link_url as _normalize
+
+    return _normalize(value)
 
 
 def _normalize_links(raw_links: Any) -> List[Dict[str, str]]:
-    links: List[Dict[str, str]] = []
-    seen = set()
-    for entry in _as_list(raw_links):
-        label = ""
-        url = ""
-        if isinstance(entry, dict):
-            label = _clean_text(
-                entry.get("label") or entry.get("platform") or entry.get("name")
-            )
-            url = _normalize_link_url(entry.get("url") or entry.get("link"))
-        else:
-            url = _normalize_link_url(entry)
+    """Compatibility wrapper around profile-domain link normalization."""
+    from ..domain.profile.personal_info import normalize_links as _normalize
 
-        if not url:
-            continue
-        key = (label.lower(), url.lower())
-        if key in seen:
-            continue
-        seen.add(key)
-        item = {"url": url}
-        if label:
-            item["label"] = label
-        links.append(item)
-    return links
+    return _normalize(raw_links)
 
 
 def _merge_personal_links(
     base_links: List[Dict[str, str]],
     overlay_links: List[Dict[str, str]],
 ) -> List[Dict[str, str]]:
-    if overlay_links:
-        return _normalize_links(overlay_links + (base_links or []))
-    return _normalize_links(base_links)
+    """Compatibility wrapper around profile-domain link merging."""
+    from ..domain.profile.personal_info import merge_personal_links as _merge
+
+    return _merge(base_links, overlay_links)
 
 
 def _dedup_items(items: List[Dict[str, str]], key: str) -> List[Dict[str, str]]:

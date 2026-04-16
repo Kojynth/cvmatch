@@ -6,6 +6,21 @@
 - Canonical extraction path is moving toward `cvextractor.pipeline`.
 - Generation and post-processing still depend on large runtime modules under
   `app/workers` and `app/utils`.
+- A standalone generic CV export path also exists from the profile editor:
+  - `app/views/generic_cv_export_dialog.py`
+  - `app/workers/generic_cv_export_worker.py`
+  - It now applies explicit model selection plus the same minimum deterministic
+    postprocess/quality gate as the main CV generation path.
+- `app/domain/profile` now owns deterministic profile-domain helpers for:
+  - date support metadata,
+  - personal-info and link normalization,
+  - `experiences` / `education` mapping,
+  - `skills` / `soft_skills` / `languages` mapping,
+  - `projects`, `certifications`, `publications`, `volunteering`, `awards`,
+    `references`, and `interests` mapping.
+- `app/utils/profile_json.py` is still the canonical compatibility facade and
+  round-trip contract entrypoint, but much of its pure mapping logic has now
+  been extracted into `app/domain/profile`.
 - `mass_apply` is a real bounded context. Source recovery is now partially
   restored for:
   - `app/utils/mass_apply/*` core pure helpers,

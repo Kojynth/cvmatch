@@ -533,6 +533,31 @@ def _resolve_offer_language_code(
     return "fr"
 
 
+def _clean_target_job_title(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        from ..utils.cv_quality_audit import clean_target_job_title
+
+        return clean_target_job_title(text)
+    except Exception:
+        return text
+
+
+def _normalize_cv_evidence_mode(value: Any) -> str:
+    mode = str(value or "").strip().lower().replace("-", "_")
+    if mode in {"strict", "strict_factual"}:
+        return "strict_factual"
+    if mode in {"inferred", "inferred_impact", "adaptive"}:
+        return "inferred_impact"
+    return "inferred_impact"
+
+
+def _should_allow_offer_enrichment(evidence_mode: Any) -> bool:
+    return _normalize_cv_evidence_mode(evidence_mode) != "strict_factual"
+
+
 def _normalize_keyword_for_match(text: str) -> str:
     if not text:
         return ""
@@ -2172,7 +2197,11 @@ class CVGenerationWorker(QThread):
             job_title = self.offer_data.get("job_title") or ""
             company = self.offer_data.get("company") or ""
         if not cv_json.get("target_job_title") and job_title:
-            cv_json["target_job_title"] = job_title
+            cv_json["target_job_title"] = _clean_target_job_title(job_title)
+        elif cv_json.get("target_job_title"):
+            cv_json["target_job_title"] = _clean_target_job_title(
+                cv_json.get("target_job_title")
+            )
         if not cv_json.get("target_company") and company:
             cv_json["target_company"] = company
 
@@ -2599,6 +2628,10 @@ class CVGenerationWorker(QThread):
                     )
                     or ""
                 ).strip()
+        if str(base.get("target_job_title") or "").strip():
+            base["target_job_title"] = _clean_target_job_title(
+                base.get("target_job_title")
+            )
         if not str(base.get("target_company") or "").strip():
             if isinstance(self.offer_data, dict):
                 base["target_company"] = str(
@@ -2689,6 +2722,32 @@ class CVGenerationWorker(QThread):
         return _resolve_offer_language_code(
             self.offer_data,
             getattr(self.profile_data, "preferred_language", None),
+        )
+
+    def _resolve_cv_evidence_mode(self) -> str:
+        custom = getattr(self.qwen_manager, "custom_parameters", None) or {}
+        env_value = os.getenv("CVMATCH_CV_EVIDENCE_MODE")
+        raw_value = env_value if env_value is not None else custom.get("cv_evidence_mode")
+        return _normalize_cv_evidence_mode(raw_value)
+
+    def _build_cv_evidence_policy_block(self) -> str:
+        mode = self._resolve_cv_evidence_mode()
+        if mode == "strict_factual":
+            guidance = (
+                "- Stay strictly factual: use only facts that are explicit in PROFILE_JSON.\n"
+                "- Do not infer new outcomes, responsibilities, metrics, technologies, project names, or certifications.\n"
+                "- Never create new experience, project, education, or certification records."
+            )
+        else:
+            guidance = (
+                "- Stay grounded in PROFILE_JSON facts and chronology.\n"
+                "- You may infer a qualitative impact or implied operational outcome when it is directly supported by the described tasks, context, and duration.\n"
+                "- Never invent exact metrics, new technologies, employers, project names, certifications, or responsibilities absent from PROFILE_JSON.\n"
+                "- Never create new experience, project, education, or certification records."
+            )
+        return (
+            "\n\nEVIDENCE_POLICY (highest-priority factual boundary):\n"
+            f"{guidance}"
         )
 
     # Stage model routing
@@ -2897,6 +2956,9 @@ class CVGenerationWorker(QThread):
                     )
                     profile_json = {}
             personal_info = self._build_profile_payload().get("personal_info", {})
+            allow_offer_enrichment = _should_allow_offer_enrichment(
+                self._resolve_cv_evidence_mode()
+            )
 
             def safe_fallback_generator(
                 pj: Dict[str, Any], reason: str
@@ -2929,15 +2991,27 @@ class CVGenerationWorker(QThread):
                 profile_phone=personal_info.get("phone", ""),
                 profile_linkedin=personal_info.get("linkedin_url", ""),
                 language_code=self._resolve_language_code(),
-                keyword_alignment_fn=lambda candidate, review: self._apply_keyword_alignment(
-                    candidate,
-                    critic_json=review,
-                    profile_json=profile_json,
+                keyword_alignment_fn=(
+                    (
+                        lambda candidate, review: self._apply_keyword_alignment(
+                            candidate,
+                            critic_json=review,
+                            profile_json=profile_json,
+                        )
+                    )
+                    if allow_offer_enrichment
+                    else None
                 ),
-                offer_adaptation_fn=lambda candidate, review: self._apply_offer_adaptation(
-                    candidate,
-                    critic_json=review,
-                    profile_json=profile_json,
+                offer_adaptation_fn=(
+                    (
+                        lambda candidate, review: self._apply_offer_adaptation(
+                            candidate,
+                            critic_json=review,
+                            profile_json=profile_json,
+                        )
+                    )
+                    if allow_offer_enrichment
+                    else None
                 ),
             )
         except Exception as exc:
@@ -2952,6 +3026,7 @@ class CVGenerationWorker(QThread):
             from ..utils.alignment_scoring import build_alignment_audit
             from ..utils.alignment_retry_controller import get_alignment_thresholds
             from ..utils.cv_language_audit import audit_cv_language_consistency
+            from ..utils.cv_quality_audit import build_cv_quality_audit
             from ..utils.keyword_alignment import (
                 normalize_keyword_for_match,
                 normalized_term_in_probe as normalized_term_present,
@@ -3071,6 +3146,20 @@ class CVGenerationWorker(QThread):
                     max(0.0, float(audit.get("overall_score") or 0.0) - penalty),
                     2,
                 )
+                audit["sufficient"] = False
+            quality_audit = build_cv_quality_audit(
+                cv_json if isinstance(cv_json, dict) else {},
+                target_language=raw_target_language,
+            )
+            audit["quality_audit"] = quality_audit
+            audit["quality_score"] = float(quality_audit.get("score") or 0.0)
+            if not quality_audit.get("sufficient", True):
+                penalty = float(quality_audit.get("penalty") or 0.0)
+                if penalty > 0:
+                    audit["overall_score"] = round(
+                        max(0.0, float(audit.get("overall_score") or 0.0) - penalty),
+                        2,
+                    )
                 audit["sufficient"] = False
             section_exact_scores: Dict[str, float] = {}
             if required_exact_terms:
@@ -3252,7 +3341,9 @@ class CVGenerationWorker(QThread):
                 contact[field] = clean_text(contact.get(field))
 
         cv_json["summary"] = clean_text(cv_json.get("summary") or "")
-        cv_json["target_job_title"] = clean_text(cv_json.get("target_job_title") or "")
+        cv_json["target_job_title"] = _clean_target_job_title(
+            clean_text(cv_json.get("target_job_title") or "")
+        )
         cv_json["target_company"] = clean_text(cv_json.get("target_company") or "")
 
         cleaned_skills = []
@@ -3643,6 +3734,11 @@ class CVGenerationWorker(QThread):
     ) -> None:
         if not isinstance(cv_json, dict):
             return
+        if not _should_allow_offer_enrichment(self._resolve_cv_evidence_mode()):
+            logger.info(
+                "Keyword alignment skipped: strict factual evidence mode active."
+            )
+            return
         try:
             from ..utils.cv_offer_term_routing import (
                 route_term_to_section,
@@ -3932,6 +4028,11 @@ class CVGenerationWorker(QThread):
         profile_json: Optional[Dict[str, Any]] = None,
     ) -> None:
         if not isinstance(cv_json, dict):
+            return
+        if not _should_allow_offer_enrichment(self._resolve_cv_evidence_mode()):
+            logger.info(
+                "Offer adaptation skipped: strict factual evidence mode active."
+            )
             return
         try:
             from ..utils.cv_postprocessing import enforce_cv_offer_adaptation
@@ -4506,6 +4607,7 @@ class CVGenerationWorker(QThread):
                 stage,
                 len(user_instruction),
             )
+        evidence_policy_block = self._build_cv_evidence_policy_block()
         return build_cv_json_prompt_messages(
             language_code=language_code,
             job_title=job_title,
@@ -4520,6 +4622,7 @@ class CVGenerationWorker(QThread):
             section_guidance_block=section_guidance_block,
             previous_cv_block=previous_cv_block,
             user_instruction_block=user_instruction_block,
+            evidence_policy_block=evidence_policy_block,
             stage=stage,
         )
 
@@ -4893,7 +4996,10 @@ OUTPUT RULES:
                         stabilize_exc,
                     )
                 logger.warning(
-                    "Strict CVJSON final remained sparse during alignment retry; switching to creative non-strict regeneration."
+                    "Strict CVJSON final remained sparse during alignment retry; switching to %s non-strict regeneration.",
+                    "creative"
+                    if _should_allow_offer_enrichment(self._resolve_cv_evidence_mode())
+                    else "constrained",
                 )
                 raise JsonStrictError(
                     "strict final sparse payload during alignment retry"
@@ -4918,7 +5024,12 @@ OUTPUT RULES:
                     progress_callback,
                     generation_overrides=self._non_strict_json_generation_overrides(
                         "generator",
-                        creative_retry=alignment_retry_active,
+                        creative_retry=(
+                            alignment_retry_active
+                            and _should_allow_offer_enrichment(
+                                self._resolve_cv_evidence_mode()
+                            )
+                        ),
                     ),
                     role="generator",
                 )

@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget, QScrollArea, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QLabel, QLineEdit, QTextEdit, QPushButton, QComboBox, QDateEdit, QSpinBox,
     QGroupBox, QFrame, QMessageBox, QDialog, QCheckBox, QSplitter,
-    QApplication, QButtonGroup, QRadioButton, QFileDialog
+    QApplication, QButtonGroup, QRadioButton, QFileDialog, QMenu
 )
 from PySide6.QtCore import Qt, Signal, QDate
 from PySide6.QtGui import QFont, QIcon, QPalette, QPixmap, QPainter, QPainterPath, QBrush, QColor
@@ -1956,9 +1956,9 @@ class ProfileDetailsEditor(QScrollArea):
         apply_button_style(self.import_json_button, "info")
         self.import_json_button.clicked.connect(self.import_profile_json)
 
-        self.export_json_button = QPushButton("Exporter JSON")
+        self.export_json_button = QPushButton("Exporter \u25be")
         apply_button_style(self.export_json_button, "info")
-        self.export_json_button.clicked.connect(self.export_profile_json)
+        self.export_json_button.clicked.connect(self._show_export_menu)
 
         
         # Bouton annuler (revenir au cache)
@@ -2325,6 +2325,26 @@ class ProfileDetailsEditor(QScrollArea):
         finally:
             # Désactiver le flag même en cas d'erreur
             self._refreshing = False
+
+    def _show_export_menu(self) -> None:
+        """Show the export choice menu anchored below the Exporter button."""
+        menu = QMenu(self)
+        menu.addAction("Exporter le profil en JSON", self.export_profile_json)
+        menu.addAction("Générer un CV PDF générique...", self._open_generic_cv_export)
+        menu.exec(
+            self.export_json_button.mapToGlobal(
+                self.export_json_button.rect().bottomLeft()
+            )
+        )
+
+    def _open_generic_cv_export(self) -> None:
+        """Open the generic CV PDF generation dialog."""
+        from ..utils.profile_json import build_profile_json_from_extracted_profile
+        from .generic_cv_export_dialog import GenericCVExportDialog
+
+        profile_json = build_profile_json_from_extracted_profile(self.profile)
+        dlg = GenericCVExportDialog(profile_json, parent=self)
+        dlg.exec()
 
     def export_profile_json(self) -> None:
         from ..utils.profile_json import build_profile_json_from_extracted_profile

@@ -33,6 +33,11 @@ and must stay usable on heterogeneous Windows/Linux machines.
 ## Invariants
 - Never invent new candidate facts. Do not create new experiences,
   certifications, employers, dates, or achievements.
+- Controlled inferred enrichment is allowed only when it stays implicit and
+  coherent with existing profile evidence, role context, and reliable dates or
+  durations. This may strengthen phrasing or surface qualitative impact, but it
+  must not introduce new employers, roles, projects, technologies, degrees,
+  certifications, or exact unsupported metrics.
 - Keep deterministic minimum-schema recovery active for invalid or empty LLM
   outputs.
 - Preserve round-trip integrity across:
@@ -72,6 +77,35 @@ and must stay usable on heterogeneous Windows/Linux machines.
 - Mass apply: `python -m pytest tests/mass_apply -q`
 - Always compile touched Python files and run the smallest relevant functional
   suite before concluding.
+
+## CV Generation Quality Requirements
+- Apply CV quality constraints regardless of the original job-offer language.
+  Language-specific heuristics may vary, but structural and adaptation rules
+  remain mandatory for French, English, Japanese, Chinese, and other supported
+  output languages.
+- Keep the final CV in one consistent output language unless the user
+  explicitly requests bilingual content.
+- Keep ATS-compatible structure: simple sections, parseable headings, no noisy
+  pseudo-bullets, and no decorative formatting assumptions in generated text.
+- Keep experiences and projects in reverse chronological order and use one
+  consistent date format across the full CV.
+- Include an explicit duration for each role or project when reliable dates
+  allow it.
+- Keep each role to 2-4 concise bullet points whenever the source profile
+  supports bullet rendering; prefer short action-led bullets over dense
+  narrative paragraphs.
+- Use strong action verbs, avoid first-person pronouns, keep punctuation and
+  tense consistent, and prefer `action + what + result/impact` phrasing when
+  facts support it.
+- Use target-offer keywords and company context pertinently: route them to the
+  right sections, prefer grounded evidence over lexical stuffing, and do not
+  pass a CV as high quality if the match is only terminological.
+- When metrics are explicitly available, keep them. When they are only
+  implicit, qualitative impact may be inferred, but exact numbers must not be
+  fabricated.
+- If the generated CV is lexically aligned but fails quality checks
+  (grammar/clarity, dates, ATS readability, bullet density, tense, pronouns, or
+  evidence quality), treat it as insufficient and retry or reject it.
 
 ## Change Propagation Rules
 - Schema or DB changes must update:
