@@ -91,7 +91,6 @@ CV/*.odt
 # Generated documents (may contain personal data)
 exports/**
 output/**
-!exports/.gitkeep
 
 # Job applications and cover letters (contain personalized CVs)
 job_applications/**
@@ -141,7 +140,6 @@ archive/**
 
 # Exports utilisateur (CVs, profils, lettres de motivation)
 exports/**
-!exports/.gitkeep
 
 # =============================================================================
 # 5. 🤖 MODEL & ML CACHES (large auto-downloaded files)
