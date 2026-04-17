@@ -21,6 +21,7 @@ Usage::
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import os
 import re
@@ -189,7 +190,7 @@ class GenericCVExportWorker(QThread):
             except Exception:
                 pass
             sanitize_cv_json_output(fallback, language_code=self._language_code)
-            rich_fallback = dict(fallback)
+            rich_fallback = deepcopy(fallback)
             fallback = self._repair_language_if_needed(
                 fallback,
                 stage="generic_quality_fallback",
@@ -513,7 +514,7 @@ class GenericCVExportWorker(QThread):
         *,
         stage: str,
     ) -> Dict[str, Any]:
-        payload = dict(cv_json or {}) if isinstance(cv_json, dict) else {}
+        payload = deepcopy(cv_json) if isinstance(cv_json, dict) else {}
         experiences = payload.get("experience")
         if not isinstance(experiences, list) or not experiences:
             return payload
