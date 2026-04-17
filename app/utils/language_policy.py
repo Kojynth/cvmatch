@@ -190,6 +190,137 @@ def is_mixed_or_mismatched_language(
     return False
 
 
+def text_matches_target_language(
+    text: Optional[str],
+    target_language: str,
+    *,
+    min_tokens: int = 3,
+) -> bool:
+    """Return True when visible text is compatible with the target language.
+
+    Short neutral labels such as technical skill names are treated as compatible,
+    while clearly mismatched or mixed narrative fragments are rejected.
+    """
+    raw = str(text or "").strip()
+    if not raw:
+        return True
+
+    target = normalize_language_code(target_language)
+    fr_score, en_score, token_count = language_token_scores(raw)
+    if token_count <= 0:
+        return True
+
+    lowered_tokens = [token.casefold() for token in re.findall(r"[a-zA-Z+#]+", raw)]
+    technical_singletons = {
+        "sql",
+        "python",
+        "java",
+        "c",
+        "c++",
+        "c#",
+        "api",
+        "qa",
+        "ui",
+        "ux",
+        "aws",
+        "azure",
+        "gcp",
+        "etl",
+        "elt",
+        "jira",
+        "scrum",
+        "gherkin",
+        "tableau",
+        "powerbi",
+        "looker",
+        "excel",
+        "github",
+    }
+    if len(lowered_tokens) == 1 and lowered_tokens[0] in technical_singletons:
+        return True
+    strong_fr_markers = {
+        "avec",
+        "pour",
+        "dans",
+        "sur",
+        "mes",
+        "mission",
+        "missions",
+        "competences",
+        "entreprise",
+        "equipe",
+        "formation",
+        "diplome",
+        "alternance",
+        "ingenieur",
+        "qualite",
+        "suivre",
+        "rediger",
+        "tests",
+        "anomalies",
+        "notamment",
+        "consiste",
+        "consistaient",
+        "couvrent",
+        "plusieurs",
+        "fichiers",
+        "outils",
+        "bilans",
+        "recettes",
+    }
+    strong_en_markers = {
+        "with",
+        "role",
+        "responsibilities",
+        "skills",
+        "experience",
+        "company",
+        "team",
+        "candidate",
+        "development",
+        "engineering",
+        "quality",
+        "testing",
+        "delivered",
+        "supported",
+        "built",
+        "led",
+        "managed",
+        "designed",
+        "implemented",
+        "business",
+        "developer",
+        "manager",
+        "engineer",
+    }
+    fr_hits = sum(1 for token in lowered_tokens if token in strong_fr_markers)
+    en_hits = sum(1 for token in lowered_tokens if token in strong_en_markers)
+    has_non_ascii = any(ord(ch) > 127 for ch in raw)
+
+    if target == "en":
+        if fr_hits > 0 or (has_non_ascii and token_count >= 2):
+            return False
+        if en_hits > 0:
+            return True
+        detected = detect_language_from_text_default(raw)
+        if detected == "en":
+            return True
+        if detected == "fr" and token_count >= min_tokens:
+            return False
+        return True
+
+    if en_hits > 0 and fr_hits == 0:
+        return False
+    if fr_hits > 0 or has_non_ascii:
+        return True
+    detected = detect_language_from_text_default(raw)
+    if detected == "fr":
+        return True
+    if detected == "en" and token_count >= min_tokens:
+        return False
+    return True
+
+
 def resolve_offer_language(
     offer_data: Optional[Dict[str, Any]],
     *,
