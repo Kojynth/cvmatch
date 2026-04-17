@@ -3,8 +3,9 @@ Generic CV Export Dialog
 ========================
 
 Dialog that lets the user pick an LLM model and a CV template, then
-generates a standalone professional CV PDF from the current profile
-(no specific job offer).
+generates a standalone professional CV from the current profile
+(no specific job offer), opens the standard preview, and lets the user
+export from there.
 
 Usage::
 
@@ -14,11 +15,9 @@ Usage::
 
 from __future__ import annotations
 
-from datetime import date
-from pathlib import Path
 from typing import Any, Dict
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -40,14 +39,41 @@ except ImportError:
 
     logger = logging.getLogger(__name__)
 
-from app.services.dialogs import save_file_dialog, show_error, show_info
+from app.services.dialogs import show_error
 from app.widgets.style_manager import apply_button_style
 
 
+def build_generic_cv_preview_data(
+    cv_json: Dict[str, Any],
+    *,
+    language_code: str,
+    template: str,
+) -> Dict[str, Any]:
+    """Map generic CVJSON onto the standard preview/export payload."""
+    from app.utils.cv_json_renderer import cv_json_to_cv_data, cv_json_to_markdown
+
+    selected_language = str(language_code or "").strip() or "fr"
+    selected_template = str(template or "").strip() or "modern"
+    payload = dict(cv_json) if isinstance(cv_json, dict) else {}
+
+    preview_data = cv_json_to_cv_data(payload, language=selected_language)
+    preview_data["raw_content"] = cv_json_to_markdown(
+        payload,
+        language=selected_language,
+    )
+    preview_data["cv_json_final"] = payload
+    preview_data["template"] = selected_template
+    preview_data["template_used"] = selected_template
+    preview_data["language"] = selected_language
+    preview_data["generation_mode"] = "generic"
+    return preview_data
+
+
 class GenericCVExportDialog(QDialog):
-    """Modal dialog for generating a generic CV PDF via LLM."""
+    """Modal dialog for generating a generic CV and opening the preview."""
 
     _TEMPLATES = ["modern", "tech", "classic", "creative", "minimal"]
+    _OPEN_PREVIEW_WINDOWS: list[Any] = []
 
     def __init__(
         self,
@@ -58,16 +84,18 @@ class GenericCVExportDialog(QDialog):
         self._profile_json = profile_json
         self._worker = None
         self._cv_json: Dict[str, Any] = {}
+        self._preview_cv_data: Dict[str, Any] = {}
         self._cancelling = False
 
         # Build language options from the profile (dynamic) with FR/EN fallback
         try:
             from app.utils.multilang_cv_support import extract_profile_language_options
+
             self._language_options = extract_profile_language_options(profile_json)
         except Exception:
             self._language_options = [("fr", "Français"), ("en", "English")]
 
-        self.setWindowTitle("Générer un CV PDF générique")
+        self.setWindowTitle("Générer un CV générique")
         self.setWindowModality(Qt.ApplicationModal)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setMinimumWidth(480)
@@ -85,13 +113,12 @@ class GenericCVExportDialog(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(14)
 
-        # --- Title ---
-        title = QLabel("Générer un CV PDF générique")
+        title = QLabel("Générer un CV générique")
         title.setStyleSheet("font-size: 15px; font-weight: bold; color: #e0e0e0;")
         layout.addWidget(title)
 
         subtitle = QLabel(
-            "Le LLM formatera votre profil en CV professionnel sans adaptation à une offre spécifique."
+            "Le LLM formatera votre profil en CV professionnel sans adaptation à une offre spécifique, puis ouvrira la prévisualisation avant l'export PDF."
         )
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("font-size: 12px; color: #999; margin-bottom: 4px;")
@@ -99,7 +126,6 @@ class GenericCVExportDialog(QDialog):
 
         layout.addWidget(self._make_separator())
 
-        # --- LLM model selector ---
         layout.addWidget(QLabel("Modèle IA :"))
         from app.widgets.model_selector import CompactModelSelector
 
@@ -108,7 +134,6 @@ class GenericCVExportDialog(QDialog):
 
         layout.addWidget(self._make_separator())
 
-        # --- Template selector ---
         template_row = QHBoxLayout()
         template_row.addWidget(QLabel("Template CV :"))
         self._template_combo = QComboBox()
@@ -118,7 +143,6 @@ class GenericCVExportDialog(QDialog):
         template_row.addStretch()
         layout.addLayout(template_row)
 
-        # --- Language selector (dynamic from profile, fallback FR/EN) ---
         lang_row = QHBoxLayout()
         lang_row.addWidget(QLabel("Langue du CV :"))
         self._lang_combo = QComboBox()
@@ -130,7 +154,6 @@ class GenericCVExportDialog(QDialog):
 
         layout.addWidget(self._make_separator())
 
-        # --- Progress area (hidden until generation starts) ---
         self._progress_bar = QProgressBar()
         self._progress_bar.setRange(0, 100)
         self._progress_bar.setValue(0)
@@ -142,13 +165,12 @@ class GenericCVExportDialog(QDialog):
         self._status_label.setVisible(False)
         layout.addWidget(self._status_label)
 
-        # --- Buttons ---
         btn_row = QHBoxLayout()
         self._cancel_btn = QPushButton("Annuler")
         apply_button_style(self._cancel_btn, "secondary")
         self._cancel_btn.clicked.connect(self._on_cancel)
 
-        self._generate_btn = QPushButton("Générer et exporter le PDF")
+        self._generate_btn = QPushButton("Générer et prévisualiser le CV")
         apply_button_style(self._generate_btn, "primary")
         self._generate_btn.clicked.connect(self._on_generate)
 
@@ -208,7 +230,7 @@ class GenericCVExportDialog(QDialog):
         self._status_label.setVisible(True)
         self._progress_bar.setValue(0)
 
-        language_code = self._lang_combo.currentData() or "fr"
+        language_code = self._selected_language_code()
         model_id = ""
         try:
             model_id = str(self._model_selector.get_current_model() or "").strip()
@@ -226,7 +248,6 @@ class GenericCVExportDialog(QDialog):
         self._worker.progress_updated.connect(self._on_progress)
         self._worker.generation_finished.connect(self._on_generation_finished)
         self._worker.error_occurred.connect(self._on_error)
-        # Safe shutdown: only close the dialog once the thread has actually stopped.
         self._worker.finished.connect(self._on_worker_finished)
         self._worker.start()
 
@@ -237,7 +258,6 @@ class GenericCVExportDialog(QDialog):
             self._status_label.setText("Annulation en cours...")
             self._worker.requestInterruption()
             self._worker.quit()
-            # _on_worker_finished will call reject() once the thread stops.
         else:
             self.reject()
 
@@ -251,12 +271,24 @@ class GenericCVExportDialog(QDialog):
         self._status_label.setText(msg)
 
     def _on_generation_finished(self, cv_json: dict) -> None:
-        self._cv_json = cv_json
+        self._cv_json = dict(cv_json) if isinstance(cv_json, dict) else {}
         template = self._template_combo.currentData() or "modern"
-        self._export_pdf(cv_json, template)
+
         self._generate_btn.setEnabled(True)
         self._progress_bar.setVisible(False)
         self._status_label.setVisible(False)
+
+        self._preview_cv_data = self._build_preview_payload(self._cv_json, template)
+        if self._queue_preview_window(self._preview_cv_data):
+            self.accept()
+            return
+
+        show_error(
+            "La fenêtre de prévisualisation n'a pas pu s'ouvrir.\n"
+            "Vérifiez que les dépendances (QtWebEngine) sont bien installées.",
+            title="Prévisualisation indisponible",
+            parent=self,
+        )
 
     def _on_error(self, msg: str) -> None:
         self._generate_btn.setEnabled(True)
@@ -265,40 +297,71 @@ class GenericCVExportDialog(QDialog):
         show_error(msg, title="Erreur de génération", parent=self)
 
     # ------------------------------------------------------------------
-    # PDF export
+    # Preview / export
     # ------------------------------------------------------------------
 
-    def _export_pdf(self, cv_json: dict, template: str) -> None:
-        from app.controllers.export_manager import ExportManager
+    @classmethod
+    def _forget_preview_window(cls, preview_window: Any) -> None:
+        cls._OPEN_PREVIEW_WINDOWS = [
+            window
+            for window in cls._OPEN_PREVIEW_WINDOWS
+            if window is not preview_window
+        ]
 
-        today = date.today().strftime("%Y%m%d")
-        default_name = f"CV_generique_{today}.pdf"
-        export_dir = Path.cwd() / "exports"
-        export_dir.mkdir(parents=True, exist_ok=True)
-
-        path = save_file_dialog(
-            "Enregistrer le CV PDF",
-            "PDF (*.pdf)",
-            default_name=default_name,
-            directory=str(export_dir),
-            parent=self,
+    @classmethod
+    def _track_preview_window(cls, preview_window: Any) -> None:
+        cls._OPEN_PREVIEW_WINDOWS.append(preview_window)
+        preview_window.destroyed.connect(
+            lambda *_args, window=preview_window, dialog_cls=cls: dialog_cls._forget_preview_window(
+                window
+            )
         )
-        if not path:
-            return
 
+    def _selected_language_code(self) -> str:
+        return str(self._lang_combo.currentData() or "fr").strip() or "fr"
+
+    def _build_preview_payload(
+        self,
+        cv_json: Dict[str, Any],
+        template: str,
+    ) -> Dict[str, Any]:
+        return build_generic_cv_preview_data(
+            cv_json,
+            language_code=self._selected_language_code(),
+            template=template,
+        )
+
+    def _queue_preview_window(self, preview_data: Dict[str, Any]) -> bool:
         try:
-            manager = ExportManager()
-            manager.export_cv(cv_json, template=template, output_format="pdf", output_path=path)
-            show_info(
-                f"CV exporté avec succès :\n{path}",
-                title="Export réussi",
-                parent=self,
-            )
-            self.accept()
+            from app.views.template_preview_window import TemplatePreviewWindow
         except Exception as exc:
-            logger.exception("GenericCVExportDialog: PDF export error: %s", exc)
-            show_error(
-                f"Impossible d'exporter le PDF.\n\n{exc}",
-                title="Erreur d'export",
-                parent=self,
+            logger.warning(
+                "GenericCVExportDialog: preview window unavailable, falling back to direct export: %s",
+                exc,
             )
+            return False
+
+        preview_payload = dict(preview_data or {})
+        preview_parent = self.parentWidget()
+
+        def _open_preview() -> None:
+            try:
+                preview_window = TemplatePreviewWindow(preview_payload, preview_parent)
+                self.__class__._track_preview_window(preview_window)
+                preview_window.show()
+                preview_window.raise_()
+                preview_window.activateWindow()
+            except Exception as exc:
+                logger.exception(
+                    "GenericCVExportDialog: failed to open preview window: %s",
+                    exc,
+                )
+                show_error(
+                    f"Impossible d'ouvrir la prévisualisation du CV.\n\n{exc}",
+                    title="Erreur de prévisualisation",
+                    parent=preview_parent or self,
+                )
+
+        QTimer.singleShot(0, _open_preview)
+        return True
+

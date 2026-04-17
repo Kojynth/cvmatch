@@ -151,6 +151,10 @@ class GenericCVExportWorker(QThread):
             language_code=self._language_code,
         )
         sanitize_cv_json_output(coerced, language_code=self._language_code)
+        # Ensure the top-level language field is always set so cv_json_to_cv_data
+        # and TemplatePreviewWindow can render the CV in the correct locale.
+        if not str(coerced.get("language") or "").strip():
+            coerced["language"] = self._language_code
         quality_audit = self._audit_quality(coerced)
         if not quality_audit.get("sufficient", True):
             logger.warning(
