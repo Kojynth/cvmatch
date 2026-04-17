@@ -1758,14 +1758,23 @@ class TemplatePreviewWindow(QMainWindow):
         else:
             self._export_cv_pdf()
 
+    def _default_export_name_part(self, key: str, fallback: str) -> str:
+        raw_value = str(self.cv_data.get(key) or "").strip()
+        if raw_value:
+            return raw_value.replace(" ", "_")
+
+        generation_mode = str(self.cv_data.get("generation_mode") or "").strip().lower()
+        language = str(self.cv_data.get("language") or "fr").strip().lower()
+        if generation_mode == "generic" and key == "job_title":
+            return "Generic_CV" if language.startswith("en") else "CV_Generique"
+        if generation_mode == "generic" and key == "company":
+            return "N_A"
+        return fallback
+
     def _export_cv_pdf(self) -> None:
         try:
-            job_title = self.cv_data.get("job_title", "Poste").replace(" ", "_")
-            company = (
-                self.cv_data.get("company", "Entreprise").replace(" ", "_")
-                if "company" in self.cv_data
-                else "Entreprise"
-            )
+            job_title = self._default_export_name_part("job_title", "Poste")
+            company = self._default_export_name_part("company", "Entreprise")
             date_str = datetime.now().strftime("%Y%m%d")
             base_name = f"CV_{job_title}_{company}_{date_str}"
             pdf_output_path = self.output_dir / f"{base_name}.pdf"
@@ -1819,12 +1828,8 @@ class TemplatePreviewWindow(QMainWindow):
 
     def _export_letter_pdf(self) -> None:
         try:
-            job_title = self.cv_data.get("job_title", "Poste").replace(" ", "_")
-            company = (
-                self.cv_data.get("company", "Entreprise").replace(" ", "_")
-                if "company" in self.cv_data
-                else "Entreprise"
-            )
+            job_title = self._default_export_name_part("job_title", "Poste")
+            company = self._default_export_name_part("company", "Entreprise")
             date_str = datetime.now().strftime("%Y%m%d")
             base_name = f"Lettre_{job_title}_{company}_{date_str}"
             pdf_output_path = self.output_dir / f"{base_name}.pdf"

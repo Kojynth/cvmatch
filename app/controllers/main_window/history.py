@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from app.models.database import get_session
 from app.models.job_application import ApplicationStatus, JobApplication
 
 from .base import Coordinator, SimpleCoordinator
 from .view_models import HistoryRowViewModel, JobApplicationSummary
+
+logger = logging.getLogger(__name__)
 
 
 class HistoryCoordinator(SimpleCoordinator, Coordinator):
@@ -179,6 +182,76 @@ class HistoryCoordinator(SimpleCoordinator, Coordinator):
             session.commit()
             session.refresh(application)
             session.expunge(application)
+
+        return self._to_summary(application)
+
+    def create_generic_application(
+        self,
+        *,
+        profile_id: int,
+        job_title: str,
+        company: str,
+        template_used: str,
+        model_version_used: str,
+        generated_cv_markdown: str,
+        generated_cv_html: Optional[str] = None,
+        profile_json: Optional[Dict[str, Any]] = None,
+        cv_json_final: Optional[Dict[str, Any]] = None,
+        offer_analysis: Optional[Dict[str, Any]] = None,
+        notes: Optional[str] = None,
+    ) -> Optional[JobApplicationSummary]:
+        """Persist a standalone generic CV generation in history."""
+
+        if not profile_id:
+            return None
+
+        with self._session_factory() as session:
+            application = JobApplication(
+                profile_id=int(profile_id),
+                job_title=str(job_title or "CV Générique")[:200],
+                company=str(company or "N/A")[:100],
+                offer_text="",
+                offer_analysis=(
+                    dict(offer_analysis)
+                    if isinstance(offer_analysis, dict)
+                    else {"generation_mode": "generic"}
+                ),
+                template_used=str(template_used or "modern")[:50],
+                model_version_used=str(model_version_used or "generic")[:20],
+                generated_cv_markdown=str(generated_cv_markdown or ""),
+                generated_cv_html=generated_cv_html,
+                generated_cover_letter=None,
+                profile_json=(
+                    dict(profile_json) if isinstance(profile_json, dict) else None
+                ),
+                cv_json_final=(
+                    dict(cv_json_final) if isinstance(cv_json_final, dict) else None
+                ),
+                status=ApplicationStatus.DRAFT,
+                notes=str(notes or "").strip() or None,
+            )
+            session.add(application)
+            session.commit()
+            session.refresh(application)
+            session.expunge(application)
+
+        try:
+            from sqlmodel import text
+
+            with self._session_factory() as session:
+                session.execute(
+                    text(
+                        "UPDATE userprofile SET total_cvs_generated = total_cvs_generated + 1 WHERE id = :pid"
+                    ),
+                    {"pid": int(profile_id)},
+                )
+                session.commit()
+        except Exception as exc:
+            logger.warning(
+                "Impossible de mettre à jour les stats du profil %s: %s",
+                profile_id,
+                exc,
+            )
 
         return self._to_summary(application)
 
