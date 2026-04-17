@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from PySide6.QtCore import QThread, Signal
 
@@ -161,6 +161,10 @@ class GenericCVExportWorker(QThread):
             coerced,
             stage="generic_postprocess",
         )
+        coerced = self._enrich_experience_from_profile_descriptions(
+            coerced,
+            stage="generic_postprocess",
+        )
         quality_audit = self._audit_quality(coerced)
         if not quality_audit.get("sufficient", True):
             logger.warning(
@@ -187,6 +191,10 @@ class GenericCVExportWorker(QThread):
             sanitize_cv_json_output(fallback, language_code=self._language_code)
             rich_fallback = dict(fallback)
             fallback = self._repair_language_if_needed(
+                fallback,
+                stage="generic_quality_fallback",
+            )
+            fallback = self._enrich_experience_from_profile_descriptions(
                 fallback,
                 stage="generic_quality_fallback",
             )
@@ -498,6 +506,236 @@ class GenericCVExportWorker(QThread):
 
     def _emit_progress(self, pct: int, msg: str) -> None:
         self.progress_updated.emit(pct, msg)
+
+    def _enrich_experience_from_profile_descriptions(
+        self,
+        cv_json: Dict[str, Any],
+        *,
+        stage: str,
+    ) -> Dict[str, Any]:
+        payload = dict(cv_json or {}) if isinstance(cv_json, dict) else {}
+        experiences = payload.get("experience")
+        if not isinstance(experiences, list) or not experiences:
+            return payload
+        if self._qwen_manager is None or not callable(
+            getattr(self._qwen_manager, "generate_structured_json", None)
+        ):
+            return payload
+
+        try:
+            from ..utils.cv_postprocessing import (
+                _best_profile_match,
+                _extract_profile_experiences,
+            )
+            from ..utils.cv_postprocessing import clean_narrative_text
+            from ..utils.language_policy import text_matches_target_language
+        except Exception:
+            return payload
+
+        profile_experiences = _extract_profile_experiences(
+            self._profile_json if isinstance(self._profile_json, dict) else {}
+        )
+        if not profile_experiences:
+            return payload
+
+        candidates: List[Dict[str, Any]] = []
+        for index, entry in enumerate(experiences):
+            if not isinstance(entry, dict):
+                continue
+            if not self._experience_needs_targeted_rewrite(entry):
+                continue
+            matched_profile = _best_profile_match(entry, profile_experiences)
+            if not isinstance(matched_profile, dict):
+                continue
+
+            source_description = clean_narrative_text(
+                matched_profile.get("description") or ""
+            )
+            if not source_description or len(source_description.split()) < 8:
+                continue
+
+            translated_highlights = [
+                str(item).strip()
+                for item in (entry.get("highlights") or [])
+                if isinstance(item, str)
+                and str(item).strip()
+                and text_matches_target_language(
+                    str(item).strip(),
+                    self._language_code,
+                )
+            ]
+            translated_summary = str(entry.get("summary") or "").strip()
+            if translated_summary and not text_matches_target_language(
+                translated_summary,
+                self._language_code,
+            ):
+                translated_summary = ""
+
+            candidates.append(
+                {
+                    "index": index,
+                    "title": str(entry.get("title") or "").strip(),
+                    "company": str(entry.get("company") or "").strip(),
+                    "start_date": str(entry.get("start_date") or "").strip(),
+                    "end_date": str(entry.get("end_date") or "").strip(),
+                    "location": str(entry.get("location") or "").strip(),
+                    "current_summary": translated_summary,
+                    "current_highlights": translated_highlights,
+                    "source_title": str(matched_profile.get("title") or "").strip(),
+                    "source_company": str(matched_profile.get("company") or "").strip(),
+                    "source_description": source_description,
+                }
+            )
+
+        if not candidates:
+            return payload
+
+        rewritten = self._rewrite_experience_entries_from_profile(candidates)
+        items = rewritten.get("items") if isinstance(rewritten, dict) else None
+        if not isinstance(items, list):
+            return payload
+
+        updated = False
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            try:
+                index = int(item.get("index"))
+            except Exception:
+                continue
+            if index < 0 or index >= len(experiences):
+                continue
+            target_entry = experiences[index]
+            if not isinstance(target_entry, dict):
+                continue
+
+            summary = str(item.get("summary") or "").strip()
+            highlights = [
+                str(value).strip()
+                for value in (item.get("highlights") or [])
+                if isinstance(value, str) and str(value).strip()
+            ]
+            try:
+                from ..utils.language_policy import text_matches_target_language
+            except Exception:
+                text_matches_target_language = None
+
+            if not summary and not highlights:
+                continue
+
+            if summary and (
+                text_matches_target_language is None
+                or text_matches_target_language(summary, self._language_code)
+            ):
+                target_entry["summary"] = summary
+                updated = True
+            filtered_highlights = [
+                value
+                for value in highlights
+                if text_matches_target_language is None
+                or text_matches_target_language(value, self._language_code)
+            ]
+            if filtered_highlights:
+                target_entry["highlights"] = filtered_highlights[:4]
+                updated = True
+
+        if updated:
+            logger.info(
+                "GenericCVExportWorker experience rewrite applied: stage=%s count=%s",
+                stage,
+                len(candidates),
+            )
+        payload["experience"] = experiences
+        return payload
+
+    def _experience_needs_targeted_rewrite(self, entry: Dict[str, Any]) -> bool:
+        try:
+            from ..utils.language_policy import text_matches_target_language
+        except Exception:
+            return False
+
+        summary = str(entry.get("summary") or "").strip()
+        highlights = [
+            str(value).strip()
+            for value in (entry.get("highlights") or [])
+            if isinstance(value, str) and str(value).strip()
+        ]
+        translated_highlights = [
+            value
+            for value in highlights
+            if text_matches_target_language(value, self._language_code)
+        ]
+        if translated_highlights and not self._is_generic_experience_summary(summary):
+            return False
+        if not summary:
+            return True
+        if not text_matches_target_language(summary, self._language_code):
+            return True
+        return self._is_generic_experience_summary(summary) or len(translated_highlights) < 2
+
+    @staticmethod
+    def _is_generic_experience_summary(text: str) -> bool:
+        normalized = re.sub(r"\s+", " ", str(text or "").strip().lower())
+        if not normalized:
+            return True
+        return normalized in {
+            "delivered key contributions in this role.",
+            "contributions principales realisees sur ce poste.",
+        } or normalized.startswith("delivered key contributions as ")
+
+    def _rewrite_experience_entries_from_profile(
+        self,
+        candidates: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        qwen_manager = self._qwen_manager
+        if (
+            qwen_manager is None
+            or not callable(getattr(qwen_manager, "generate_structured_json", None))
+            or not candidates
+        ):
+            return {}
+
+        messages = self._build_experience_rewrite_messages(candidates)
+        raw = qwen_manager.generate_structured_json(
+            messages["system"],
+            messages["user"],
+            generation_overrides={
+                **self._build_generation_overrides(),
+                "max_new_tokens": 1200,
+            },
+            role="generator",
+        )
+        return self._parse_json_response(raw)
+
+    def _build_experience_rewrite_messages(
+        self,
+        candidates: List[Dict[str, Any]],
+    ) -> Dict[str, str]:
+        candidate_block = json.dumps(candidates, ensure_ascii=False, indent=2)
+        system_prompt = (
+            "You are a CV experience rewriter. Return JSON only. "
+            "For each candidate item, rewrite SOURCE_DESCRIPTION into LANGUAGE using concise recruiter wording. "
+            "Preserve facts exactly. Do not invent metrics, tools, employers, scope, or achievements. "
+            "Keep proper nouns, company names, product names, and locations unchanged."
+        )
+        user_prompt = f"""
+LANGUAGE: {self._language_code}
+
+EXPERIENCES_TO_REWRITE:
+{candidate_block}
+
+OUTPUT RULES:
+- Return JSON only with the shape: {{"items": [{{"index": 0, "summary": "...", "highlights": ["...", "..."]}}]}}
+- Keep the same index values.
+- summary: exactly 1 compact sentence, factual, not generic.
+- highlights: 2 to 4 short ATS-safe lines when SOURCE_DESCRIPTION supports them.
+- Translate SOURCE_DESCRIPTION fully into LANGUAGE when needed.
+- Do not leave French text when LANGUAGE is English.
+- Do not use placeholders such as "Delivered key contributions in this role."
+- Use strong action verbs and one idea per highlight.
+- If CURRENT_SUMMARY or CURRENT_HIGHLIGHTS are already strong and in LANGUAGE, you may keep them.
+""".strip()
+        return {"system": system_prompt, "user": user_prompt}
 
     def _repair_language_if_needed(
         self,

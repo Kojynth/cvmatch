@@ -256,7 +256,6 @@ def text_matches_target_language(
         "qualite",
         "suivre",
         "rediger",
-        "tests",
         "anomalies",
         "notamment",
         "consiste",
@@ -288,6 +287,8 @@ def text_matches_target_language(
         "managed",
         "designed",
         "implemented",
+        "executed",
+        "tracked",
         "business",
         "developer",
         "manager",
@@ -298,7 +299,7 @@ def text_matches_target_language(
     has_non_ascii = any(ord(ch) > 127 for ch in raw)
 
     if target == "en":
-        if fr_hits > 0 or (has_non_ascii and token_count >= 2):
+        if fr_hits >= 2 or (has_non_ascii and token_count >= 2):
             return False
         if en_hits > 0:
             return True
@@ -309,7 +310,7 @@ def text_matches_target_language(
             return False
         return True
 
-    if en_hits > 0 and fr_hits == 0:
+    if en_hits >= 2 and fr_hits == 0:
         return False
     if fr_hits > 0 or has_non_ascii:
         return True
