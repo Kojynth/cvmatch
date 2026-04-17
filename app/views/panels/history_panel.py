@@ -633,6 +633,9 @@ class HistoryPanel(QWidget):
         offer_analysis = summary.offer_analysis if isinstance(summary.offer_analysis, dict) else {}
         if offer_analysis:
             data["offer_analysis"] = dict(offer_analysis)
+        generation_mode = str(offer_analysis.get("generation_mode") or "").strip()
+        if generation_mode:
+            data["generation_mode"] = generation_mode
         generation_audit = offer_analysis.get("generation_audit")
         if isinstance(generation_audit, dict):
             data["generation_audit"] = generation_audit
@@ -655,8 +658,17 @@ class HistoryPanel(QWidget):
             try:
                 from ...utils.cv_json_renderer import cv_json_to_cv_data
 
-                structured = cv_json_to_cv_data(summary.cv_json_final)
+                structured = cv_json_to_cv_data(
+                    summary.cv_json_final,
+                    language=offer_analysis.get("language"),
+                )
                 structured["raw_content"] = cv_markdown
+                if not str(structured.get("job_title") or "").strip():
+                    structured["job_title"] = data.get("job_title") or ""
+                if not str(structured.get("company") or "").strip():
+                    structured["company"] = data.get("company") or ""
+                if generation_mode and not str(structured.get("generation_mode") or "").strip():
+                    structured["generation_mode"] = generation_mode
                 data.update(structured)
             except Exception as exc:
                 logger.warning(f"CVJSON mapping failed for history preview: {exc}")

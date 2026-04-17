@@ -2343,7 +2343,15 @@ class ProfileDetailsEditor(QScrollArea):
         from .generic_cv_export_dialog import GenericCVExportDialog
 
         profile_json = build_profile_json_from_extracted_profile(self.profile)
-        dlg = GenericCVExportDialog(profile_json, parent=self)
+        model_version = getattr(self.profile, "model_version", None)
+        model_version_value = getattr(model_version, "value", model_version)
+        dlg = GenericCVExportDialog(
+            profile_json,
+            parent=self,
+            profile_id=getattr(self.profile, "id", None),
+            model_version=str(model_version_value or "").strip() or None,
+            profile_photo_path=getattr(self.profile, "profile_photo_path", None),
+        )
         dlg.exec()
 
     def export_profile_json(self) -> None:

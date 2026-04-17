@@ -56,6 +56,7 @@ class GenericCVExportWorker(QThread):
         self._profile_json = profile_json
         self._language_code = language_code
         self._model_id = str(model_id or "").strip()
+        self._qwen_manager = None
 
     # ------------------------------------------------------------------
     # QThread entry point
@@ -65,6 +66,7 @@ class GenericCVExportWorker(QThread):
         try:
             self._emit_progress(5, "Chargement du modèle LLM...")
             qwen_manager = self._get_qwen_manager()
+            self._qwen_manager = qwen_manager
 
             if self.isInterruptionRequested():
                 return
@@ -93,19 +95,16 @@ class GenericCVExportWorker(QThread):
             def _progress_cb(msg: str) -> None:
                 self._emit_progress(50, str(msg))
 
-            raw = qwen_manager.generate_structured_json(
-                messages["system"],
-                messages["user"],
+            raw_json = self._generate_cv_payload(
+                qwen_manager,
+                messages,
                 progress_callback=_progress_cb,
-                generation_overrides=self._build_generation_overrides(),
-                role="generator",
             )
 
             if self.isInterruptionRequested():
                 return
 
             self._emit_progress(80, "Post-traitement du CV...")
-            raw_json = self._parse_json_response(raw)
             cv_json = self._postprocess(raw_json)
 
             if not cv_json:
@@ -157,6 +156,10 @@ class GenericCVExportWorker(QThread):
         # and TemplatePreviewWindow can render the CV in the correct locale.
         if not str(coerced.get("language") or "").strip():
             coerced["language"] = self._language_code
+        coerced = self._repair_language_if_needed(
+            coerced,
+            stage="generic_postprocess",
+        )
         quality_audit = self._audit_quality(coerced)
         if not quality_audit.get("sufficient", True):
             logger.warning(
@@ -180,6 +183,10 @@ class GenericCVExportWorker(QThread):
             except Exception:
                 pass
             sanitize_cv_json_output(fallback, language_code=self._language_code)
+            fallback = self._repair_language_if_needed(
+                fallback,
+                stage="generic_quality_fallback",
+            )
             return fallback
         return coerced
 
@@ -260,12 +267,28 @@ class GenericCVExportWorker(QThread):
         from ..workers.qwen_manager import QwenManager
 
         manager = QwenManager()
+        refresh_config = getattr(manager, "refresh_selected_model_config", None)
+        if callable(refresh_config):
+            try:
+                refresh_config()
+            except Exception as exc:
+                logger.warning(
+                    "GenericCVExportWorker could not refresh selected model config: %s",
+                    exc,
+                )
         if self._model_id:
             try:
-                manager.apply_model_profile(
-                    self._model_id,
-                    reason="generic_cv_export",
-                )
+                select_model = getattr(manager, "select_model_profile", None)
+                if callable(select_model):
+                    select_model(
+                        self._model_id,
+                        reason="generic_cv_export",
+                    )
+                else:
+                    manager.apply_model_profile(
+                        self._model_id,
+                        reason="generic_cv_export",
+                    )
             except Exception as exc:
                 logger.warning(
                     "GenericCVExportWorker could not switch model to %s: %s",
@@ -286,8 +309,294 @@ class GenericCVExportWorker(QThread):
             target_language=self._language_code,
         )
 
+    def _audit_language(self, cv_json: Dict[str, Any]) -> Dict[str, Any]:
+        from ..utils.cv_language_audit import audit_cv_language_consistency
+
+        audit = audit_cv_language_consistency(
+            cv_json,
+            target_language=self._language_code,
+        )
+        title_issues = self._collect_language_title_issues(cv_json)
+        if title_issues:
+            mixed_sections = list(audit.get("mixed_language_sections") or [])
+            for issue in title_issues:
+                if issue not in mixed_sections:
+                    mixed_sections.append(issue)
+            audit["mixed_language_sections"] = mixed_sections
+            audit["language_ok"] = False
+            audit["language_penalty"] = max(
+                float(audit.get("language_penalty") or 0.0),
+                20.0,
+            )
+        return audit
+
+    def _collect_language_title_issues(self, cv_json: Dict[str, Any]) -> list[str]:
+        payload = cv_json if isinstance(cv_json, dict) else {}
+        issues: list[str] = []
+
+        for idx, entry in enumerate(payload.get("experience") or [], start=1):
+            if not isinstance(entry, dict):
+                continue
+            title = str(entry.get("title") or "").strip()
+            if title and self._title_looks_mismatched(title):
+                issues.append(f"experience_{idx}.title")
+
+        for idx, entry in enumerate(payload.get("education") or [], start=1):
+            if not isinstance(entry, dict):
+                continue
+            degree = str(entry.get("degree") or "").strip()
+            if degree and self._title_looks_mismatched(degree):
+                issues.append(f"education_{idx}.degree")
+
+        return issues
+
+    def _title_looks_mismatched(self, text: str) -> bool:
+        import re
+        import unicodedata
+
+        raw = str(text or "").strip()
+        if not raw:
+            return False
+
+        normalized = (
+            unicodedata.normalize("NFKD", raw)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+            .lower()
+        )
+        tokens = set(re.findall(r"[a-z]+", normalized))
+        if not tokens:
+            return False
+
+        fr_markers = {
+            "alternant",
+            "ingenieur",
+            "qualite",
+            "stagiaire",
+            "stage",
+            "charge",
+            "responsable",
+            "developpeur",
+            "chef",
+            "produit",
+            "commercial",
+            "technicien",
+            "assurance",
+        }
+        en_markers = {
+            "engineer",
+            "apprentice",
+            "developer",
+            "manager",
+            "specialist",
+            "analyst",
+            "lead",
+            "product",
+            "quality",
+            "business",
+            "designer",
+            "operations",
+            "sales",
+            "intern",
+        }
+
+        target = "en" if str(self._language_code or "").strip().lower().startswith("en") else "fr"
+        if target == "en":
+            return bool(tokens & fr_markers)
+        return bool(tokens & en_markers)
+
     def _emit_progress(self, pct: int, msg: str) -> None:
         self.progress_updated.emit(pct, msg)
+
+    def _repair_language_if_needed(
+        self,
+        cv_json: Dict[str, Any],
+        *,
+        stage: str,
+    ) -> Dict[str, Any]:
+        payload = dict(cv_json or {}) if isinstance(cv_json, dict) else {}
+        if not payload:
+            return payload
+
+        language_audit = self._audit_language(payload)
+        if language_audit.get("language_ok", True):
+            return payload
+
+        logger.warning(
+            "GenericCVExportWorker language mismatch: stage=%s target=%s sections=%s",
+            stage,
+            self._language_code,
+            language_audit.get("mixed_language_sections"),
+        )
+
+        repaired = self._rewrite_cv_language_payload(
+            payload,
+            mixed_sections=language_audit.get("mixed_language_sections") or [],
+        )
+        if not isinstance(repaired, dict) or not repaired:
+            return payload
+
+        try:
+            from ..utils.cv_postprocessing import (
+                _compute_experience_durations,
+                sanitize_cv_json_output,
+            )
+
+            if not str(repaired.get("language") or "").strip():
+                repaired["language"] = self._language_code
+            _compute_experience_durations(repaired, language_code=self._language_code)
+            sanitize_cv_json_output(repaired, language_code=self._language_code)
+        except Exception as exc:
+            logger.warning(
+                "GenericCVExportWorker language repair postprocess failed: %s",
+                exc,
+            )
+
+        repaired_audit = self._audit_language(repaired)
+        if repaired_audit.get("language_ok", True):
+            return repaired
+
+        logger.warning(
+            "GenericCVExportWorker language repair still mixed: stage=%s sections=%s",
+            stage,
+            repaired_audit.get("mixed_language_sections"),
+        )
+        return payload
+
+    def _rewrite_cv_language_payload(
+        self,
+        cv_json: Dict[str, Any],
+        *,
+        mixed_sections: list[str],
+    ) -> Dict[str, Any]:
+        qwen_manager = self._qwen_manager
+        if qwen_manager is None:
+            return {}
+
+        messages = self._build_language_repair_messages(
+            cv_json,
+            mixed_sections=mixed_sections,
+        )
+        try:
+            from ..schemas.cv_schema import CVJSON
+            from ..utils.json_strict import JsonStrictError, generate_json_with_schema
+
+            payload = generate_json_with_schema(
+                role="generator",
+                schema_model=CVJSON,
+                messages=messages,
+                qwen_manager=qwen_manager,
+                retries=1,
+            )
+            if isinstance(payload, dict):
+                return payload
+        except JsonStrictError as exc:
+            logger.warning(
+                "GenericCVExportWorker language repair strict JSON failed: %s",
+                exc,
+            )
+        except Exception as exc:
+            logger.warning(
+                "GenericCVExportWorker language repair unavailable, retrying non-strict: %s",
+                exc,
+            )
+
+        raw = qwen_manager.generate_structured_json(
+            messages["system"],
+            messages["user"],
+            generation_overrides=self._build_generation_overrides(),
+            role="generator",
+        )
+        return self._parse_json_response(raw)
+
+    def _build_language_repair_messages(
+        self,
+        cv_json: Dict[str, Any],
+        *,
+        mixed_sections: list[str],
+    ) -> Dict[str, str]:
+        profile_block = json.dumps(
+            self._profile_json if isinstance(self._profile_json, dict) else {},
+            ensure_ascii=False,
+            indent=2,
+        )
+        cv_block = json.dumps(
+            cv_json if isinstance(cv_json, dict) else {},
+            ensure_ascii=False,
+            indent=2,
+        )
+        sections_text = ", ".join(
+            str(item).strip() for item in mixed_sections if str(item).strip()
+        )
+        system_prompt = (
+            "You are a CV JSON editor. Return JSON only that matches the CVJSON schema. "
+            "Rewrite CURRENT_CV_JSON so every natural-language field is in LANGUAGE only. "
+            "Preserve chronology, contact facts, companies, dates, durations, and evidence. "
+            "Use PROFILE_JSON only to verify or clarify existing facts; never add new facts. "
+            "Translate source-language role titles, degree names, summaries, highlights, and project descriptions "
+            "when the meaning is clear. Keep proper nouns, official company names, product names, URLs, and acronyms unchanged. "
+            "Do not leave mixed French/English text."
+        )
+        user_prompt = f"""
+LANGUAGE: {self._language_code}
+MIXED_SECTIONS: {sections_text or "unknown"}
+
+PROFILE_JSON (source of truth):
+{profile_block}
+
+CURRENT_CV_JSON (rewrite in LANGUAGE, preserve facts):
+{cv_block}
+
+OUTPUT RULES:
+- Return JSON only.
+- Keep the exact CVJSON structure.
+- Keep target_job_title and target_company unchanged.
+- Translate every narrative field fully into LANGUAGE.
+- If a phrase cannot be translated confidently without inventing facts, rewrite it conservatively in LANGUAGE.
+- Do not invent metrics, achievements, technologies, employers, projects, schools, or certifications.
+- Do not use placeholders or bracketed notes.
+""".strip()
+        return {"system": system_prompt, "user": user_prompt}
+
+    def _generate_cv_payload(
+        self,
+        qwen_manager,
+        messages: Dict[str, str],
+        progress_callback=None,
+    ) -> Dict[str, Any]:
+        try:
+            from ..schemas.cv_schema import CVJSON
+            from ..utils.json_strict import JsonStrictError, generate_json_with_schema
+
+            payload = generate_json_with_schema(
+                role="generator",
+                schema_model=CVJSON,
+                messages=messages,
+                qwen_manager=qwen_manager,
+                retries=2,
+                progress_callback=progress_callback,
+            )
+            if isinstance(payload, dict):
+                return payload
+        except JsonStrictError as exc:
+            logger.warning(
+                "GenericCVExportWorker strict CVJSON failed, retrying non-strict: %s",
+                exc,
+            )
+        except Exception as exc:
+            logger.warning(
+                "GenericCVExportWorker strict CVJSON unavailable, retrying non-strict: %s",
+                exc,
+            )
+
+        raw = qwen_manager.generate_structured_json(
+            messages["system"],
+            messages["user"],
+            progress_callback=progress_callback,
+            generation_overrides=self._build_generation_overrides(),
+            role="generator",
+        )
+        return self._parse_json_response(raw)
 
     def _build_generation_overrides(self) -> Dict[str, Any]:
         """Match the main non-strict generator retry settings for JSON stability."""

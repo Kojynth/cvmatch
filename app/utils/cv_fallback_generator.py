@@ -30,6 +30,7 @@ from .keyword_alignment import (
     build_keyword_alignment,
     normalize_keyword_for_match,
 )
+from .language_policy import is_mixed_or_mismatched_language, normalize_language_code
 
 
 def _dedup_preserve(items: List[str]) -> List[str]:
@@ -194,16 +195,23 @@ def _build_action_summary(
     description: str,
     highlights: List[str],
     is_en: bool,
+    language_code: str,
 ) -> str:
     for item in highlights:
         text = str(item or "").strip()
         if not text:
             continue
+        if _is_cross_language_narrative(text, language_code=language_code):
+            continue
         if _looks_like_company_description(text, company):
             continue
         return _trim_text(text, 280)
 
-    if description and not _looks_like_company_description(description, company):
+    if (
+        description
+        and not _is_cross_language_narrative(description, language_code=language_code)
+        and not _looks_like_company_description(description, company)
+    ):
         return _trim_text(description, 280)
 
     title_text = str(title or "").strip()
@@ -212,6 +220,58 @@ def _build_action_summary(
     if is_en:
         return _trim_text(f"Delivered key contributions as {title_text}.", 140)
     return _trim_text(f"Contributions principales realisees en tant que {title_text}.", 160)
+
+
+def _is_cross_language_narrative(text: Any, *, language_code: str) -> bool:
+    value = str(text or "").strip()
+    if not value:
+        return False
+    if len(value) < 40 and len(value.split()) < 8:
+        return False
+    target = normalize_language_code(language_code)
+    return is_mixed_or_mismatched_language(value, target)
+
+
+def _build_generic_profile_summary(
+    *,
+    is_en: bool,
+    language_code: str,
+    profile_summary: str,
+    experience_titles: List[str],
+    skill_items: List[str],
+) -> str:
+    titles = _dedup_preserve(
+        [str(title or "").strip() for title in experience_titles if str(title or "").strip()]
+    )
+    focus_terms = _dedup_preserve(
+        [str(item or "").strip() for item in skill_items if str(item or "").strip()]
+    )[:4]
+
+    if is_en:
+        parts: List[str] = ["Professional profile"]
+        if titles:
+            parts.append(f"with hands-on experience across roles such as {titles[0]}")
+        else:
+            parts.append("with hands-on experience across operational and technical environments")
+        if focus_terms:
+            parts.append(f"and practical exposure to {', '.join(focus_terms[:3])}")
+        summary = " ".join(parts).rstrip(" .") + "."
+    else:
+        parts = ["Profil professionnel"]
+        if titles:
+            parts.append(f"avec une experience terrain sur des fonctions telles que {titles[0]}")
+        else:
+            parts.append("avec une experience terrain dans des environnements operationnels et techniques")
+        if focus_terms:
+            parts.append(f"et une pratique de {', '.join(focus_terms[:3])}")
+        summary = " ".join(parts).rstrip(" .") + "."
+
+    if profile_summary and not _is_cross_language_narrative(
+        profile_summary,
+        language_code=language_code,
+    ):
+        summary = f"{summary} {_trim_text(profile_summary, 180)}".strip()
+    return _trim_text(summary, 260)
 
 
 def collect_candidate_keywords(
@@ -429,37 +489,6 @@ def generate_fallback_cv_json(
             profile_summary = value.strip()
             break
 
-    # Build summary text
-    role_label = job_title or ("the target role" if is_en else "le poste vise")
-    company_label = company or ("the target company" if is_en else "l'entreprise cible")
-    terms_preview = ", ".join(matched_terms[:4]) if matched_terms else ""
-
-    if is_en:
-        if terms_preview:
-            summary = (
-                f"Application for {role_label} at {company_label}, with hands-on "
-                f"experience in {terms_preview}."
-            )
-        else:
-            summary = (
-                f"Application for {role_label} at {company_label}, with practical "
-                "experience aligned to the job requirements."
-            )
-    else:
-        if terms_preview:
-            summary = (
-                f"Candidature au poste {role_label} chez {company_label}, avec une "
-                f"experience concrete en {terms_preview}."
-            )
-        else:
-            summary = (
-                f"Candidature au poste {role_label} chez {company_label}, avec un "
-                "parcours aligne sur les besoins du poste."
-            )
-
-    if profile_summary:
-        summary = f"{summary} {_trim_text(profile_summary, 180)}".strip()
-
     # Build skills section
     skill_items: List[str] = []
     for item in profile_json.get("skills", []) or []:
@@ -478,6 +507,53 @@ def generate_fallback_cv_json(
     else:
         skill_items = _dedup_preserve(skill_items)
     skill_items = skill_items[:12]
+
+    experience_titles = [
+        str(item.get("title") or "").strip()
+        for item in (profile_json.get("experiences", []) or [])
+        if isinstance(item, dict)
+    ]
+
+    # Build summary text
+    terms_preview = ", ".join(matched_terms[:4]) if matched_terms else ""
+    if job_title or company:
+        role_label = job_title or ("the role" if is_en else "le poste")
+        company_label = company or ("the company" if is_en else "l'entreprise")
+        if is_en:
+            if terms_preview:
+                summary = (
+                    f"Application for {role_label} at {company_label}, with hands-on "
+                    f"experience in {terms_preview}."
+                )
+            else:
+                summary = (
+                    f"Application for {role_label} at {company_label}, with practical "
+                    "experience aligned to the job requirements."
+                )
+        else:
+            if terms_preview:
+                summary = (
+                    f"Candidature au poste {role_label} chez {company_label}, avec une "
+                    f"experience concrete en {terms_preview}."
+                )
+            else:
+                summary = (
+                    f"Candidature au poste {role_label} chez {company_label}, avec un "
+                    "parcours aligne sur les besoins du poste."
+                )
+        if profile_summary and not _is_cross_language_narrative(
+            profile_summary,
+            language_code=language_code,
+        ):
+            summary = f"{summary} {_trim_text(profile_summary, 180)}".strip()
+    else:
+        summary = _build_generic_profile_summary(
+            is_en=is_en,
+            language_code=language_code,
+            profile_summary=profile_summary,
+            experience_titles=experience_titles,
+            skill_items=skill_items,
+        )
 
     # Build experience section
     experience_items: List[Dict[str, Any]] = []
@@ -499,12 +575,19 @@ def generate_fallback_cv_json(
         desc = str(item.get("description") or "").strip()
         company_name = str(item.get("company") or "").strip()
         highlights = extract_experience_highlights(desc, company=company_name)
+        clean_highlights = [
+            _trim_text(text, 220)
+            for text in highlights
+            if str(text or "").strip()
+            and not _is_cross_language_narrative(text, language_code=language_code)
+        ][:4]
         summary_text = _build_action_summary(
             title=str(item.get("title") or ""),
             company=company_name,
             description=desc,
-            highlights=highlights,
+            highlights=clean_highlights,
             is_en=is_en,
+            language_code=language_code,
         )
         mapped = {
             "title": str(item.get("title") or ""),
@@ -513,7 +596,7 @@ def generate_fallback_cv_json(
             "end_date": str(item.get("end_date") or ""),
             "location": str(item.get("location") or ""),
             "summary": summary_text,
-            "highlights": highlights,
+            "highlights": clean_highlights,
         }
         if any(
             mapped.get(k)
@@ -531,9 +614,18 @@ def generate_fallback_cv_json(
         for key in ("details", "description"):
             raw = item.get(key)
             if isinstance(raw, list):
-                details.extend(str(x).strip() for x in raw if str(x).strip())
+                details.extend(
+                    str(x).strip()
+                    for x in raw
+                    if str(x).strip()
+                    and not _is_cross_language_narrative(
+                        x,
+                        language_code=language_code,
+                    )
+                )
             elif isinstance(raw, str) and raw.strip():
-                details.append(raw.strip())
+                if not _is_cross_language_narrative(raw, language_code=language_code):
+                    details.append(raw.strip())
         grade = str(item.get("grade") or "").strip()
         if grade:
             details.append(grade)
@@ -592,7 +684,14 @@ def generate_fallback_cv_json(
             continue
         mapped = {
             "name": str(item.get("name") or ""),
-            "description": str(item.get("description") or ""),
+            "description": (
+                ""
+                if _is_cross_language_narrative(
+                    item.get("description") or "",
+                    language_code=language_code,
+                )
+                else str(item.get("description") or "")
+            ),
             "technologies": str(item.get("technologies") or ""),
             "url": str(item.get("url") or ""),
         }

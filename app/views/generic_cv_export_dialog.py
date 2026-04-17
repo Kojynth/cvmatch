@@ -15,7 +15,9 @@ Usage::
 
 from __future__ import annotations
 
-from typing import Any, Dict
+import base64
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
@@ -48,6 +50,7 @@ def build_generic_cv_preview_data(
     *,
     language_code: str,
     template: str,
+    photo_base64: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Map generic CVJSON onto the standard preview/export payload."""
     from app.utils.cv_json_renderer import cv_json_to_cv_data, cv_json_to_markdown
@@ -66,7 +69,24 @@ def build_generic_cv_preview_data(
     preview_data["template_used"] = selected_template
     preview_data["language"] = selected_language
     preview_data["generation_mode"] = "generic"
+    if str(photo_base64 or "").strip():
+        preview_data["photo_base64"] = str(photo_base64).strip()
     return preview_data
+
+
+def _load_photo_base64(photo_path: Optional[str]) -> str:
+    path_text = str(photo_path or "").strip()
+    if not path_text:
+        return ""
+
+    try:
+        photo_path_obj = Path(path_text)
+        if not photo_path_obj.is_file():
+            return ""
+        return base64.b64encode(photo_path_obj.read_bytes()).decode("ascii")
+    except Exception as exc:
+        logger.debug("GenericCVExportDialog: photo injection skipped: %s", exc)
+        return ""
 
 
 class GenericCVExportDialog(QDialog):
@@ -79,12 +99,20 @@ class GenericCVExportDialog(QDialog):
         self,
         profile_json: Dict[str, Any],
         parent=None,
+        *,
+        profile_id: Optional[int] = None,
+        model_version: Optional[str] = None,
+        profile_photo_path: Optional[str] = None,
     ) -> None:
         super().__init__(parent)
         self._profile_json = profile_json
+        self._profile_id = int(profile_id) if profile_id else None
+        self._profile_model_version = str(model_version or "").strip()
+        self._profile_photo_path = str(profile_photo_path or "").strip()
         self._worker = None
         self._cv_json: Dict[str, Any] = {}
         self._preview_cv_data: Dict[str, Any] = {}
+        self._pending_preview_payload: Dict[str, Any] = {}
         self._cancelling = False
 
         # Build language options from the profile (dynamic) with FR/EN fallback
@@ -231,11 +259,7 @@ class GenericCVExportDialog(QDialog):
         self._progress_bar.setValue(0)
 
         language_code = self._selected_language_code()
-        model_id = ""
-        try:
-            model_id = str(self._model_selector.get_current_model() or "").strip()
-        except Exception:
-            model_id = ""
+        model_id = self._selected_model_id()
 
         from app.workers.generic_cv_export_worker import GenericCVExportWorker
 
@@ -279,6 +303,14 @@ class GenericCVExportDialog(QDialog):
         self._status_label.setVisible(False)
 
         self._preview_cv_data = self._build_preview_payload(self._cv_json, template)
+        application_id = self._persist_generated_cv_in_history(
+            cv_json=self._cv_json,
+            preview_data=self._preview_cv_data,
+            template=template,
+        )
+        if application_id:
+            self._preview_cv_data["application_id"] = application_id
+            self._preview_cv_data.setdefault("offer_text", "")
         if self._queue_preview_window(self._preview_cv_data):
             self.accept()
             return
@@ -302,6 +334,10 @@ class GenericCVExportDialog(QDialog):
 
     @classmethod
     def _forget_preview_window(cls, preview_window: Any) -> None:
+        logger.info(
+            "GenericCVExportDialog: preview window forgotten id=%s",
+            id(preview_window),
+        )
         cls._OPEN_PREVIEW_WINDOWS = [
             window
             for window in cls._OPEN_PREVIEW_WINDOWS
@@ -310,6 +346,10 @@ class GenericCVExportDialog(QDialog):
 
     @classmethod
     def _track_preview_window(cls, preview_window: Any) -> None:
+        logger.info(
+            "GenericCVExportDialog: preview window tracked id=%s",
+            id(preview_window),
+        )
         cls._OPEN_PREVIEW_WINDOWS.append(preview_window)
         preview_window.destroyed.connect(
             lambda *_args, window=preview_window, dialog_cls=cls: dialog_cls._forget_preview_window(
@@ -317,8 +357,169 @@ class GenericCVExportDialog(QDialog):
             )
         )
 
+    def done(self, result: int) -> None:
+        preview_payload = dict(self._pending_preview_payload or {})
+        self._pending_preview_payload = {}
+        preview_owner = self.parent()
+        super().done(result)
+
+        accepted = (
+            result == int(QDialog.DialogCode.Accepted)
+            or result == QDialog.DialogCode.Accepted
+        )
+        if accepted and preview_payload:
+            self.__class__._schedule_preview_window(preview_payload, preview_owner)
+
+    @classmethod
+    def _schedule_preview_window(
+        cls,
+        preview_data: Dict[str, Any],
+        preview_owner: Any = None,
+    ) -> None:
+        preview_payload = dict(preview_data or {})
+
+        def _open_preview() -> None:
+            cls._open_preview_window(preview_payload, preview_owner)
+
+        QTimer.singleShot(0, _open_preview)
+
+    @classmethod
+    def _open_preview_window(
+        cls,
+        preview_data: Dict[str, Any],
+        preview_owner: Any = None,
+    ) -> None:
+        try:
+            from app.views.template_preview_window import TemplatePreviewWindow
+        except Exception as exc:
+            logger.warning(
+                "GenericCVExportDialog: preview window unavailable after dialog close: %s",
+                exc,
+            )
+            return
+
+        preview_payload = dict(preview_data or {})
+        try:
+            preview_window = TemplatePreviewWindow(preview_payload, preview_owner)
+            preview_window.setWindowFlag(Qt.Window, True)
+            cls._track_preview_window(preview_window)
+            logger.info(
+                "GenericCVExportDialog: opening preview window id=%s template=%s",
+                id(preview_window),
+                preview_payload.get("template")
+                or preview_payload.get("template_used")
+                or "",
+            )
+            preview_window.showNormal()
+            preview_window.raise_()
+            preview_window.activateWindow()
+        except Exception as exc:
+            logger.exception(
+                "GenericCVExportDialog: failed to open preview window after dialog close: %s",
+                exc,
+            )
+            show_error(
+                f"Impossible d'ouvrir la prévisualisation du CV.\n\n{exc}",
+                title="Erreur de prévisualisation",
+                parent=None,
+            )
+
     def _selected_language_code(self) -> str:
         return str(self._lang_combo.currentData() or "fr").strip() or "fr"
+
+    def _selected_model_id(self) -> str:
+        try:
+            return str(self._model_selector.get_current_model() or "").strip()
+        except Exception:
+            return ""
+
+    def _history_job_title(self) -> str:
+        if self._selected_language_code().startswith("en"):
+            return "Generic CV"
+        return "CV Générique"
+
+    def _history_company(self) -> str:
+        return "N/A"
+
+    def _history_model_label(self) -> str:
+        selected_model = self._selected_model_id()
+        if selected_model:
+            return selected_model[:20]
+        if self._profile_model_version:
+            return self._profile_model_version[:20]
+        return "generic"
+
+    def _refresh_history_views(self) -> None:
+        parent = self.parent()
+        candidates = [parent]
+        if parent is not None:
+            try:
+                candidates.append(parent.window())
+            except Exception:
+                pass
+
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            refresh_history = getattr(candidate, "refresh_history", None)
+            if callable(refresh_history):
+                try:
+                    refresh_history()
+                except Exception as exc:
+                    logger.warning(
+                        "GenericCVExportDialog: history refresh failed: %s",
+                        exc,
+                    )
+                return
+
+    def _persist_generated_cv_in_history(
+        self,
+        *,
+        cv_json: Dict[str, Any],
+        preview_data: Dict[str, Any],
+        template: str,
+    ) -> Optional[int]:
+        if not self._profile_id:
+            logger.info(
+                "GenericCVExportDialog: history persistence skipped (missing profile id)"
+            )
+            return None
+
+        try:
+            from app.controllers.main_window.history import HistoryCoordinator
+
+            coordinator = HistoryCoordinator()
+            summary = coordinator.create_generic_application(
+                profile_id=self._profile_id,
+                job_title=self._history_job_title(),
+                company=self._history_company(),
+                template_used=str(template or "modern").strip() or "modern",
+                model_version_used=self._history_model_label(),
+                generated_cv_markdown=str(preview_data.get("raw_content") or ""),
+                profile_json=(
+                    dict(self._profile_json)
+                    if isinstance(self._profile_json, dict)
+                    else None
+                ),
+                cv_json_final=dict(cv_json) if isinstance(cv_json, dict) else None,
+                offer_analysis={
+                    "generation_mode": "generic",
+                    "language": self._selected_language_code(),
+                },
+                notes="Generated without a specific job offer.",
+            )
+        except Exception as exc:
+            logger.warning(
+                "GenericCVExportDialog: failed to persist generic CV in history: %s",
+                exc,
+            )
+            return None
+
+        if summary is None:
+            return None
+
+        self._refresh_history_views()
+        return summary.id
 
     def _build_preview_payload(
         self,
@@ -329,6 +530,7 @@ class GenericCVExportDialog(QDialog):
             cv_json,
             language_code=self._selected_language_code(),
             template=template,
+            photo_base64=_load_photo_base64(self._profile_photo_path),
         )
 
     def _queue_preview_window(self, preview_data: Dict[str, Any]) -> bool:
@@ -341,27 +543,5 @@ class GenericCVExportDialog(QDialog):
             )
             return False
 
-        preview_payload = dict(preview_data or {})
-        preview_parent = self.parentWidget()
-
-        def _open_preview() -> None:
-            try:
-                preview_window = TemplatePreviewWindow(preview_payload, preview_parent)
-                self.__class__._track_preview_window(preview_window)
-                preview_window.show()
-                preview_window.raise_()
-                preview_window.activateWindow()
-            except Exception as exc:
-                logger.exception(
-                    "GenericCVExportDialog: failed to open preview window: %s",
-                    exc,
-                )
-                show_error(
-                    f"Impossible d'ouvrir la prévisualisation du CV.\n\n{exc}",
-                    title="Erreur de prévisualisation",
-                    parent=preview_parent or self,
-                )
-
-        QTimer.singleShot(0, _open_preview)
+        self._pending_preview_payload = dict(preview_data or {})
         return True
-

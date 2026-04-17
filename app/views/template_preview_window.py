@@ -85,6 +85,28 @@ ONE_PAGE_PRINT_CSS = """
 """
 
 
+_FILENAME_UNSAFE_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
+
+
+def _sanitize_export_filename_part(value: Any, fallback: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        text = str(fallback or "").strip()
+    text = _FILENAME_UNSAFE_CHARS_RE.sub("_", text)
+    text = text.replace("&", "and")
+    text = re.sub(r"\s+", "_", text)
+    text = re.sub(r"_+", "_", text)
+    text = text.strip(" ._-")
+    if not text:
+        text = str(fallback or "").strip() or "export"
+        text = _FILENAME_UNSAFE_CHARS_RE.sub("_", text)
+        text = re.sub(r"\s+", "_", text)
+        text = re.sub(r"_+", "_", text).strip(" ._-")
+    if not text:
+        return "export"
+    return text
+
+
 def _build_fallback_css(template_name: str) -> str:
     accent = FALLBACK_TEMPLATE_ACCENTS.get(template_name, "#2563eb")
     return f"""
@@ -403,6 +425,11 @@ class TemplatePreviewWindow(QMainWindow):
         self.setAttribute(Qt.WA_QuitOnClose, False)
         # Ensure WebEngine resources are released when the preview is closed.
         self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.destroyed.connect(
+            lambda *_args, window_id=id(self): logger.info(
+                "TemplatePreviewWindow destroyed (id=%s)", window_id
+            )
+        )
 
         self._configure_webengine_profile()
         
@@ -822,7 +849,6 @@ class TemplatePreviewWindow(QMainWindow):
         
         # Onglets de previsualisation
         self.preview_tabs = QTabWidget()
-        self.preview_tabs.currentChanged.connect(self.on_preview_tab_changed)
 
         self.cv_web_view = QWebEngineView()
         self.cv_web_view.setStyleSheet("border: 1px solid #dee2e6; border-radius: 4px;")
@@ -855,6 +881,7 @@ class TemplatePreviewWindow(QMainWindow):
         letter_tab_layout.setContentsMargins(0, 0, 0, 0)
         letter_tab_layout.addWidget(self.letter_web_view)
         self.letter_tab_index = self.preview_tabs.addTab(letter_tab, "Lettre de motivation")
+        self.preview_tabs.currentChanged.connect(self.on_preview_tab_changed)
 
         preview_layout.addWidget(self.preview_tabs)
 
@@ -1753,14 +1780,26 @@ class TemplatePreviewWindow(QMainWindow):
         else:
             self._export_cv_pdf()
 
+    def _default_export_name_part(self, key: str, fallback: str) -> str:
+        raw_value = str(self.cv_data.get(key) or "").strip()
+        if raw_value:
+            return _sanitize_export_filename_part(raw_value, fallback)
+
+        generation_mode = str(self.cv_data.get("generation_mode") or "").strip().lower()
+        language = str(self.cv_data.get("language") or "fr").strip().lower()
+        if generation_mode == "generic" and key == "job_title":
+            return _sanitize_export_filename_part(
+                "Generic CV" if language.startswith("en") else "CV Generique",
+                fallback,
+            )
+        if generation_mode == "generic" and key == "company":
+            return _sanitize_export_filename_part("N/A", fallback)
+        return _sanitize_export_filename_part(fallback, fallback)
+
     def _export_cv_pdf(self) -> None:
         try:
-            job_title = self.cv_data.get("job_title", "Poste").replace(" ", "_")
-            company = (
-                self.cv_data.get("company", "Entreprise").replace(" ", "_")
-                if "company" in self.cv_data
-                else "Entreprise"
-            )
+            job_title = self._default_export_name_part("job_title", "Poste")
+            company = self._default_export_name_part("company", "Entreprise")
             date_str = datetime.now().strftime("%Y%m%d")
             base_name = f"CV_{job_title}_{company}_{date_str}"
             pdf_output_path = self.output_dir / f"{base_name}.pdf"
@@ -1814,12 +1853,8 @@ class TemplatePreviewWindow(QMainWindow):
 
     def _export_letter_pdf(self) -> None:
         try:
-            job_title = self.cv_data.get("job_title", "Poste").replace(" ", "_")
-            company = (
-                self.cv_data.get("company", "Entreprise").replace(" ", "_")
-                if "company" in self.cv_data
-                else "Entreprise"
-            )
+            job_title = self._default_export_name_part("job_title", "Poste")
+            company = self._default_export_name_part("company", "Entreprise")
             date_str = datetime.now().strftime("%Y%m%d")
             base_name = f"Lettre_{job_title}_{company}_{date_str}"
             pdf_output_path = self.output_dir / f"{base_name}.pdf"
@@ -2272,7 +2307,10 @@ class TemplatePreviewWindow(QMainWindow):
             self._release_preview_resources()
             
             # LOG: Cette fenêtre se ferme, mais ce n'est PAS une fermeture de l'app principale
-            logger.info("Fermeture de la fenetre de previsualisation (fenetre secondaire)")
+            logger.info(
+                "Fermeture de la fenetre de previsualisation (fenetre secondaire, id=%s)",
+                id(self),
+            )
             
             # Accepter la fermeture sans affecter l'application principale
             event.accept()
