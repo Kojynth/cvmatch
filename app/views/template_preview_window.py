@@ -85,6 +85,28 @@ ONE_PAGE_PRINT_CSS = """
 """
 
 
+_FILENAME_UNSAFE_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
+
+
+def _sanitize_export_filename_part(value: Any, fallback: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        text = str(fallback or "").strip()
+    text = _FILENAME_UNSAFE_CHARS_RE.sub("_", text)
+    text = text.replace("&", "and")
+    text = re.sub(r"\s+", "_", text)
+    text = re.sub(r"_+", "_", text)
+    text = text.strip(" ._-")
+    if not text:
+        text = str(fallback or "").strip() or "export"
+        text = _FILENAME_UNSAFE_CHARS_RE.sub("_", text)
+        text = re.sub(r"\s+", "_", text)
+        text = re.sub(r"_+", "_", text).strip(" ._-")
+    if not text:
+        return "export"
+    return text
+
+
 def _build_fallback_css(template_name: str) -> str:
     accent = FALLBACK_TEMPLATE_ACCENTS.get(template_name, "#2563eb")
     return f"""
@@ -1761,15 +1783,18 @@ class TemplatePreviewWindow(QMainWindow):
     def _default_export_name_part(self, key: str, fallback: str) -> str:
         raw_value = str(self.cv_data.get(key) or "").strip()
         if raw_value:
-            return raw_value.replace(" ", "_")
+            return _sanitize_export_filename_part(raw_value, fallback)
 
         generation_mode = str(self.cv_data.get("generation_mode") or "").strip().lower()
         language = str(self.cv_data.get("language") or "fr").strip().lower()
         if generation_mode == "generic" and key == "job_title":
-            return "Generic_CV" if language.startswith("en") else "CV_Generique"
+            return _sanitize_export_filename_part(
+                "Generic CV" if language.startswith("en") else "CV Generique",
+                fallback,
+            )
         if generation_mode == "generic" and key == "company":
-            return "N_A"
-        return fallback
+            return _sanitize_export_filename_part("N/A", fallback)
+        return _sanitize_export_filename_part(fallback, fallback)
 
     def _export_cv_pdf(self) -> None:
         try:
