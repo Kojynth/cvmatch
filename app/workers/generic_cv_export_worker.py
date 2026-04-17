@@ -97,6 +97,8 @@ class GenericCVExportWorker(QThread):
                 messages["system"],
                 messages["user"],
                 progress_callback=_progress_cb,
+                generation_overrides=self._build_generation_overrides(),
+                role="generator",
             )
 
             if self.isInterruptionRequested():
@@ -286,6 +288,21 @@ class GenericCVExportWorker(QThread):
 
     def _emit_progress(self, pct: int, msg: str) -> None:
         self.progress_updated.emit(pct, msg)
+
+    def _build_generation_overrides(self) -> Dict[str, Any]:
+        """Match the main non-strict generator retry settings for JSON stability."""
+        raw = str(os.getenv("CVMATCH_JSON_NON_STRICT_DETERMINISTIC", "1") or "").strip()
+        deterministic = raw.lower() not in {"0", "false", "no", "off"}
+        if not deterministic:
+            return {}
+        return {
+            "temperature": 0.0,
+            "do_sample": False,
+            "top_p": 0.9,
+            "top_k": 40,
+            "repetition_penalty": 1.05,
+            "max_new_tokens": 1800,
+        }
 
     def _parse_json_response(self, text: str) -> Dict[str, Any]:
         """Extract a JSON dict from raw LLM output."""
