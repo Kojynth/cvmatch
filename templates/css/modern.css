@@ -111,14 +111,26 @@ a {
 
 .section-content ul,
 .dynamic-content ul {
-  margin: 6px 0 12px 18px;
+  margin: 6px 0 12px;
   padding: 0;
+  list-style: none;
 }
 
 .section-content li,
 .dynamic-content li {
   margin-bottom: 6px;
-  list-style: disc;
+  list-style: none;
+  position: relative;
+  padding-left: 14px;
+}
+
+.section-content li::before,
+.dynamic-content li::before {
+  content: "-";
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--text);
 }
 
 @media (max-width: 720px) {

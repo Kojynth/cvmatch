@@ -196,12 +196,26 @@ def _build_fallback_css(template_name: str) -> str:
     .section-content p {{
         margin: 0 0 10px;
     }}
-    .section-content ul {{
-        margin: 6px 0 12px 18px;
+    .section-content ul,
+    .dynamic-content ul {{
+        margin: 6px 0 12px;
         padding: 0;
+        list-style: none;
     }}
-    .section-content li {{
+    .section-content li,
+    .dynamic-content li {{
         margin-bottom: 6px;
+        list-style: none;
+        position: relative;
+        padding-left: 14px;
+    }}
+    .section-content li::before,
+    .dynamic-content li::before {{
+        content: "-";
+        position: absolute;
+        left: 0;
+        top: 0;
+        color: var(--text);
     }}
     .dynamic-content strong {{
         font-family: "Arial", "Helvetica", sans-serif;
