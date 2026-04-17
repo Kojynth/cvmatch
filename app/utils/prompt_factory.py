@@ -90,6 +90,7 @@ def build_cv_json_messages(
     section_guidance_block: str = "",
     previous_cv_block: str = "",
     user_instruction_block: str = "",
+    evidence_policy_block: str = "",
     stage: str = "draft",
 ) -> Dict[str, str]:
     system_prompt = (
@@ -123,6 +124,7 @@ PROFILE_JSON (source of truth):
 {section_guidance_block}
 {previous_cv_block}
 {user_instruction_block}
+{evidence_policy_block}
 
 OUTPUT RULES:
 - Return JSON only.
@@ -149,19 +151,39 @@ OUTPUT RULES:
 - Summary must be candidate-focused (role, strengths, impact). Do not describe employer mission/history.
 - If MATCHED_KEYWORDS is present, ensure those terms appear in summary/skills/experience when relevant.
 - If RETRY_GUIDANCE is present, treat it as high-priority rewrite direction.
-- For each experience item, keep facts but rewrite to highlight relevance to the offer:
-  * summary: 1 compact sentence (scope + context),
-  * highlights: 2-3 bullets with action/result phrasing and offer-aligned terms when true.
+- MANDATORY for each experience item: rewrite entirely — never copy source description text verbatim.
+  * summary: 1 compact sentence (scope + context, offer-aligned vocabulary).
+  * highlights: 2-4 short plain strings; each must start with a strong action verb,
+    express one main idea, and include at least one term from PRIORITY_OFFER_TERMS
+    or JOB_OFFER_TEXT when factual.
+  * highlights must not start with '-', '*', digits, or decorative bullet glyphs.
+  * If source description is a long paragraph or dash-separated list, condense it into these 2-4 ATS-safe highlights.
 - If PROFILE_JSON text is in another language, translate it to LANGUAGE (keep proper nouns, tools, company names).
 - Do not leave mixed-language clauses such as English headings with French verbs or nouns in the same sentence.
 - Keep output compact:
-  * experience <= 4 items, highlights <= 3 each.
-  * skills <= 4 categories, items <= 8 each.
+  * experience <= 4 items, highlights <= 4 each.
+  * skills <= 4 categories, items <= 6 each, ordered by relevance to JOB_OFFER_TEXT.
   * education <= 3 items.
   * projects <= 3 items.
   * languages <= 4 items.
   * certifications <= 3 items.
   * ats_keywords <= 15 items.
+- Structure and ordering:
+  * Experience and projects must be in reverse chronological order (most recent first).
+  * For each experience item, include a duration field when reliable start/end dates are available.
+  * For each project item, set the duration field when source evidence supports it (e.g. "2 ans", "6 mois", "3 ans"); do not invent dates.
+  * Use a single consistent date format across the entire CV (prefer MM/YYYY or YYYY only; never mix formats).
+- Writing quality — apply to all free-text fields:
+  * Never use first-person pronouns (je, moi, mon, nous, notre, j'); start every bullet with a conjugated action verb or an infinitive.
+  * Use present tense for the current or ongoing role; use past tense (passé composé or imparfait) for all former roles.
+  * Avoid cliché adjectives and filler intensifiers: do not use passionné, dynamique, motivé, polyvalent, rigoureux, très, vraiment, extrêmement, or similar; replace with concrete evidence instead.
+  * Vary action verbs — do not repeat the same verb more than twice across all highlights and summary combined.
+  * Use consistent punctuation style: if bullets end without a period, apply that to all; never mix styles.
+  * Prefer direct, concrete phrasing; remove decorative filler.
+- Impact and personalization:
+  * Bullet structure preference when facts support it: "action verb + what was done + measurable result/impact".
+  * Include quantitative evidence when available: team size, percentages, user count, volumes, time saved, revenue figures.
+  * Mention the target company (COMPANY) at least once — in summary or in a highlight — to reinforce personalization; do not invent facts.
 """.strip()
 
     if stage == "final":
@@ -212,6 +234,90 @@ OUTPUT RULES:
 - rewrite_plan: max 8 items, short phrases.
 - If contact details appear in CV_HTML, include them in must_keep_facts.
 - If the summary describes the employer/company instead of the candidate, add a high severity issue.
+""".strip()
+
+    return {"system": system_prompt, "user": user_prompt}
+
+
+def build_generic_cv_messages(
+    *,
+    language_code: str,
+    profile_block: str,
+    evidence_policy_block: str = "",
+    culture_hint: str = "",
+) -> Dict[str, str]:
+    """Build LLM messages for generic CV generation (no specific job offer).
+
+    Produces a standalone professional CV from a profile, without adapting to
+    any particular job offer. Reuses quality rules from build_cv_json_messages
+    but drops job-offer targeting, ats_keywords, and company personalisation.
+
+    Args:
+        language_code: ISO 639-1 target language code (e.g. "fr", "en", "ja").
+        profile_block: JSON-serialised profile dict (source of truth).
+        evidence_policy_block: Optional EVIDENCE_POLICY prompt block.
+        culture_hint: Optional cultural CV-writing directives for the target
+            language/country. Advisory only — never suppresses profile data.
+    """
+    _culture_section = (
+        f"\n\nCULTURE_AND_FORMAT_CONVENTIONS:\n{culture_hint.strip()}"
+        if culture_hint and culture_hint.strip()
+        else ""
+    )
+    system_prompt = (
+        "You are a professional CV writer. Return JSON only that matches the schema. "
+        "PROFILE_JSON is the single source of truth: identity, chronology, evidence, and contact facts. "
+        "Rewrite supported facts with recruiter-quality wording. "
+        "Do not invent data not present in PROFILE_JSON. "
+        "Use empty strings for unknown scalar fields and empty lists for missing sections. "
+        "All text must be in LANGUAGE; do not mix languages. "
+        "Translate any source-language profile fragments fully into LANGUAGE except proper nouns, "
+        "official product names, and established acronyms. "
+        "Avoid decorative or bullet characters inside field text."
+        + _culture_section
+    )
+
+    user_prompt = f"""
+LANGUAGE: {language_code}
+ADAPT the presentation of PROFILE_JSON facts to the cultural conventions above when provided.
+Do not invent new facts; reuse only what is present in PROFILE_JSON.
+
+PROFILE_JSON (source of truth):
+{profile_block}
+{evidence_policy_block}
+
+OUTPUT RULES:
+- Return JSON only.
+- Keep required sections even if empty lists.
+- Do not copy PROFILE_JSON sentences verbatim; rewrite with concise recruiter wording while preserving facts.
+- Do not add facts not present in PROFILE_JSON.
+- contact fields must be copied from PROFILE_JSON.personal_info when available.
+- target_company and target_job_title must be empty strings (no specific offer).
+- ats_keywords must be an empty list.
+- Never use placeholders (no [A COMPLETER], [TO COMPLETE], or bracketed tokens).
+- In field text, never use decorative special characters like \u2022 \u00ab \u00bb ^ {{}} [ ].
+- Skills items must be short noun phrases (no sentences).
+- Structure and ordering:
+  * Experience and projects must be in reverse chronological order (most recent first).
+  * Use a single consistent date format across the entire CV (prefer MM/YYYY or YYYY only).
+  * For each experience item, include a duration field when reliable start/end dates are available.
+  * For each project item, set the duration field when source evidence supports it; do not invent dates.
+- Keep output compact:
+  * experience <= 5 items, highlights <= 4 each.
+  * skills <= 4 categories, items <= 8 each.
+  * education <= 3 items.
+  * projects <= 3 items.
+  * languages <= 6 items.
+  * certifications <= 4 items.
+- Writing quality:
+  * Never use first-person pronouns; start every bullet with a strong action verb.
+  * Use present tense for current/ongoing role; past tense for former roles.
+  * Avoid cliche adjectives: passionné, dynamique, motivé, polyvalent, rigoureux, très, vraiment.
+  * Vary action verbs across all highlights and summary.
+  * Bullet structure preference when facts support it: action verb + what + measurable result/impact.
+  * Include quantitative evidence when available in PROFILE_JSON.
+- Summary: candidate-focused (role, strengths, key achievements). Do not describe employer.
+- Generate the best standalone professional CV from this profile.
 """.strip()
 
     return {"system": system_prompt, "user": user_prompt}

@@ -60,6 +60,7 @@
             {% if exp.start_date or exp.end_date %}
               {% set date_part = exp.start_date %}
               {% if exp.end_date %}{% set date_part = date_part ~ ' - ' ~ exp.end_date %}{% endif %}
+              {% if exp.duration %}{% set date_part = date_part ~ ' (' ~ exp.duration ~ ')' %}{% endif %}
               {% set _ = meta_parts.append(date_part) %}
             {% endif %}
             {% if exp.location %}{% set _ = meta_parts.append(exp.location) %}{% endif %}
@@ -134,6 +135,7 @@
           {% for proj in projects %}
           <div class="entry">
             <h3>{{ proj.name }}</h3>
+            {% if proj.duration %}<p class="meta">{{ proj.duration }}</p>{% endif %}
             {% if proj.technologies %}<p class="meta">{{ proj.technologies }}</p>{% endif %}
             {% if proj.description %}<p>{{ proj.description }}</p>{% endif %}
             {% if proj.url %}<p><a href="{{ proj.url }}">{{ proj.url }}</a></p>{% endif %}

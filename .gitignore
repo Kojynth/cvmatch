@@ -91,8 +91,6 @@ CV/*.odt
 # Generated documents (may contain personal data)
 exports/**
 output/**
-!exports/.gitkeep
-!output/.gitkeep
 
 # Job applications and cover letters (contain personalized CVs)
 job_applications/**
@@ -142,7 +140,6 @@ archive/**
 
 # Exports utilisateur (CVs, profils, lettres de motivation)
 exports/**
-!exports/.gitkeep
 
 # =============================================================================
 # 5. 🤖 MODEL & ML CACHES (large auto-downloaded files)
@@ -234,10 +231,13 @@ debug.log
 error.log
 reset_operations.log
 reset_history.json
+
+# =============================================================================
+# 23. SESSION LOGS
+# =============================================================================
 *session*.log
 logs/sessionlog/
 archive/*.log
-!logs/.gitkeep
 !archive/.gitkeep
 
 # =============================================================================
@@ -485,6 +485,36 @@ scripts/debug_*.txt
 
 # Fixtures de test LinkedIn (profils HTML sample)
 tests/unit/workers/linkedin/fixtures*.html
+
+# =============================================================================
+# 24. RE-ALLOW VERSIONED CORE TESTS AND AGENTIC OPS (MUST STAY LAST)
+# =============================================================================
+!tests/
+tests/*
+!tests/contracts/
+!tests/contracts/**
+!tests/mass_apply/
+!tests/mass_apply/**
+!tests/pipeline/
+tests/pipeline/*
+!tests/unit/
+tests/unit/*
+!tests/unit/workers/
+tests/unit/workers/*
+!scripts/tests/
+!scripts/tests/**
+!.github/
+!.github/**
+!.agents/
+!.agents/**
+!docs/architecture/
+!docs/architecture/**
+docs/architecture/next_block_refactor.md
+tests/**/__pycache__/
+tests/**/*.pyc
+scripts/tests/**/__pycache__/
+scripts/tests/**/*.pyc
+.tmp_pytest/
 
 # =============================================================================
 # SUMMARY OF PII PROTECTION

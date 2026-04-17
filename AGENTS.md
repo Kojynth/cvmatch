@@ -1,76 +1,141 @@
-# Repository Guidelines
+# Repository Operating Rules
 
-## Project Structure & Module Organization
-The PySide6 client lives in `app/` with controllers, views, widgets, workers, and shared utils. Extraction pipelines live in `cvextractor/`, powering both the GUI and automation flows. Regression suites sit in `tests/`, while `development/tests/` hosts exploratory cases and fixtures, and `development/dev_tools/` covers diagnostics. Benchmarking and maintenance scripts live in `tools/` and `scripts/` (notably `enhanced_cli.py`, installer wrappers, PII cleaners), with reference docs in `docs/`, assets in `resources/`, and environment templates in `config/`.
+## Scope
+This repository is a public desktop Python project for local CV extraction,
+profile management, CV and cover-letter generation, export rendering, history,
+and `mass_apply` automation. The project is offline-first, privacy-sensitive,
+and must stay usable on heterogeneous Windows/Linux machines.
 
-## Build, Test, and Development Commands
-`poetry install` (add `--with ai` for transformer extras) prepares dependencies. Launch the GUI with `poetry run cvmatch`; automation flows use `poetry run cvmatch-cli` or `poetry run python scripts/enhanced_cli.py`. Platform helpers `cvmatch.bat` and `./cvmatch.sh` wrap those entrypoints; installation/bootstrap scripts in this repo are `installation_cvmatch_ai_windows.bat`, `installation_cvmatch_ai_linux.sh`, `installation_cvmatch_windows.bat`, and `installation_cvmatch_linux.sh`. Run `poetry run pre-commit run --all-files` for the repository hooks currently configured in `.pre-commit-config.yaml`.
+## Canonical Layout
+- `app/`: desktop shell, domain logic, persistence adapters, integrations,
+  services, views, workers.
+- `cvextractor/`: canonical extraction engine and pipeline.
+- `config/`: model registry and environment-facing configuration.
+- `templates/`, `resources/`: rendering assets and lexicons.
+- `scripts/`: install, diagnostics, maintenance, validation helpers.
+- `tests/`: versioned contract and mass-apply suites.
+- `development/`: exploratory and local-only work. Not production source.
+- `.agents/`: operational definitions for sub-agents, skills, hooks, and MCP.
 
-## Coding Style & Naming Conventions
-Format with Black (88 columns, 4-space indentation) via `poetry run black app cvextractor tests`. Keep modules, functions, and signals in `snake_case`, classes in `PascalCase`, constants in `UPPER_SNAKE`, and mirror Qt object names with their Python attributes. Normalise imports through `poetry run isort .` and keep mypy clean with `poetry run mypy`, adding annotations for public APIs.
+## Architecture Rules
+- Keep `views/`, `controllers/`, and Qt `workers/` thin.
+- New business logic belongs in `app/domain/`.
+- Persistence, runtime, secrets, diagnostics, and model loading belong in
+  `app/infra/`.
+- Networked adapters belong in `app/integrations/`.
+- `app/utils/` is compatibility glue or genuinely generic helpers only. Do not
+  add new domain-sized logic there.
+- `cvextractor.pipeline` is the canonical extraction path. Treat
+  `cvextractor.core` as legacy or transition code.
+- `mass_apply` is an official bounded context. Do not drop it because this clone
+  is incomplete; preserve or restore it in source form before refactoring it.
 
-## CV Adaptation Invariant (Mandatory)
-When changing generation or postprocessing code, especially `app/workers/llm_worker.py` and `app/utils/cv_postprocessing.py`, preserve this invariant: keep offer adaptation creative and profile-grounded across all existing CV sections, keep deterministic minimum-schema recovery active for empty or invalid model outputs, and never introduce new factual entities. Do not create new experience or certification records; only reformulate existing profile facts.
+## Invariants
+- Never invent new candidate facts. Do not create new experiences,
+  certifications, employers, dates, or achievements.
+- Controlled inferred enrichment is allowed only when it stays implicit and
+  coherent with existing profile evidence, role context, and reliable dates or
+  durations. This may strengthen phrasing or surface qualitative impact, but it
+  must not introduce new employers, roles, projects, technologies, degrees,
+  certifications, or exact unsupported metrics.
+- Keep deterministic minimum-schema recovery active for invalid or empty LLM
+  outputs.
+- Preserve round-trip integrity across:
+  UI -> profile JSON -> DB -> generated CV JSON -> render/export/history.
+- Preserve history preview/export parity, especially profile photo behaviour.
+- `personal_info.links` stays the source of truth and maps to `contact.links`.
+- Use canonical profile keys first and legacy aliases only as explicit fallback.
 
-## Sustainable File Size & Refactoring Rule (Mandatory)
-When implementing new behavior, prefer creating a new module or file instead of continuously expanding large files. If a file is already large or a change adds substantial logic, extract cohesive helpers or services into dedicated modules with clear responsibilities. Keep functions focused, avoid god-objects and god-files, and refactor opportunistically so files remain maintainable over time.
+## Safety And Privacy
+- Use safe logging wrappers and redaction helpers for any profile, offer,
+  generated CV, or runtime diagnostics data.
+- Never commit logs, exports, screenshots, databases, caches, `.pyc`, backups,
+  or user documents.
+- Keep secrets out of source control. Use the local secure store helpers.
+- No direct network calls from views or controllers. External calls must go
+  through `app/integrations/`.
+- `mass_apply` and job-source changes must keep domain allowlists, safe URL
+  validation, and explicit human-review escape hatches for ambiguous cases.
 
-## Testing Guidelines
-Run `poetry run pytest` before every PR when feasible. Use the existing pytest markers configured in `pyproject.toml` (`gui`, `integration`) for targeted runs instead of undocumented markers. Prototype work can live in `development/tests/`, reusing data from its `fixtures/` directory after anonymising CV samples. If you run partial validation only, record the exact scope you skipped.
+## High-Risk Areas
+- `app/workers/llm_worker.py`
+- `app/workers/qwen_manager.py`
+- `app/utils/profile_json.py`
+- `app/utils/cv_postprocessing.py`
+- `app/models/database.py`
+- `app/views/profile_details_editor.py`
+- any `mass_apply`, `job_sources`, secrets, or export-history code
 
-## Commit & Pull Request Guidelines
-Write imperative commit subjects (`tighten diploma parsing`). Reference tickets in footers (`Refs #123`), separate behavioural, UI, and tooling changes, and list validation commands in the PR body. Attach screenshots for UI work and mention cache or model steps reviewers must replicate.
+## Build, Test, And Validation
+- Preferred setup: `poetry install`
+- GUI launch: `poetry run cvmatch` or repo launchers
+- CLI: `poetry run cvmatch-cli`
+- Format: `python -m black --check app cvextractor tests`
+- Imports: `python -m isort --check-only .`
+- Types: `python -m mypy app cvextractor`
+- Contracts: `python -m pytest tests/contracts -q`
+- Mass apply: `python -m pytest tests/mass_apply -q`
+- Always compile touched Python files and run the smallest relevant functional
+  suite before concluding.
 
-## Security & Data Handling
-Use the safe logging wrappers (`app.utils.safe_log.get_safe_logger` or `cvextractor.utils.log_safety.create_safe_logger_wrapper`) instead of bare `logging` when handling profile content. Reference users by internal IDs or hashed tokens rather than names or emails in artefacts, metrics, or filenames. Keep secrets in env files under `config/`, scrub data with `python scripts/clean_pii_logs_emergency.py` or the masking switches in `scripts/enhanced_cli.py`, and leave caches (`.hf_cache/`, `cache/`, `logs/`) untracked so each contributor refreshes them locally.
+## CV Generation Quality Requirements
+- Apply CV quality constraints regardless of the original job-offer language.
+  Language-specific heuristics may vary, but structural and adaptation rules
+  remain mandatory for French, English, Japanese, Chinese, and other supported
+  output languages.
+- Keep the final CV in one consistent output language unless the user
+  explicitly requests bilingual content.
+- Keep ATS-compatible structure: simple sections, parseable headings, no noisy
+  pseudo-bullets, and no decorative formatting assumptions in generated text.
+- Keep experiences and projects in reverse chronological order and use one
+  consistent date format across the full CV.
+- Include an explicit duration for each role or project when reliable dates
+  allow it.
+- Keep each role to 2-4 concise bullet points whenever the source profile
+  supports bullet rendering; prefer short action-led bullets over dense
+  narrative paragraphs.
+- Use strong action verbs, avoid first-person pronouns, keep punctuation and
+  tense consistent, and prefer `action + what + result/impact` phrasing when
+  facts support it.
+- Use target-offer keywords and company context pertinently: route them to the
+  right sections, prefer grounded evidence over lexical stuffing, and do not
+  pass a CV as high quality if the match is only terminological.
+- When metrics are explicitly available, keep them. When they are only
+  implicit, qualitative impact may be inferred, but exact numbers must not be
+  fabricated.
+- If the generated CV is lexically aligned but fails quality checks
+  (grammar/clarity, dates, ATS readability, bullet density, tense, pronouns, or
+  evidence quality), treat it as insufficient and retry or reject it.
 
-## End-to-End Pipeline Rule (Mandatory)
-Treat profile-to-CV generation as one contract pipeline: Profile Details UI input (`app/views/profile_details_editor.py` and profile sections) -> profile normalization, merge, and cache (`app/utils/profile_json.py`) -> DB save on `UserProfile` -> CV generation (`app/workers/llm_worker.py`) -> CV sanitization and postprocessing (`app/utils/cv_postprocessing.py`) -> rendering and export (`app/utils/cv_json_renderer.py`, `app/controllers/export_manager.py`, templates). Any field added or renamed in this chain must be propagated across every stage in the same change.
+## Change Propagation Rules
+- Schema or DB changes must update:
+  `app/schemas`, `app/models`, profile mapping, generation, postprocessing,
+  history, export, and tests in the same change.
+- Model additions must update:
+  model registry, runtime routing, memory heuristics, selectors, and tests.
+- Stage memory policy changes must preserve explicit host overrides and compare
+  normalized numeric values.
 
-## JSON Round-Trip Rule (Mandatory)
-For any schema evolution, preserve round-trip integrity: UI save -> Profile JSON export -> Profile JSON import -> persisted DB values -> regenerated CV JSON must keep equivalent semantic data. Update schema models (`app/schemas/profile_schema.py`, `app/schemas/cv_schema.py`), payload mapping, normalization, cache hydration, import/export conversion, and renderer fallback paths together.
+## Migration Rules
+- Prefer additive migrations, wrappers, and re-exports over big-bang moves.
+- Do not remove legacy or compatibility shims until the replacement path is in
+  source control and validated.
+- If a module exists only as `.pyc` or local artifact, do not treat it as a
+  stable source of truth. Restore or recreate tracked source first.
 
-## Contact Links Contract Rule (Mandatory)
-`personal_info.links` is the profile source of truth and must map to `contact.links` in generated CV when links exist. Keep backward compatibility for legacy link payloads (`label/url`, `platform/url`, string URLs). Keep link labels deterministic (`Lien 1`, `Lien 2`, and so on) in UI-generated rows. Do not force empty `links` arrays in final CV or contact payloads when no valid link exists.
+## Post-Edit Review
+- Perform explicit code review on every diff: bugs, regressions, assumptions,
+  missing tests.
+- Perform explicit security review on every diff: subprocess/env handling, path
+  writes, secrets, PII leakage, trust boundaries, unsafe HTML/logging.
 
-## Skills Sanitization Guardrail (Mandatory)
-When adjusting skill or category sanitization in `app/utils/cv_postprocessing.py`, do not use broad substring role detection against job titles. Use token-based overlap checks and role-token heuristics only. Never drop a valid skill phrase only because one token is ambiguous, for example `lead` in `Lead Generation`.
+## Agentic Operations
+- `.agents/subagents/contract-guardian.md`
+- `.agents/subagents/llm-runtime-worker.md`
+- `.agents/subagents/mass-apply-worker.md`
+- `.agents/skills/`
+- `.agents/mcp/README.md`
+- `.agents/hooks/README.md`
 
-## Cache Safety Rule (Mandatory)
-When storing or restoring profile editor state, deep-copy nested JSON-like structures before caching and before restore comparisons to avoid hidden in-place mutation bugs on personal info, links, and extracted section arrays.
-
-## Runtime Environment Rule (Mandatory)
-Use `PYTORCH_ALLOC_CONF`, not `PYTORCH_CUDA_ALLOC_CONF`, in startup scripts and worker bootstrap code. Keep allocator defaults consistent between shell launchers and Python workers to avoid warning noise and divergent GPU memory behavior.
-
-## Validation Rule (Mandatory)
-Before merging cross-layer data-contract changes, run at minimum syntax validation on touched Python files and one targeted functional pass for profile save, JSON export or import, CV generation, and export rendering. If full `pytest` is not feasible locally, document the exact skipped scope in the PR.
-
-## Post-Fix Coherence Rule (Mandatory)
-After fixing a bug, perform an explicit coherence pass across all coupled layers touched by the fix (registry entries, selectors, routing and fallback logic, memory or size heuristics, strict JSON parsing paths, and stage orchestration). Do not stop at the local patch: verify that identifiers, thresholds, and assumptions stay aligned end-to-end, then run at least one targeted functional check reproducing the original failure path and confirming it does not reappear.
-
-## Model Addition Coherence Rule (Mandatory)
-When adding a new model to the selectable list, treat it as a cross-layer change and update all impacted contracts in one pass: registry profile (`config/model_registry.yaml`) with consistent `model_id`, `loader`, `quantization`, `min_vram_gb`, `min_ram_gb`, `quality_stars`, and dropdown tag policy; hardware tier defaults and fallbacks; writer-quality routing preferences; runtime estimation maps (size, RAM, and time) used by model manager and memory planning; and stage/fallback assumptions that depend on model-size pattern matching. Before enabling the model in UI selection, verify backend compatibility with the current loading path (for example `AutoModelForCausalLM` plus tokenizer path); if architecture is not compatible, do not expose it as selectable until a dedicated loader path is implemented. Validate with at least one targeted end-to-end check proving the model appears in selectors and resolves coherently through routing and validation logic.
-
-## History Preview Photo Consistency Rule (Mandatory)
-For CVs opened from history, keep profile photo rendering consistent across preview and PDF export paths. If `photo_base64` is available, do not blindly prioritize legacy `raw_html` that lacks an embedded profile photo; prefer a template-rendered HTML path (or equivalent safe regeneration) so the preview and exported PDF both display the same profile image. Any change touching history data mapping, preview HTML selection, or export entrypoints must include a targeted regression check on the exact flow: History -> open CV -> Exporter en PDF preview.
-
-## Offer Term Routing Precision Rule (Mandatory)
-When adjusting offer-term routing logic (`app/utils/cv_offer_term_routing.py`) or skill recovery (`app/utils/cv_skill_recovery.py`), avoid over-routing concise skill compounds to `experience` only because they start with an action-like token. Keep noun compounds such as `test automation` in `skills` unless strong experience-object evidence is present. Handle ambiguous tokens with context-sensitive rules: uppercase `IT` must remain a technical term (skills context) and must not be auto-classified as a language alias for Italian. Any routing change must include targeted regression checks for at least: `test automation`, `IT`, `it`, and one explicit experience phrase (for example `manage team`).
-
-## Education Adaptation Non-Injection Rule (Mandatory)
-In CV offer adaptation (`app/utils/cv_postprocessing.py`), keep education enrichment generation-led and do not reintroduce deterministic synthetic bullets in `education.details` from `missing_education_terms`. Missing education terms may guide model generation, but postprocessing must not force appended sentences such as generic "aligned with ..." phrases. If adaptation behavior changes, update and keep regression tests aligned with this invariant.
-
-## Rules-Only Minimal Edit Rule (Mandatory)
-When the user asks to add rules only, or to modify existing rules without rewriting the file, apply strict minimal edits: append only the requested rule(s) or update only the explicitly requested rule block(s). Do not overwrite, reorder, delete, or rephrase unrelated sections of `AGENTS.md`.
-
-## Canonical Profile Keys Rule (Mandatory)
-When reading profile JSON for generation, postprocessing, or evidence checks, use canonical schema keys first (for example `experiences`, `education`, `skills`, `projects`) and only then optional legacy aliases as explicit fallback. Never rely on a legacy alias as the primary key. For cross-layer changes, verify key coherence between schema mapping (`app/utils/profile_json.py`) and all consumers (`app/workers/llm_worker.py`, `app/utils/cv_postprocessing.py`, `app/utils/cv_skill_recovery.py`, and related helpers) in the same change.
-
-## Stage Memory Override Rule (Mandatory)
-When adding stage-specific subprocess memory tuning (especially for `cover_letter` and other writer stages), do not blindly preserve inherited environment values and do not blindly overwrite them either. Distinguish generic launcher defaults from explicit host-specific overrides, and normalize numeric env values before comparison so equivalent values like `6.5` and `6.50` are treated identically. If a stage-specific memory profile is introduced, add targeted regression checks covering: generic parent defaults overridden as intended, explicit parent overrides preserved, and numeric-format variants of generic defaults.
-
-## Post-Edit Code Review Rule (Mandatory)
-After every code change, perform an explicit code review on the written diff before concluding the task. The review must focus on bugs, regressions, bad assumptions, and missing validation or tests in the modified paths. Report findings first when any exist; if none are found, state that explicitly.
-
-## Post-Edit Security Review Rule (Mandatory)
-After every code change, perform an explicit security review on the written diff before concluding the task. Check at minimum for unsafe subprocess or environment handling, path or file-write risks, unsafe deserialization, prompt or data leakage, PII or secret exposure in logs, and any new trust boundary violations. Report concrete findings when present; otherwise state explicitly that no security issues were found in the modified scope.
+Follow those operational definitions when delegating or automating work. Use
+hooks and scripts before spawning more reasoning.

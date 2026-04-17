@@ -16,7 +16,17 @@ classifiers = [
     "Topic :: Office/Business",
     "Topic :: Text Processing",
 ]
-packages = [{include = "cvmatch", from = "."}]
+packages = [
+    { include = "app" },
+    { include = "cvextractor" },
+    { include = "classifier" },
+]
+include = [
+    "main.py",
+    "config/model_registry.yaml",
+    "templates/**/*",
+    "resources/**/*",
+]
 
 [tool.poetry.dependencies]
 python = "^3.10"
@@ -155,7 +165,7 @@ extend-exclude = '''
 profile = "black"
 multi_line_output = 3
 line_length = 88
-known_first_party = ["cvmatch"]
+known_first_party = ["app", "cvextractor", "classifier"]
 
 [tool.mypy]
 python_version = "3.10"
@@ -174,7 +184,7 @@ exclude = [
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "-ra -q --strict-markers --tb=short"
+addopts = "-ra -q --strict-markers --tb=short --basetemp=runtime/pytest_tmp/basetemp -p no:cacheprovider"
 testpaths = ["tests"]
 qt_api = "pyside6"
 python_files = ["test_*.py", "*_test.py"]
@@ -186,7 +196,7 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 
 [tool.coverage.run]
-source = ["cvmatch"]
+source = ["app", "cvextractor", "classifier"]
 omit = [
     "*/tests/*",
     "*/test_*",

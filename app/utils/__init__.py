@@ -2,13 +2,25 @@
 CVMatch Utils Package
 ====================
 
-Package contenant les utilitaires de l'application.
+Keep package import side effects minimal.
+
+Tests and lightweight callers import submodules from ``app.utils`` directly.
+Importing parser dependencies from the package root makes those imports fail in
+reduced environments such as the contract-test CI job. ``DocumentParser``
+therefore stays available through a lazy attribute import instead of being
+loaded eagerly at package import time.
 """
 
-from .parsers import DocumentParser
+from __future__ import annotations
 
-# Éviter l'import circulaire - DatabaseManager sera importé à la demande
+from typing import Any
 
-__all__ = [
-    "DocumentParser",
-]
+__all__ = ["DocumentParser"]
+
+
+def __getattr__(name: str) -> Any:
+    if name == "DocumentParser":
+        from .parsers import DocumentParser
+
+        return DocumentParser
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -362,6 +362,43 @@ class ExportManager:
             return []
 
         try:
+            def word_count(text: Any) -> int:
+                return len(re.findall(r"\b\S+\b", str(text or "").strip()))
+
+            def looks_like_inline_pseudo_bullets(text: Any) -> bool:
+                return bool(
+                    re.search(
+                        r"(?:[:;]\s*[-•])|(?:\s-\s+\w.{15,}\s*;\s*-\s+\w)",
+                        str(text or ""),
+                        re.IGNORECASE,
+                    )
+                )
+
+            def split_inline_pseudo_bullets(text: Any) -> List[str]:
+                raw = str(text or "").strip()
+                if not raw or not looks_like_inline_pseudo_bullets(raw):
+                    return []
+                normalized = (
+                    raw.replace("•", "-")
+                    .replace("▪", "-")
+                    .replace("➜", "-")
+                    .replace("✓", "-")
+                    .replace("–", "-")
+                    .replace("—", "-")
+                )
+                if ":" in normalized:
+                    prefix, remainder = normalized.split(":", 1)
+                    if re.search(r"\s*-\s*\w", remainder):
+                        normalized = remainder
+                normalized = re.sub(r"\s*;\s*", "\n", normalized)
+                normalized = re.sub(r"(?:(?<=:)|^|\n)\s*-\s+", "\n", normalized)
+                output: List[str] = []
+                for part in normalized.splitlines():
+                    cleaned = re.sub(r"^[\s:;\-]+", "", part).strip(" ;:-")
+                    if cleaned and re.search(r"\w", cleaned, re.UNICODE):
+                        output.append(cleaned)
+                return output[:4]
+
             normalized: List[Dict[str, Any]] = []
             for exp in experience:
                 if not isinstance(exp, dict):
@@ -369,32 +406,61 @@ class ExportManager:
 
                 entry = dict(exp)
                 description_lines: List[str] = []
+                compact_lines: List[str] = []
                 description_raw = entry.get("description")
                 if isinstance(description_raw, str) and description_raw.strip():
-                    description_lines.append(description_raw.strip())
+                    parsed_description = split_inline_pseudo_bullets(description_raw)
+                    if parsed_description:
+                        description_lines.extend(parsed_description)
+                    elif not looks_like_inline_pseudo_bullets(description_raw):
+                        description_lines.append(description_raw.strip())
                 elif isinstance(description_raw, list):
                     for value in description_raw:
                         if isinstance(value, str) and value.strip():
-                            description_lines.append(value.strip())
+                            text = value.strip()
+                            parsed_text = split_inline_pseudo_bullets(text)
+                            if parsed_text:
+                                description_lines.extend(parsed_text)
+                            elif not looks_like_inline_pseudo_bullets(text):
+                                description_lines.append(text)
 
                 summary = entry.get("summary")
-                if isinstance(summary, str) and summary.strip():
-                    description_lines.insert(0, summary.strip())
-
                 highlights = entry.get("highlights")
+                cleaned_highlights: List[str] = []
                 if isinstance(highlights, list):
                     for value in highlights:
                         if isinstance(value, str) and value.strip():
-                            description_lines.append(value.strip())
+                            cleaned_highlights.append(value.strip())
+
+                has_highlights = bool(cleaned_highlights)
+                if isinstance(summary, str) and summary.strip():
+                    summary_text = summary.strip()
+                    parsed_summary = split_inline_pseudo_bullets(summary_text)
+                    if parsed_summary and not has_highlights:
+                        compact_lines.extend(parsed_summary)
+                    elif (
+                        not looks_like_inline_pseudo_bullets(summary_text)
+                        and word_count(summary_text) <= 32
+                    ):
+                        compact_lines.append(summary_text)
+                    elif not has_highlights:
+                        description_lines.insert(0, summary_text)
+
+                if has_highlights:
+                    compact_lines.extend(cleaned_highlights[:4])
+                else:
+                    compact_lines.extend(description_lines[:4])
 
                 dedup_seen = set()
                 dedup_desc: List[str] = []
-                for line in description_lines:
+                for line in compact_lines:
                     key = line.lower()
                     if key in dedup_seen:
                         continue
                     dedup_seen.add(key)
                     dedup_desc.append(line)
+                    if len(dedup_desc) >= 4:
+                        break
 
                 entry["description"] = dedup_desc
                 normalized.append(entry)
@@ -926,7 +992,7 @@ class ExportManager:
         """Crée des données d'exemple pour tester les templates."""
         return {
             "name": "Jean Dupont",
-            "email": "jean.dupont@email.com",
+            "email": "contact_placeholder",
             "phone": "+33 6 12 34 56 78",
             "linkedin_url": "https://linkedin.com/in/jean-dupont",
             "location": "Paris, France",

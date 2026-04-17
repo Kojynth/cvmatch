@@ -34,6 +34,7 @@ class ExperienceItem(BaseModel):
     location: str = ""
     summary: str = ""
     highlights: List[str] = Field(default_factory=list)
+    duration: str = ""
 
 
 class EducationItem(BaseModel):
@@ -51,6 +52,7 @@ class ProjectItem(BaseModel):
     description: str = ""
     technologies: str = ""
     url: str = ""
+    duration: str = ""
 
 
 class LanguageItem(BaseModel):
