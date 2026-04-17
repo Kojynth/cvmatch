@@ -7,6 +7,7 @@ import unicodedata
 from typing import Any, Dict, List, Optional
 
 from ..controllers.export_manager import ExportManager
+from .language_policy import text_matches_target_language
 
 
 def _normalize_description_line(value: Any) -> str:
@@ -230,7 +231,13 @@ def cv_json_to_cv_data(
     for category in cv_json.get("skills", []) or []:
         if not isinstance(category, dict):
             continue
-        items = [item for item in (category.get("items") or []) if isinstance(item, str)]
+        items = [
+            item
+            for item in (category.get("items") or [])
+            if isinstance(item, str)
+            and item.strip()
+            and text_matches_target_language(item, lang or "fr")
+        ]
         skills_section.append(
             {
                 "category": category.get("category") or "Skills",
@@ -246,12 +253,18 @@ def cv_json_to_cv_data(
         summary = item.get("summary")
         if isinstance(summary, str) and summary.strip():
             cleaned_summary = _strip_ats_unsafe_bullet_markers(summary)
-            if cleaned_summary:
+            if cleaned_summary and text_matches_target_language(
+                cleaned_summary,
+                lang or "fr",
+            ):
                 description.append(cleaned_summary)
         for highlight in item.get("highlights", []) or []:
             if isinstance(highlight, str) and highlight.strip():
                 cleaned_highlight = _strip_ats_unsafe_bullet_markers(highlight)
-                if cleaned_highlight:
+                if cleaned_highlight and text_matches_target_language(
+                    cleaned_highlight,
+                    lang or "fr",
+                ):
                     description.append(cleaned_highlight)
         description = _dedupe_description_lines(description)[:4]
         experience_section.append(
@@ -271,12 +284,19 @@ def cv_json_to_cv_data(
         if not isinstance(item, dict):
             continue
         year = item.get("end_date") or item.get("start_date") or ""
+        details = [
+            detail
+            for detail in (item.get("details") or [])
+            if isinstance(detail, str)
+            and detail.strip()
+            and text_matches_target_language(detail, lang or "fr")
+        ]
         education_section.append(
             {
                 "degree": item.get("degree") or "",
                 "institution": item.get("school") or "",
                 "year": year,
-                "description": item.get("details") or [],
+                "description": details,
             }
         )
 
@@ -304,7 +324,14 @@ def cv_json_to_cv_data(
         projects_section.append(
             {
                 "name": item.get("name") or "",
-                "description": item.get("description") or "",
+                "description": (
+                    item.get("description") or ""
+                    if text_matches_target_language(
+                        item.get("description") or "",
+                        lang or "fr",
+                    )
+                    else ""
+                ),
                 "technologies": item.get("technologies") or "",
                 "url": item.get("url") or "",
                 "duration": item.get("duration") or "",
@@ -333,7 +360,11 @@ def cv_json_to_cv_data(
         "links": contact_links,
         "job_title": cv_json.get("target_job_title") or "",
         "company": cv_json.get("target_company") or "",
-        "profile_summary": cv_json.get("summary") or "",
+        "profile_summary": (
+            cv_json.get("summary") or ""
+            if text_matches_target_language(cv_json.get("summary") or "", lang or "fr")
+            else ""
+        ),
         "experience": experience_section,
         "education": education_section,
         "skills": skills_section,

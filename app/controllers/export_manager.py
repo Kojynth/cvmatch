@@ -761,6 +761,13 @@ class ExportManager:
             return ""
 
         is_en = str((formatted_data or {}).get("language") or "").lower().startswith("en")
+        target_language = "en" if is_en else "fr"
+
+        try:
+            from ..utils.language_policy import text_matches_target_language
+        except Exception:
+            def text_matches_target_language(value, _target_language):
+                return True
 
         def _date_text(exp: Dict[str, Any]) -> str:
             start = str(exp.get("start_date") or "").strip()
@@ -773,6 +780,8 @@ class ExportManager:
             title = str(exp.get("title") or "").strip()
             company = str(exp.get("company") or "").strip()
             date_part = _date_text(exp)
+            if title and not text_matches_target_language(title, target_language):
+                title = ""
 
             head = title or company or ("Role" if is_en else "Role")
             details: List[str] = []
@@ -796,7 +805,11 @@ class ExportManager:
 
         extras: List[str] = []
 
-        skill_names = self._collect_skill_names_for_compact_summary((formatted_data or {}).get("skills"))
+        skill_names = [
+            name
+            for name in self._collect_skill_names_for_compact_summary((formatted_data or {}).get("skills"))
+            if text_matches_target_language(name, target_language)
+        ]
         if skill_names:
             shown = skill_names[:3]
             suffix = ""
@@ -805,7 +818,11 @@ class ExportManager:
             prefix = "Additional skills: " if is_en else "Competences complementaires: "
             extras.append(prefix + ", ".join(shown) + suffix)
 
-        edu_names = self._collect_education_labels_for_compact_summary((formatted_data or {}).get("education"))
+        edu_names = [
+            name
+            for name in self._collect_education_labels_for_compact_summary((formatted_data or {}).get("education"))
+            if text_matches_target_language(name, target_language)
+        ]
         if edu_names:
             shown_edu = edu_names[:2]
             suffix = ""
@@ -1113,4 +1130,3 @@ class ExportManager:
                 "Escalade", "Photographie", "Voyages"
             ]
         }
-
