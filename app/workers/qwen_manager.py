@@ -319,6 +319,39 @@ class QwenManager:
             )
         except Exception as e:
             logger.error(f"Erreur chargement config modèle: {e}")
+        if self._memory_manager is not None:
+            try:
+                self._memory_manager.update_custom_parameters(self.custom_parameters)
+            except Exception:
+                pass
+
+    def refresh_selected_model_config(self, *, unload_if_needed: bool = True) -> None:
+        """Recharge la config courante sur le singleton et libère un ancien modèle si besoin."""
+        previous_model_path = str(getattr(self, "_current_model_path", "") or "").strip()
+
+        self._load_selected_model_config()
+
+        if (
+            unload_if_needed
+            and self.model_loaded
+            and previous_model_path
+            and previous_model_path != self.model_name
+        ):
+            self.unload_model(reason="refresh selected model config")
+
+    def select_model_profile(self, model_id: str, *, reason: str = "") -> bool:
+        """Applique un choix utilisateur explicite et met à jour la cible du verrou."""
+        target_id = str(model_id or "").strip()
+        if not target_id:
+            return False
+
+        previous_selected = str(getattr(self, "_selected_model_id", "") or "").strip()
+        self._selected_model_id = target_id
+        try:
+            return self.apply_model_profile(target_id, reason=reason)
+        except Exception:
+            self._selected_model_id = previous_selected
+            raise
 
     @staticmethod
     def _has_hf_auth_token() -> bool:

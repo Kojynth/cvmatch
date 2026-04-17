@@ -257,12 +257,28 @@ class GenericCVExportWorker(QThread):
         from ..workers.qwen_manager import QwenManager
 
         manager = QwenManager()
+        refresh_config = getattr(manager, "refresh_selected_model_config", None)
+        if callable(refresh_config):
+            try:
+                refresh_config()
+            except Exception as exc:
+                logger.warning(
+                    "GenericCVExportWorker could not refresh selected model config: %s",
+                    exc,
+                )
         if self._model_id:
             try:
-                manager.apply_model_profile(
-                    self._model_id,
-                    reason="generic_cv_export",
-                )
+                select_model = getattr(manager, "select_model_profile", None)
+                if callable(select_model):
+                    select_model(
+                        self._model_id,
+                        reason="generic_cv_export",
+                    )
+                else:
+                    manager.apply_model_profile(
+                        self._model_id,
+                        reason="generic_cv_export",
+                    )
             except Exception as exc:
                 logger.warning(
                     "GenericCVExportWorker could not switch model to %s: %s",
