@@ -40,9 +40,9 @@ def _check_file(path: Path) -> list[str]:
     normalized = path.as_posix()
     failures: list[str] = []
     forbidden = None
-    if "/app/views/" in normalized:
+    if normalized.startswith("app/views/") or "/app/views/" in normalized:
         forbidden = FORBIDDEN_VIEW_IMPORTS
-    elif "/app/controllers/" in normalized:
+    elif normalized.startswith("app/controllers/") or "/app/controllers/" in normalized:
         forbidden = FORBIDDEN_CONTROLLER_IMPORTS
 
     if forbidden is None:

@@ -2224,6 +2224,8 @@ def _normalize_experience_date_formats(cv_json: Dict[str, Any]) -> None:
         norm = _normalize_single_date(s)
         if not norm:
             return s
+        if not re.fullmatch(r"\d{4}-\d{2}", str(norm)):
+            return s
         # YYYY-MM → MM/YYYY
         return f"{norm[5:7]}/{norm[:4]}"
 
