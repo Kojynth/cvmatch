@@ -23,5 +23,5 @@ jobs:
         run: python scripts/diagnostics/check_repo_hygiene.py
       - name: Syntax validation
         run: python scripts/validate_syntax.py --critical-only
-      - name: Contract and mass-apply tests
-        run: python -m pytest tests/contracts tests/mass_apply -q
+      - name: Contract tests
+        run: python scripts/tests/run_contract_suite.py

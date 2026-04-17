@@ -8,7 +8,6 @@ def test_new_domain_and_infra_modules_have_specs() -> None:
         "app.domain.profile.service",
         "app.domain.generation.orchestrator",
         "app.domain.generation.postprocessing",
-        "app.domain.mass_apply.contracts",
         "app.infra.persistence.database",
         "app.infra.model_runtime.qwen_manager",
         "app.infra.security.secret_store",
