@@ -387,6 +387,8 @@ class TemplatePreviewWindow(QMainWindow):
         self.letter_template_validated = False
         self._cv_preview_loaded = False
         self._letter_preview_loaded = False
+        self._cv_preview_dirty = True
+        self._letter_preview_dirty = True
         self._pending_pdf_path = None
         self._pending_pdf_html = None
         self._pdf_export_method = None
@@ -417,7 +419,6 @@ class TemplatePreviewWindow(QMainWindow):
         self.output_dir.mkdir(exist_ok=True)
         
         self.setup_ui()
-        self.load_template_preview()
 
     def _configure_webengine_profile(self) -> None:
         """Reduce WebEngine memory footprint for local CV/letter preview use."""
@@ -559,6 +560,8 @@ class TemplatePreviewWindow(QMainWindow):
         self.cv_data = incoming
         self._generation_audit_context_key = new_context_key
         self._generation_audit_cache = self._resolve_generation_audit()
+        self._cv_preview_dirty = True
+        self._letter_preview_dirty = True
     
     def setup_ui(self):
         """Configure l'interface utilisateur."""
@@ -1170,6 +1173,26 @@ class TemplatePreviewWindow(QMainWindow):
             return "letter"
         return "cv"
 
+    def _mark_preview_dirty(self, kind: str) -> None:
+        if kind == "letter":
+            self._letter_preview_dirty = True
+        else:
+            self._cv_preview_dirty = True
+
+    def _needs_preview_reload(self, kind: str) -> bool:
+        if kind == "letter":
+            return bool(self._letter_preview_dirty or not self._letter_preview_loaded)
+        return bool(self._cv_preview_dirty or not self._cv_preview_loaded)
+
+    def _refresh_active_preview(self, force: bool = False) -> None:
+        active = self._active_preview_kind()
+        if not force and not self._needs_preview_reload(active):
+            return
+        if active == "letter":
+            self.load_letter_preview()
+        else:
+            self.load_cv_preview()
+
     def _set_preview_loaded(self, web_view, loaded: bool) -> None:
         if web_view is self.cv_web_view:
             self._cv_preview_loaded = loaded
@@ -1226,8 +1249,8 @@ class TemplatePreviewWindow(QMainWindow):
             self.template_selector_stack.setCurrentIndex(
                 1 if index == getattr(self, "letter_tab_index", 1) else 0
             )
+        self._refresh_active_preview()
         if index == getattr(self, "letter_tab_index", 1):
-            self.load_letter_preview()
             if hasattr(self, "regenerate_button"):
                 self.regenerate_button.setText("Regénérer la lettre")
         else:
@@ -1258,8 +1281,9 @@ class TemplatePreviewWindow(QMainWindow):
         if current_data:
             self.current_template = current_data
             self.cv_template_validated = False
+            self._mark_preview_dirty("cv")
             self.update_cv_template_info()
-            self.load_cv_preview()
+            self._refresh_active_preview()
             self.status_label.setText(
                 f"Template CV '{self.TEMPLATES[current_data]['name']}' Prévisualisation - Validez pour exporter"
             )
@@ -1271,17 +1295,19 @@ class TemplatePreviewWindow(QMainWindow):
         if current_data:
             self.current_letter_template = current_data
             self.letter_template_validated = False
+            self._mark_preview_dirty("letter")
             self.update_letter_template_info()
-            self.load_letter_preview()
+            self._refresh_active_preview()
             self.status_label.setText(
                 f"Template lettre '{LETTER_TEMPLATES[current_data]['name']}' previsualise - Validez pour exporter"
             )
             self._update_export_state()
 
     def load_template_preview(self):
-        """Charge la previsualisation des deux onglets."""
-        self.load_cv_preview()
-        self.load_letter_preview()
+        """Marque les deux aperçus à rafraîchir puis charge l'onglet actif."""
+        self._mark_preview_dirty("cv")
+        self._mark_preview_dirty("letter")
+        self._refresh_active_preview(force=True)
 
     def load_cv_preview(self):
         """Charge la previsualisation du CV."""
@@ -1305,6 +1331,7 @@ class TemplatePreviewWindow(QMainWindow):
             templates_dir = Path(__file__).parent.parent.parent / "templates"
             base_url = f"file:///{str(templates_dir).replace(chr(92), '/')}/"
             self._cv_preview_loaded = False
+            self._cv_preview_dirty = False
             self.cv_web_view.setHtml(html_with_css, baseUrl=base_url)
 
             logger.info(f"Previsualisation chargee pour template: {self.current_template}")
@@ -1359,6 +1386,7 @@ class TemplatePreviewWindow(QMainWindow):
             templates_dir = Path(__file__).parent.parent.parent / "templates"
             base_url = f"file:///{str(templates_dir).replace(chr(92), '/')}/"
             self._letter_preview_loaded = False
+            self._letter_preview_dirty = False
             self.letter_web_view.setHtml(html_with_css, baseUrl=base_url)
 
             logger.info(
