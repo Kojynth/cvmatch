@@ -37,7 +37,9 @@ def _check_file(path: Path) -> list[str]:
     except Exception as exc:
         return [f"{path}: unable to parse imports ({exc})"]
 
-    normalized = path.as_posix()
+    # pre-commit may supply paths with a leading "./" — strip it so that
+    # startswith("app/views/") matches both "app/views/..." and "./app/views/...".
+    normalized = path.as_posix().removeprefix("./")
     failures: list[str] = []
     forbidden = None
     if normalized.startswith("app/views/") or "/app/views/" in normalized:
