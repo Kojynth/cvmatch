@@ -1119,12 +1119,12 @@ class TemplatePreviewWindow(QMainWindow):
             return False
 
         parent = self.parent()
-        history_widget = None
-        main_window = None
+        history_widget = getattr(self, "_history_widget_context", None)
+        main_window = getattr(self, "_main_window_context", None)
 
-        if parent is not None and hasattr(parent, "open_editor_for_application"):
+        if history_widget is None and parent is not None and hasattr(parent, "open_editor_for_application"):
             history_widget = parent
-        elif parent is not None:
+        elif main_window is None and parent is not None:
             if hasattr(parent, "history_widget"):
                 main_window = parent
             elif hasattr(parent, "main_window"):

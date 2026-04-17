@@ -400,8 +400,9 @@ class GenericCVExportDialog(QDialog):
 
         preview_payload = dict(preview_data or {})
         try:
-            preview_window = TemplatePreviewWindow(preview_payload, preview_owner)
+            preview_window = TemplatePreviewWindow(preview_payload, None)
             preview_window.setWindowFlag(Qt.Window, True)
+            cls._attach_preview_navigation_context(preview_window, preview_owner)
             cls._track_preview_window(preview_window)
             logger.info(
                 "GenericCVExportDialog: opening preview window id=%s template=%s",
@@ -426,6 +427,37 @@ class GenericCVExportDialog(QDialog):
 
     def _selected_language_code(self) -> str:
         return str(self._lang_combo.currentData() or "fr").strip() or "fr"
+
+    @staticmethod
+    def _attach_preview_navigation_context(
+        preview_window: Any,
+        preview_owner: Any,
+    ) -> None:
+        history_widget = None
+        main_window = None
+        candidate = preview_owner
+
+        if candidate is not None and hasattr(candidate, "open_editor_for_application"):
+            history_widget = candidate
+        if candidate is not None and hasattr(candidate, "history_widget"):
+            main_window = candidate
+        elif candidate is not None and hasattr(candidate, "main_window"):
+            main_window = getattr(candidate, "main_window", None)
+        elif candidate is not None:
+            try:
+                owner_window = candidate.window()
+            except Exception:
+                owner_window = None
+            if owner_window is not None and hasattr(owner_window, "history_widget"):
+                main_window = owner_window
+
+        if history_widget is None and main_window is not None:
+            history_widget = getattr(main_window, "history_widget", None)
+
+        if history_widget is not None:
+            setattr(preview_window, "_history_widget_context", history_widget)
+        if main_window is not None:
+            setattr(preview_window, "_main_window_context", main_window)
 
     def _selected_model_id(self) -> str:
         try:
