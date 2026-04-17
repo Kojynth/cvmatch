@@ -93,19 +93,16 @@ class GenericCVExportWorker(QThread):
             def _progress_cb(msg: str) -> None:
                 self._emit_progress(50, str(msg))
 
-            raw = qwen_manager.generate_structured_json(
-                messages["system"],
-                messages["user"],
+            raw_json = self._generate_cv_payload(
+                qwen_manager,
+                messages,
                 progress_callback=_progress_cb,
-                generation_overrides=self._build_generation_overrides(),
-                role="generator",
             )
 
             if self.isInterruptionRequested():
                 return
 
             self._emit_progress(80, "Post-traitement du CV...")
-            raw_json = self._parse_json_response(raw)
             cv_json = self._postprocess(raw_json)
 
             if not cv_json:
@@ -288,6 +285,46 @@ class GenericCVExportWorker(QThread):
 
     def _emit_progress(self, pct: int, msg: str) -> None:
         self.progress_updated.emit(pct, msg)
+
+    def _generate_cv_payload(
+        self,
+        qwen_manager,
+        messages: Dict[str, str],
+        progress_callback=None,
+    ) -> Dict[str, Any]:
+        try:
+            from ..schemas.cv_schema import CVJSON
+            from ..utils.json_strict import JsonStrictError, generate_json_with_schema
+
+            payload = generate_json_with_schema(
+                role="generator",
+                schema_model=CVJSON,
+                messages=messages,
+                qwen_manager=qwen_manager,
+                retries=2,
+                progress_callback=progress_callback,
+            )
+            if isinstance(payload, dict):
+                return payload
+        except JsonStrictError as exc:
+            logger.warning(
+                "GenericCVExportWorker strict CVJSON failed, retrying non-strict: %s",
+                exc,
+            )
+        except Exception as exc:
+            logger.warning(
+                "GenericCVExportWorker strict CVJSON unavailable, retrying non-strict: %s",
+                exc,
+            )
+
+        raw = qwen_manager.generate_structured_json(
+            messages["system"],
+            messages["user"],
+            progress_callback=progress_callback,
+            generation_overrides=self._build_generation_overrides(),
+            role="generator",
+        )
+        return self._parse_json_response(raw)
 
     def _build_generation_overrides(self) -> Dict[str, Any]:
         """Match the main non-strict generator retry settings for JSON stability."""

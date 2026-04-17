@@ -85,6 +85,7 @@ class GenericCVExportDialog(QDialog):
         self._worker = None
         self._cv_json: Dict[str, Any] = {}
         self._preview_cv_data: Dict[str, Any] = {}
+        self._pending_preview_payload: Dict[str, Any] = {}
         self._cancelling = False
 
         # Build language options from the profile (dynamic) with FR/EN fallback
@@ -302,6 +303,10 @@ class GenericCVExportDialog(QDialog):
 
     @classmethod
     def _forget_preview_window(cls, preview_window: Any) -> None:
+        logger.info(
+            "GenericCVExportDialog: preview window forgotten id=%s",
+            id(preview_window),
+        )
         cls._OPEN_PREVIEW_WINDOWS = [
             window
             for window in cls._OPEN_PREVIEW_WINDOWS
@@ -310,12 +315,74 @@ class GenericCVExportDialog(QDialog):
 
     @classmethod
     def _track_preview_window(cls, preview_window: Any) -> None:
+        logger.info(
+            "GenericCVExportDialog: preview window tracked id=%s",
+            id(preview_window),
+        )
         cls._OPEN_PREVIEW_WINDOWS.append(preview_window)
         preview_window.destroyed.connect(
             lambda *_args, window=preview_window, dialog_cls=cls: dialog_cls._forget_preview_window(
                 window
             )
         )
+
+    def done(self, result: int) -> None:
+        preview_payload = dict(self._pending_preview_payload or {})
+        self._pending_preview_payload = {}
+        super().done(result)
+
+        accepted = (
+            result == int(QDialog.DialogCode.Accepted)
+            or result == QDialog.DialogCode.Accepted
+        )
+        if accepted and preview_payload:
+            self.__class__._schedule_preview_window(preview_payload)
+
+    @classmethod
+    def _schedule_preview_window(cls, preview_data: Dict[str, Any]) -> None:
+        preview_payload = dict(preview_data or {})
+
+        def _open_preview() -> None:
+            cls._open_preview_window(preview_payload)
+
+        QTimer.singleShot(0, _open_preview)
+
+    @classmethod
+    def _open_preview_window(cls, preview_data: Dict[str, Any]) -> None:
+        try:
+            from app.views.template_preview_window import TemplatePreviewWindow
+        except Exception as exc:
+            logger.warning(
+                "GenericCVExportDialog: preview window unavailable after dialog close: %s",
+                exc,
+            )
+            return
+
+        preview_payload = dict(preview_data or {})
+        try:
+            preview_window = TemplatePreviewWindow(preview_payload, None)
+            preview_window.setWindowFlag(Qt.Window, True)
+            cls._track_preview_window(preview_window)
+            logger.info(
+                "GenericCVExportDialog: opening preview window id=%s template=%s",
+                id(preview_window),
+                preview_payload.get("template")
+                or preview_payload.get("template_used")
+                or "",
+            )
+            preview_window.showNormal()
+            preview_window.raise_()
+            preview_window.activateWindow()
+        except Exception as exc:
+            logger.exception(
+                "GenericCVExportDialog: failed to open preview window after dialog close: %s",
+                exc,
+            )
+            show_error(
+                f"Impossible d'ouvrir la prévisualisation du CV.\n\n{exc}",
+                title="Erreur de prévisualisation",
+                parent=None,
+            )
 
     def _selected_language_code(self) -> str:
         return str(self._lang_combo.currentData() or "fr").strip() or "fr"
@@ -341,27 +408,5 @@ class GenericCVExportDialog(QDialog):
             )
             return False
 
-        preview_payload = dict(preview_data or {})
-        preview_parent = self.parentWidget()
-
-        def _open_preview() -> None:
-            try:
-                preview_window = TemplatePreviewWindow(preview_payload, preview_parent)
-                self.__class__._track_preview_window(preview_window)
-                preview_window.show()
-                preview_window.raise_()
-                preview_window.activateWindow()
-            except Exception as exc:
-                logger.exception(
-                    "GenericCVExportDialog: failed to open preview window: %s",
-                    exc,
-                )
-                show_error(
-                    f"Impossible d'ouvrir la prévisualisation du CV.\n\n{exc}",
-                    title="Erreur de prévisualisation",
-                    parent=preview_parent or self,
-                )
-
-        QTimer.singleShot(0, _open_preview)
+        self._pending_preview_payload = dict(preview_data or {})
         return True
-

@@ -403,6 +403,11 @@ class TemplatePreviewWindow(QMainWindow):
         self.setAttribute(Qt.WA_QuitOnClose, False)
         # Ensure WebEngine resources are released when the preview is closed.
         self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.destroyed.connect(
+            lambda *_args, window_id=id(self): logger.info(
+                "TemplatePreviewWindow destroyed (id=%s)", window_id
+            )
+        )
 
         self._configure_webengine_profile()
         
@@ -822,7 +827,6 @@ class TemplatePreviewWindow(QMainWindow):
         
         # Onglets de previsualisation
         self.preview_tabs = QTabWidget()
-        self.preview_tabs.currentChanged.connect(self.on_preview_tab_changed)
 
         self.cv_web_view = QWebEngineView()
         self.cv_web_view.setStyleSheet("border: 1px solid #dee2e6; border-radius: 4px;")
@@ -855,6 +859,7 @@ class TemplatePreviewWindow(QMainWindow):
         letter_tab_layout.setContentsMargins(0, 0, 0, 0)
         letter_tab_layout.addWidget(self.letter_web_view)
         self.letter_tab_index = self.preview_tabs.addTab(letter_tab, "Lettre de motivation")
+        self.preview_tabs.currentChanged.connect(self.on_preview_tab_changed)
 
         preview_layout.addWidget(self.preview_tabs)
 
@@ -2272,7 +2277,10 @@ class TemplatePreviewWindow(QMainWindow):
             self._release_preview_resources()
             
             # LOG: Cette fenêtre se ferme, mais ce n'est PAS une fermeture de l'app principale
-            logger.info("Fermeture de la fenetre de previsualisation (fenetre secondaire)")
+            logger.info(
+                "Fermeture de la fenetre de previsualisation (fenetre secondaire, id=%s)",
+                id(self),
+            )
             
             # Accepter la fermeture sans affecter l'application principale
             event.accept()
