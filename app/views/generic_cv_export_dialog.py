@@ -15,8 +15,6 @@ Usage::
 
 from __future__ import annotations
 
-from datetime import date
-from pathlib import Path
 from typing import Any, Dict
 
 from PySide6.QtCore import QTimer, Qt
@@ -41,7 +39,7 @@ except ImportError:
 
     logger = logging.getLogger(__name__)
 
-from app.services.dialogs import save_file_dialog, show_error, show_info
+from app.services.dialogs import show_error
 from app.widgets.style_manager import apply_button_style
 
 
@@ -285,7 +283,12 @@ class GenericCVExportDialog(QDialog):
             self.accept()
             return
 
-        self._export_pdf(self._preview_cv_data, template)
+        show_error(
+            "La fenêtre de prévisualisation n'a pas pu s'ouvrir.\n"
+            "Vérifiez que les dépendances (QtWebEngine) sont bien installées.",
+            title="Prévisualisation indisponible",
+            parent=self,
+        )
 
     def _on_error(self, msg: str) -> None:
         self._generate_btn.setEnabled(True)
@@ -362,42 +365,3 @@ class GenericCVExportDialog(QDialog):
         QTimer.singleShot(0, _open_preview)
         return True
 
-    def _export_pdf(self, cv_data: dict, template: str) -> None:
-        from app.controllers.export_manager import ExportManager
-
-        today = date.today().strftime("%Y%m%d")
-        default_name = f"CV_generique_{today}.pdf"
-        export_dir = Path.cwd() / "exports"
-        export_dir.mkdir(parents=True, exist_ok=True)
-
-        path = save_file_dialog(
-            "Enregistrer le CV PDF",
-            "PDF (*.pdf)",
-            default_name=default_name,
-            directory=str(export_dir),
-            parent=self,
-        )
-        if not path:
-            return
-
-        try:
-            manager = ExportManager()
-            manager.export_cv(
-                cv_data,
-                template=template,
-                output_format="pdf",
-                output_path=path,
-            )
-            show_info(
-                f"CV exporté avec succès :\n{path}",
-                title="Export réussi",
-                parent=self,
-            )
-            self.accept()
-        except Exception as exc:
-            logger.exception("GenericCVExportDialog: PDF export error: %s", exc)
-            show_error(
-                f"Impossible d'exporter le PDF.\n\n{exc}",
-                title="Erreur d'export",
-                parent=self,
-            )
