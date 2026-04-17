@@ -152,6 +152,12 @@ def _ascii_fold(text: str) -> str:
     )
 
 
+def _is_han_only_text(text: Optional[str]) -> bool:
+    raw = str(text or "")
+    scripts = _script_flags(raw)
+    return bool(raw.strip()) and scripts == {"han"}
+
+
 def _language_marker_scores(text: Optional[str]) -> Dict[str, int]:
     folded = _ascii_fold(str(text or ""))
     tokens = re.findall(r"[a-z]+", folded)
@@ -314,14 +320,19 @@ def text_matches_target_language(
         if incompatible_scripts:
             return False
         if scripts & compatible_scripts:
+            if target == "ja" and scripts == {"han"}:
+                detected = detect_language_from_text_default(raw)
+                return detected == target
             return True
-        if token_count <= 2 and all(token in technical_singletons for token in lowered_tokens):
+        if 0 < token_count <= 2 and all(token in technical_singletons for token in lowered_tokens):
             return True
         if foreign_best > 0 and token_count >= 1:
             return False
         detected = detect_language_from_text_default(raw)
         if detected == target:
             return True
+        if scripts:
+            return False
         if token_count >= min_tokens:
             return False
         return True
@@ -350,8 +361,6 @@ def text_matches_target_language(
         return False
     if target != "fr" and marker_scores.get("fr", 0) >= 2 and target_score == 0:
         return False
-    if has_non_ascii and target in _LATIN_LANGUAGE_MARKERS and token_count >= 2:
-        return False
 
     detected = detect_language_from_text_default(raw)
     if detected == target:
@@ -379,6 +388,12 @@ def resolve_offer_language(
     if analysis_language and normalize_fn(analysis_language):
         analysis_norm = normalize_fn(analysis_language)
         if detected and detected != analysis_norm:
+            if (
+                analysis_norm == "ja"
+                and normalize_fn(detected) == "zh"
+                and _is_han_only_text(offer_text)
+            ):
+                return analysis_norm
             return normalize_fn(detected)
         return analysis_norm
 

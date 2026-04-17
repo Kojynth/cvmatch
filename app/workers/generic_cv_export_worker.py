@@ -705,15 +705,22 @@ class GenericCVExportWorker(QThread):
             return {}
 
         messages = self._build_experience_rewrite_messages(candidates)
-        raw = qwen_manager.generate_structured_json(
-            messages["system"],
-            messages["user"],
-            generation_overrides={
-                **self._build_generation_overrides(),
-                "max_new_tokens": 1200,
-            },
-            role="generator",
-        )
+        try:
+            raw = qwen_manager.generate_structured_json(
+                messages["system"],
+                messages["user"],
+                generation_overrides={
+                    **self._build_generation_overrides(),
+                    "max_new_tokens": 1200,
+                },
+                role="generator",
+            )
+        except Exception as exc:
+            logger.warning(
+                "GenericCVExportWorker experience rewrite unavailable: %s",
+                exc,
+            )
+            return {}
         return self._parse_json_response(raw)
 
     def _build_experience_rewrite_messages(
