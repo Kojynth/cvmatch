@@ -30,7 +30,11 @@ from .keyword_alignment import (
     build_keyword_alignment,
     normalize_keyword_for_match,
 )
-from .language_policy import is_mixed_or_mismatched_language, normalize_language_code
+from .language_policy import (
+    detect_language_from_text_default,
+    is_mixed_or_mismatched_language,
+    normalize_language_code,
+)
 
 
 def _dedup_preserve(items: List[str]) -> List[str]:
@@ -215,8 +219,12 @@ def _build_action_summary(
         return _trim_text(description, 280)
 
     title_text = str(title or "").strip()
+    if title_text and _is_cross_language_label(title_text, language_code=language_code):
+        title_text = ""
     if not title_text:
-        return ""
+        if is_en:
+            return "Delivered key contributions in this role."
+        return "Contributions principales realisees sur ce poste."
     if is_en:
         return _trim_text(f"Delivered key contributions as {title_text}.", 140)
     return _trim_text(f"Contributions principales realisees en tant que {title_text}.", 160)
@@ -232,6 +240,103 @@ def _is_cross_language_narrative(text: Any, *, language_code: str) -> bool:
     return is_mixed_or_mismatched_language(value, target)
 
 
+def _is_cross_language_label(text: Any, *, language_code: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+
+    target = normalize_language_code(language_code)
+    ascii_folded = (
+        raw.encode("ascii", "ignore").decode("ascii", errors="ignore").lower()
+    )
+    tokens = [token for token in re.findall(r"[a-z]+", ascii_folded) if token]
+    if not tokens:
+        return False
+
+    technical_singletons = {
+        "sql",
+        "python",
+        "java",
+        "c",
+        "csharp",
+        "react",
+        "node",
+        "api",
+        "qa",
+        "ui",
+        "ux",
+        "git",
+        "aws",
+        "gcp",
+        "azure",
+        "etl",
+        "elt",
+        "powerbi",
+        "tableau",
+        "looker",
+    }
+    if len(tokens) == 1 and tokens[0] in technical_singletons:
+        return False
+
+    fr_markers = {
+        "alternant",
+        "ingenieur",
+        "qualite",
+        "stagiaire",
+        "rediger",
+        "suivre",
+        "anomalies",
+        "plans",
+        "tests",
+        "bilans",
+        "recettes",
+        "concevoir",
+        "executer",
+        "missions",
+        "developpeur",
+        "management",
+        "systemes",
+        "donnees",
+        "ecole",
+        "superieure",
+        "certification",
+    }
+    en_markers = {
+        "engineer",
+        "apprentice",
+        "developer",
+        "manager",
+        "specialist",
+        "analyst",
+        "lead",
+        "quality",
+        "business",
+        "designer",
+        "operations",
+        "sales",
+        "intern",
+        "testing",
+        "support",
+    }
+
+    if target == "en" and set(tokens) & fr_markers:
+        return True
+    if target == "fr" and set(tokens) & en_markers:
+        return True
+
+    if any(ord(ch) > 127 for ch in raw) and len(tokens) >= 2:
+        detected = detect_language_from_text_default(raw)
+        if detected != target:
+            return True
+
+    if len(tokens) >= 3:
+        detected = detect_language_from_text_default(raw)
+        if detected != target:
+            return True
+
+    return False
+
+
 def _build_generic_profile_summary(
     *,
     is_en: bool,
@@ -241,10 +346,26 @@ def _build_generic_profile_summary(
     skill_items: List[str],
 ) -> str:
     titles = _dedup_preserve(
-        [str(title or "").strip() for title in experience_titles if str(title or "").strip()]
+        [
+            str(title or "").strip()
+            for title in experience_titles
+            if str(title or "").strip()
+            and not _is_cross_language_label(
+                title,
+                language_code=language_code,
+            )
+        ]
     )
     focus_terms = _dedup_preserve(
-        [str(item or "").strip() for item in skill_items if str(item or "").strip()]
+        [
+            str(item or "").strip()
+            for item in skill_items
+            if str(item or "").strip()
+            and not _is_cross_language_label(
+                item,
+                language_code=language_code,
+            )
+        ]
     )[:4]
 
     if is_en:
@@ -428,6 +549,7 @@ def generate_fallback_cv_json(
     language_code: str = "fr",
     offer_keywords_collector: Optional[Callable[[], List[str]]] = None,
     reason: str = "",
+    preserve_foreign_text: bool = False,
 ) -> Dict[str, Any]:
     """Generate a deterministic fallback CV JSON from profile data.
 
@@ -497,7 +619,10 @@ def generate_fallback_cv_json(
         else:
             name = item
         text = str(name or "").strip()
-        if text:
+        if text and (
+            preserve_foreign_text
+            or not _is_cross_language_label(text, language_code=language_code)
+        ):
             skill_items.append(text)
 
     if keyword_mapping:
@@ -574,15 +699,28 @@ def generate_fallback_cv_json(
             continue
         desc = str(item.get("description") or "").strip()
         company_name = str(item.get("company") or "").strip()
+        title_text = str(item.get("title") or "").strip()
         highlights = extract_experience_highlights(desc, company=company_name)
         clean_highlights = [
             _trim_text(text, 220)
             for text in highlights
             if str(text or "").strip()
-            and not _is_cross_language_narrative(text, language_code=language_code)
+            and (
+                preserve_foreign_text
+                or (
+                    not _is_cross_language_narrative(
+                        text,
+                        language_code=language_code,
+                    )
+                    and not _is_cross_language_label(
+                        text,
+                        language_code=language_code,
+                    )
+                )
+            )
         ][:4]
         summary_text = _build_action_summary(
-            title=str(item.get("title") or ""),
+            title=title_text,
             company=company_name,
             description=desc,
             highlights=clean_highlights,
@@ -590,7 +728,7 @@ def generate_fallback_cv_json(
             language_code=language_code,
         )
         mapped = {
-            "title": str(item.get("title") or ""),
+            "title": title_text,
             "company": company_name,
             "start_date": str(item.get("start_date") or ""),
             "end_date": str(item.get("end_date") or ""),
@@ -618,13 +756,19 @@ def generate_fallback_cv_json(
                     str(x).strip()
                     for x in raw
                     if str(x).strip()
-                    and not _is_cross_language_narrative(
-                        x,
-                        language_code=language_code,
+                    and (
+                        preserve_foreign_text
+                        or not _is_cross_language_narrative(
+                            x,
+                            language_code=language_code,
+                        )
                     )
                 )
             elif isinstance(raw, str) and raw.strip():
-                if not _is_cross_language_narrative(raw, language_code=language_code):
+                if preserve_foreign_text or not _is_cross_language_narrative(
+                    raw,
+                    language_code=language_code,
+                ):
                     details.append(raw.strip())
         grade = str(item.get("grade") or "").strip()
         if grade:
@@ -686,9 +830,18 @@ def generate_fallback_cv_json(
             "name": str(item.get("name") or ""),
             "description": (
                 ""
-                if _is_cross_language_narrative(
-                    item.get("description") or "",
-                    language_code=language_code,
+                if (
+                    not preserve_foreign_text
+                    and (
+                        _is_cross_language_narrative(
+                            item.get("description") or "",
+                            language_code=language_code,
+                        )
+                        or _is_cross_language_label(
+                            item.get("description") or "",
+                            language_code=language_code,
+                        )
+                    )
                 )
                 else str(item.get("description") or "")
             ),
@@ -710,7 +863,13 @@ def generate_fallback_cv_json(
             "date": str(item.get("date") or ""),
             "url": str(item.get("url") or ""),
         }
-        if mapped.get("name"):
+        if mapped.get("name") and (
+            preserve_foreign_text
+            or not _is_cross_language_label(
+                mapped.get("name"),
+                language_code=language_code,
+            )
+        ):
             cert_items.append(mapped)
     cert_items = cert_items[:4]
 
@@ -793,6 +952,7 @@ def generate_fallback_cv_json_simple(
     language_code: str = "fr",
     offer_keywords: Optional[List[str]] = None,
     reason: str = "",
+    preserve_foreign_text: bool = False,
 ) -> Dict[str, Any]:
     """Simplified fallback generator without profile_data object.
 
@@ -840,4 +1000,5 @@ def generate_fallback_cv_json_simple(
         language_code=language_code,
         offer_keywords_collector=keywords_collector if offer_keywords else None,
         reason=reason,
+        preserve_foreign_text=preserve_foreign_text,
     )

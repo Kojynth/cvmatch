@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any, Dict
 
 from PySide6.QtCore import QThread, Signal
@@ -170,6 +171,7 @@ class GenericCVExportWorker(QThread):
             fallback = self._minimal_cv_fallback(
                 self._profile_json,
                 "quality_insufficient",
+                preserve_foreign_text=True,
             )
             if isinstance(fallback, dict) and not str(fallback.get("language") or "").strip():
                 fallback["language"] = self._language_code
@@ -183,15 +185,44 @@ class GenericCVExportWorker(QThread):
             except Exception:
                 pass
             sanitize_cv_json_output(fallback, language_code=self._language_code)
+            rich_fallback = dict(fallback)
             fallback = self._repair_language_if_needed(
                 fallback,
                 stage="generic_quality_fallback",
             )
-            return fallback
+            fallback_audit = self._audit_language(fallback)
+            rich_audit = self._audit_language(rich_fallback)
+            rich_sections = set(rich_audit.get("mixed_language_sections") or [])
+            fallback_sections = set(fallback_audit.get("mixed_language_sections") or [])
+            if fallback_audit.get("language_ok", True) or len(fallback_sections) < len(rich_sections):
+                return fallback
+
+            pruned_fallback = self._minimal_cv_fallback(
+                self._profile_json,
+                "quality_insufficient_pruned",
+                preserve_foreign_text=False,
+            )
+            if isinstance(pruned_fallback, dict) and not str(pruned_fallback.get("language") or "").strip():
+                pruned_fallback["language"] = self._language_code
+            try:
+                from ..utils.cv_postprocessing import _compute_experience_durations
+
+                _compute_experience_durations(
+                    pruned_fallback,
+                    language_code=self._language_code,
+                )
+            except Exception:
+                pass
+            sanitize_cv_json_output(pruned_fallback, language_code=self._language_code)
+            return pruned_fallback
         return coerced
 
     def _minimal_cv_fallback(
-        self, profile_json: Dict[str, Any], reason: str
+        self,
+        profile_json: Dict[str, Any],
+        reason: str,
+        *,
+        preserve_foreign_text: bool = False,
     ) -> Dict[str, Any]:
         """Deterministic structural base used by coerce_generated_cv_payload.
 
@@ -208,6 +239,7 @@ class GenericCVExportWorker(QThread):
             profile_linkedin=self._get_personal("linkedin_url"),
             language_code=self._language_code,
             reason=reason,
+            preserve_foreign_text=preserve_foreign_text,
         )
 
     # ------------------------------------------------------------------
@@ -317,9 +349,11 @@ class GenericCVExportWorker(QThread):
             target_language=self._language_code,
         )
         title_issues = self._collect_language_title_issues(cv_json)
-        if title_issues:
+        skill_issues = self._collect_language_skill_issues(cv_json)
+        extra_issues = [*title_issues, *skill_issues]
+        if extra_issues:
             mixed_sections = list(audit.get("mixed_language_sections") or [])
-            for issue in title_issues:
+            for issue in extra_issues:
                 if issue not in mixed_sections:
                     mixed_sections.append(issue)
             audit["mixed_language_sections"] = mixed_sections
@@ -347,6 +381,19 @@ class GenericCVExportWorker(QThread):
             degree = str(entry.get("degree") or "").strip()
             if degree and self._title_looks_mismatched(degree):
                 issues.append(f"education_{idx}.degree")
+
+        return issues
+
+    def _collect_language_skill_issues(self, cv_json: Dict[str, Any]) -> list[str]:
+        payload = cv_json if isinstance(cv_json, dict) else {}
+        issues: list[str] = []
+
+        for block_index, block in enumerate(payload.get("skills") or [], start=1):
+            if not isinstance(block, dict):
+                continue
+            for item_index, item in enumerate(block.get("items") or [], start=1):
+                if self._text_looks_mismatched(str(item or "").strip()):
+                    issues.append(f"skills_{block_index}.item_{item_index}")
 
         return issues
 
@@ -405,6 +452,50 @@ class GenericCVExportWorker(QThread):
             return bool(tokens & fr_markers)
         return bool(tokens & en_markers)
 
+    def _text_looks_mismatched(self, text: str) -> bool:
+        from ..utils.language_policy import detect_language_from_text_default
+
+        raw = str(text or "").strip()
+        if not raw:
+            return False
+        if self._title_looks_mismatched(raw):
+            return True
+
+        words = [token for token in re.findall(r"[A-Za-zÀ-ÿ]+", raw) if token]
+        if not words:
+            return False
+        technical_short = {
+            "sql",
+            "python",
+            "java",
+            "c",
+            "c++",
+            "api",
+            "qa",
+            "aws",
+            "azure",
+            "gcp",
+            "tableau",
+            "powerbi",
+            "looker",
+            "excel",
+            "jira",
+            "gherkin",
+            "scrum",
+        }
+        lowered_words = [word.lower() for word in words]
+        if len(lowered_words) == 1 and lowered_words[0] in technical_short:
+            return False
+
+        target = "en" if str(self._language_code or "").strip().lower().startswith("en") else "fr"
+        detected = detect_language_from_text_default(raw)
+        if detected != target and (
+            len(lowered_words) >= 3
+            or any(ord(ch) > 127 for ch in raw)
+        ):
+            return True
+        return False
+
     def _emit_progress(self, pct: int, msg: str) -> None:
         self.progress_updated.emit(pct, msg)
 
@@ -454,6 +545,17 @@ class GenericCVExportWorker(QThread):
 
         repaired_audit = self._audit_language(repaired)
         if repaired_audit.get("language_ok", True):
+            return repaired
+
+        original_sections = set(language_audit.get("mixed_language_sections") or [])
+        repaired_sections = set(repaired_audit.get("mixed_language_sections") or [])
+        if repaired_sections and len(repaired_sections) < len(original_sections):
+            logger.info(
+                "GenericCVExportWorker accepted partial language repair: stage=%s before=%s after=%s",
+                stage,
+                sorted(original_sections),
+                sorted(repaired_sections),
+            )
             return repaired
 
         logger.warning(
@@ -533,7 +635,8 @@ class GenericCVExportWorker(QThread):
             "Rewrite CURRENT_CV_JSON so every natural-language field is in LANGUAGE only. "
             "Preserve chronology, contact facts, companies, dates, durations, and evidence. "
             "Use PROFILE_JSON only to verify or clarify existing facts; never add new facts. "
-            "Translate source-language role titles, degree names, summaries, highlights, and project descriptions "
+            "Translate source-language role titles, degree names, summaries, highlights, skill items, certification names, "
+            "and project descriptions "
             "when the meaning is clear. Keep proper nouns, official company names, product names, URLs, and acronyms unchanged. "
             "Do not leave mixed French/English text."
         )
@@ -551,7 +654,7 @@ OUTPUT RULES:
 - Return JSON only.
 - Keep the exact CVJSON structure.
 - Keep target_job_title and target_company unchanged.
-- Translate every narrative field fully into LANGUAGE.
+- Translate every visible human-language field fully into LANGUAGE, including titles, summaries, highlights, skill items, education labels, and certification names when possible.
 - If a phrase cannot be translated confidently without inventing facts, rewrite it conservatively in LANGUAGE.
 - Do not invent metrics, achievements, technologies, employers, projects, schools, or certifications.
 - Do not use placeholders or bracketed notes.
