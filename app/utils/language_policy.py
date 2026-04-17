@@ -3,13 +3,187 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, Dict, Optional, Tuple
+import unicodedata
+from typing import Any, Callable, Dict, Optional, Set, Tuple
+
+
+_LANGUAGE_ALIASES: Dict[str, str] = {
+    "en": "en",
+    "eng": "en",
+    "english": "en",
+    "anglais": "en",
+    "fr": "fr",
+    "fra": "fr",
+    "french": "fr",
+    "francais": "fr",
+    "français": "fr",
+    "de": "de",
+    "ger": "de",
+    "deu": "de",
+    "german": "de",
+    "deutsch": "de",
+    "allemand": "de",
+    "es": "es",
+    "spa": "es",
+    "spanish": "es",
+    "espanol": "es",
+    "español": "es",
+    "espagnol": "es",
+    "it": "it",
+    "ita": "it",
+    "italian": "it",
+    "italiano": "it",
+    "italien": "it",
+    "pt": "pt",
+    "por": "pt",
+    "portuguese": "pt",
+    "portugues": "pt",
+    "português": "pt",
+    "portugais": "pt",
+    "nl": "nl",
+    "dut": "nl",
+    "nld": "nl",
+    "dutch": "nl",
+    "nederlands": "nl",
+    "neerlandais": "nl",
+    "ja": "ja",
+    "jpn": "ja",
+    "japanese": "ja",
+    "japonais": "ja",
+    "日本語": "ja",
+    "zh": "zh",
+    "zho": "zh",
+    "chi": "zh",
+    "chinese": "zh",
+    "chinois": "zh",
+    "中文": "zh",
+    "mandarin": "zh",
+    "ko": "ko",
+    "kor": "ko",
+    "korean": "ko",
+    "coréen": "ko",
+    "coreen": "ko",
+    "한국어": "ko",
+    "ar": "ar",
+    "ara": "ar",
+    "arabic": "ar",
+    "arabe": "ar",
+    "ru": "ru",
+    "rus": "ru",
+    "russian": "ru",
+    "russe": "ru",
+    "el": "el",
+    "ell": "el",
+    "greek": "el",
+    "grec": "el",
+}
+
+_LATIN_LANGUAGE_MARKERS: Dict[str, Set[str]] = {
+    "en": {
+        "with", "role", "position", "skills", "experience", "company", "team",
+        "candidate", "development", "engineering", "quality", "testing",
+        "delivered", "supported", "built", "led", "managed", "designed",
+        "implemented", "executed", "tracked", "unit", "defect", "defects",
+        "tracking", "exploratory", "business", "developer", "manager",
+        "engineer", "responsibilities", "requirements",
+    },
+    "fr": {
+        "avec", "pour", "dans", "sur", "profil", "mission", "missions",
+        "competences", "entreprise", "equipe", "formation", "diplome",
+        "alternance", "ingenieur", "qualite", "suivre", "rediger",
+        "anomalies", "notamment", "consiste", "consistaient", "couvrent",
+        "plusieurs", "fichiers", "outils", "bilans", "recettes", "poste",
+    },
+    "de": {
+        "mit", "fur", "fuer", "erfahrung", "kenntnisse", "aufgaben",
+        "verantwortlich", "entwicklung", "qualitat", "qualitaet", "ingenieur",
+        "team", "unternehmen", "profil", "fertigkeiten", "testen", "fehler",
+        "anforderungen", "zusammenarbeit",
+    },
+    "es": {
+        "perfil", "experiencia", "habilidades", "empresa", "equipo",
+        "desarrollo", "ingeniero", "calidad", "gestion", "pruebas",
+        "seguimiento", "responsabilidades", "proyecto",
+    },
+    "it": {
+        "profilo", "esperienza", "competenze", "azienda", "squadra",
+        "sviluppo", "ingegnere", "qualita", "gestione", "test",
+        "responsabilita", "progetto",
+    },
+    "pt": {
+        "perfil", "experiencia", "habilidades", "empresa", "equipe",
+        "desenvolvimento", "engenheiro", "qualidade", "gestao", "testes",
+        "responsabilidades", "projeto",
+    },
+    "nl": {
+        "profiel", "ervaring", "vaardigheden", "bedrijf", "team",
+        "ontwikkeling", "ingenieur", "kwaliteit", "beheer", "testen",
+        "verantwoordelijkheden", "project",
+    },
+}
+
+_SCRIPT_PATTERNS: Dict[str, str] = {
+    "hiragana": r"[\u3040-\u309f]",
+    "katakana": r"[\u30a0-\u30ff]",
+    "han": r"[\u4e00-\u9fff]",
+    "hangul": r"[\uac00-\ud7af]",
+    "arabic": r"[\u0600-\u06ff]",
+    "cyrillic": r"[\u0400-\u04ff]",
+    "greek": r"[\u0370-\u03ff]",
+}
+
+_TARGET_SCRIPTS: Dict[str, Set[str]] = {
+    "ja": {"hiragana", "katakana", "han"},
+    "zh": {"han"},
+    "ko": {"hangul"},
+    "ar": {"arabic"},
+    "ru": {"cyrillic"},
+    "el": {"greek"},
+}
+
+
+def _ascii_fold(text: str) -> str:
+    return (
+        unicodedata.normalize("NFKD", str(text or ""))
+        .encode("ascii", "ignore")
+        .decode("ascii")
+        .lower()
+        .strip()
+    )
+
+
+def _language_marker_scores(text: Optional[str]) -> Dict[str, int]:
+    folded = _ascii_fold(str(text or ""))
+    tokens = re.findall(r"[a-z]+", folded)
+    scores = {lang: 0 for lang in _LATIN_LANGUAGE_MARKERS}
+    if not tokens:
+        return scores
+    for lang, markers in _LATIN_LANGUAGE_MARKERS.items():
+        scores[lang] = sum(1 for token in tokens if token in markers)
+    return scores
+
+
+def _script_flags(text: Optional[str]) -> Set[str]:
+    raw = str(text or "")
+    flags: Set[str] = set()
+    for name, pattern in _SCRIPT_PATTERNS.items():
+        if re.search(pattern, raw):
+            flags.add(name)
+    return flags
 
 
 def normalize_language_code(language: Optional[str]) -> str:
-    normalized = str(language or "").strip().lower()
-    if normalized.startswith("en"):
-        return "en"
+    raw = str(language or "").strip()
+    if not raw:
+        return "fr"
+    normalized = _ascii_fold(raw)
+    if raw in _LANGUAGE_ALIASES:
+        return _LANGUAGE_ALIASES[raw]
+    if normalized in _LANGUAGE_ALIASES:
+        return _LANGUAGE_ALIASES[normalized]
+    for alias, code in _LANGUAGE_ALIASES.items():
+        if normalized.startswith(alias):
+            return code
     return "fr"
 
 
@@ -17,77 +191,35 @@ def detect_language_from_text_default(text: Optional[str]) -> str:
     if not text or not str(text).strip():
         return "fr"
     raw = str(text)
-    lowered = raw.lower()
-    tokens = re.findall(r"[a-zA-Z]+", lowered)
-    if not tokens:
-        return "fr"
+    scripts = _script_flags(raw)
+    if "hiragana" in scripts or "katakana" in scripts:
+        return "ja"
+    if "hangul" in scripts:
+        return "ko"
+    if "arabic" in scripts:
+        return "ar"
+    if "cyrillic" in scripts:
+        return "ru"
+    if "greek" in scripts:
+        return "el"
+    if "han" in scripts:
+        return "zh"
 
-    fr_tokens = {
-        "le",
-        "la",
-        "les",
-        "des",
-        "une",
-        "un",
-        "pour",
-        "avec",
-        "dans",
-        "sur",
-        "poste",
-        "profil",
-        "mission",
-        "competences",
-        "candidature",
-        "nous",
-        "vous",
-        "entreprise",
-        "equipe",
-        "formation",
-        "diplome",
-        "alternance",
-        "stage",
-        "ingenieur",
-        "responsabilites",
-        "developpement",
-        "qualite",
-        "objet",
-        "madame",
-        "monsieur",
-        "cordialement",
-        "bonjour",
-    }
-    en_tokens = {
-        "the",
-        "and",
-        "with",
-        "role",
-        "position",
-        "responsibilities",
-        "requirements",
-        "skills",
-        "experience",
-        "company",
-        "team",
-        "apply",
-        "best",
-        "candidate",
-        "development",
-        "engineering",
-        "job",
-        "we",
-        "you",
-        "dear",
-        "sincerely",
-        "regards",
-        "subject",
-        "hello",
-    }
+    scores = _language_marker_scores(raw)
+    best_lang = "fr"
+    best_score = -1
+    second_best = -1
+    for lang, score in scores.items():
+        if score > best_score:
+            second_best = best_score
+            best_score = score
+            best_lang = lang
+        elif score > second_best:
+            second_best = score
 
-    fr_score = sum(1 for token in tokens if token in fr_tokens)
-    en_score = sum(1 for token in tokens if token in en_tokens)
-    if any(ord(ch) > 127 for ch in raw):
-        fr_score += 2
-    if en_score > fr_score + 1:
+    if best_score > 0 and best_score > second_best:
+        return best_lang
+    if scores.get("en", 0) > scores.get("fr", 0) + 1:
         return "en"
     return "fr"
 
@@ -95,68 +227,13 @@ def detect_language_from_text_default(text: Optional[str]) -> str:
 def language_token_scores(text: Optional[str]) -> Tuple[int, int, int]:
     if not text or not str(text).strip():
         return 0, 0, 0
-    lowered = str(text).lower()
-    tokens = re.findall(r"[a-zA-Z]+", lowered)
+    lowered = _ascii_fold(str(text))
+    tokens = re.findall(r"[a-z]+", lowered)
     if not tokens:
         return 0, 0, 0
-
-    fr_tokens = {
-        "le",
-        "la",
-        "les",
-        "des",
-        "une",
-        "un",
-        "pour",
-        "avec",
-        "dans",
-        "sur",
-        "poste",
-        "profil",
-        "mission",
-        "competences",
-        "candidature",
-        "nous",
-        "vous",
-        "entreprise",
-        "equipe",
-        "formation",
-        "diplome",
-        "alternance",
-        "stage",
-        "ingenieur",
-        "responsabilites",
-        "developpement",
-        "qualite",
-        "objet",
-        "madame",
-        "monsieur",
-    }
-    en_tokens = {
-        "the",
-        "and",
-        "with",
-        "role",
-        "position",
-        "responsibilities",
-        "requirements",
-        "skills",
-        "experience",
-        "company",
-        "team",
-        "apply",
-        "candidate",
-        "development",
-        "engineering",
-        "job",
-        "we",
-        "you",
-        "subject",
-        "dear",
-        "sincerely",
-    }
-    fr_score = sum(1 for token in tokens if token in fr_tokens)
-    en_score = sum(1 for token in tokens if token in en_tokens)
+    scores = _language_marker_scores(text)
+    fr_score = scores.get("fr", 0)
+    en_score = scores.get("en", 0)
     return fr_score, en_score, len(tokens)
 
 
@@ -168,26 +245,8 @@ def is_mixed_or_mismatched_language(
     detect_language_from_text: Optional[Callable[[Optional[str]], str]] = None,
 ) -> bool:
     normalize_fn = normalize_language or normalize_language_code
-    detect_fn = detect_language_from_text or detect_language_from_text_default
     target = normalize_fn(target_language)
-
-    fr_score, en_score, token_count = language_token_scores(text)
-    if token_count <= 0:
-        return False
-
-    dominant = "en" if en_score > fr_score else "fr"
-    if dominant != target and abs(en_score - fr_score) >= 2:
-        return True
-
-    mixed_ratio = min(fr_score, en_score) / max(1, (fr_score + en_score))
-    if min(fr_score, en_score) >= 4 and mixed_ratio >= 0.28:
-        return True
-
-    if token_count < 80 and (fr_score + en_score) <= 3:
-        detected = detect_fn(text)
-        if detected != target:
-            return True
-    return False
+    return not text_matches_target_language(text, target)
 
 
 def text_matches_target_language(
@@ -206,11 +265,14 @@ def text_matches_target_language(
         return True
 
     target = normalize_language_code(target_language)
-    fr_score, en_score, token_count = language_token_scores(raw)
-    if token_count <= 0:
+    folded = _ascii_fold(raw)
+    latin_tokens = re.findall(r"[a-z]+", folded)
+    token_count = len(latin_tokens)
+    scripts = _script_flags(raw)
+    if token_count <= 0 and not scripts:
         return True
 
-    lowered_tokens = [token.casefold() for token in re.findall(r"[a-zA-Z+#]+", raw)]
+    lowered_tokens = [token.casefold() for token in re.findall(r"[a-zA-Z+#]+", folded)]
     technical_singletons = {
         "sql",
         "python",
@@ -238,86 +300,63 @@ def text_matches_target_language(
     }
     if len(lowered_tokens) == 1 and lowered_tokens[0] in technical_singletons:
         return True
-    strong_fr_markers = {
-        "avec",
-        "pour",
-        "dans",
-        "sur",
-        "mes",
-        "mission",
-        "missions",
-        "competences",
-        "entreprise",
-        "equipe",
-        "formation",
-        "diplome",
-        "alternance",
-        "ingenieur",
-        "qualite",
-        "suivre",
-        "rediger",
-        "anomalies",
-        "notamment",
-        "consiste",
-        "consistaient",
-        "couvrent",
-        "plusieurs",
-        "fichiers",
-        "outils",
-        "bilans",
-        "recettes",
-    }
-    strong_en_markers = {
-        "with",
-        "role",
-        "responsibilities",
-        "skills",
-        "experience",
-        "company",
-        "team",
-        "candidate",
-        "development",
-        "engineering",
-        "quality",
-        "testing",
-        "delivered",
-        "supported",
-        "built",
-        "led",
-        "managed",
-        "designed",
-        "implemented",
-        "executed",
-        "tracked",
-        "business",
-        "developer",
-        "manager",
-        "engineer",
-    }
-    fr_hits = sum(1 for token in lowered_tokens if token in strong_fr_markers)
-    en_hits = sum(1 for token in lowered_tokens if token in strong_en_markers)
+    marker_scores = _language_marker_scores(raw)
+    target_score = marker_scores.get(target, 0)
+    foreign_best = max(
+        (score for lang, score in marker_scores.items() if lang != target),
+        default=0,
+    )
     has_non_ascii = any(ord(ch) > 127 for ch in raw)
 
-    if target == "en":
-        if fr_hits >= 2 or (has_non_ascii and token_count >= 2):
+    if target in _TARGET_SCRIPTS:
+        compatible_scripts = _TARGET_SCRIPTS[target]
+        incompatible_scripts = scripts - compatible_scripts
+        if incompatible_scripts:
             return False
-        if en_hits > 0:
+        if scripts & compatible_scripts:
             return True
+        if token_count <= 2 and all(token in technical_singletons for token in lowered_tokens):
+            return True
+        if foreign_best > 0 and token_count >= 1:
+            return False
         detected = detect_language_from_text_default(raw)
-        if detected == "en":
+        if detected == target:
             return True
-        if detected == "fr" and token_count >= min_tokens:
+        if token_count >= min_tokens:
             return False
         return True
 
-    if en_hits >= 2 and fr_hits == 0:
+    if scripts:
         return False
-    if fr_hits > 0 or has_non_ascii:
+
+    short_foreign_rejectors = {
+        "en": {"anomalie", "anomalies", "critique", "critiques", "unitaire", "unitaires"},
+        "de": {"with", "skills", "experience", "business", "developer", "manager", "engineer", "unit", "bug", "tracking"},
+        "fr": {"with", "skills", "business", "developer", "manager", "engineer", "unit", "bug", "tracking"},
+        "es": {"with", "skills", "business", "developer", "manager", "engineer", "unit", "bug", "tracking"},
+        "it": {"with", "skills", "business", "developer", "manager", "engineer", "unit", "bug", "tracking"},
+        "pt": {"with", "skills", "business", "developer", "manager", "engineer", "unit", "bug", "tracking"},
+        "nl": {"with", "skills", "business", "developer", "manager", "engineer", "unit", "bug", "tracking"},
+    }
+    reject_markers = short_foreign_rejectors.get(target, set())
+    if token_count <= 2 and any(token in reject_markers for token in lowered_tokens):
+        return False
+
+    if target_score > 0 and target_score >= foreign_best:
         return True
+    if foreign_best >= 2 and foreign_best > target_score:
+        return False
+    if target != "en" and marker_scores.get("en", 0) >= 2 and target_score == 0:
+        return False
+    if target != "fr" and marker_scores.get("fr", 0) >= 2 and target_score == 0:
+        return False
+    if has_non_ascii and target in _LATIN_LANGUAGE_MARKERS and token_count >= 2:
+        return False
+
     detected = detect_language_from_text_default(raw)
-    if detected == "fr":
+    if detected == target:
         return True
-    if detected == "en" and token_count >= min_tokens:
+    if token_count >= min_tokens and detected != target:
         return False
     return True
 
