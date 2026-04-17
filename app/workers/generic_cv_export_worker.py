@@ -665,11 +665,19 @@ class GenericCVExportWorker(QThread):
             for value in highlights
             if text_matches_target_language(value, self._language_code)
         ]
-        if translated_highlights and not self._is_generic_experience_summary(summary):
+        summary_in_target_language = bool(summary) and text_matches_target_language(
+            summary,
+            self._language_code,
+        )
+        if (
+            translated_highlights
+            and summary_in_target_language
+            and not self._is_generic_experience_summary(summary)
+        ):
             return False
         if not summary:
             return True
-        if not text_matches_target_language(summary, self._language_code):
+        if not summary_in_target_language:
             return True
         return self._is_generic_experience_summary(summary) or len(translated_highlights) < 2
 
