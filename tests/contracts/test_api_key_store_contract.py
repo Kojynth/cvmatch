@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.utils import api_key_store
+import app.utils.api_key_store as api_key_store
 
 
 def test_get_api_key_ignores_legacy_plaintext_without_keyring(monkeypatch) -> None:

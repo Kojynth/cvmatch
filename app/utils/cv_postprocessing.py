@@ -1071,21 +1071,102 @@ def _derive_profile_date_support(start_date: Any, end_date: Any) -> Dict[str, An
 
 
 def _format_duration_label(months: int, *, language_code: str = "fr") -> str:
-    is_en = language_code == "en"
-    years, rem = divmod(months, 12)
-    if is_en:
+    def normalize_language(value: Any) -> str:
+        normalized = str(value or "").strip().lower()
+        if not normalized:
+            return "fr"
+        normalized = re.split(r"[-_]", normalized, maxsplit=1)[0]
+        return normalized or "fr"
+
+    def format_word_parts(
+        total_months: int,
+        *,
+        year_singular: str,
+        year_plural: str,
+        month_singular: str,
+        month_plural: str,
+    ) -> str:
+        years, rem = divmod(total_months, 12)
         parts: List[str] = []
         if years:
-            parts.append(f"{years} yr{'s' if years > 1 else ''}")
+            year_label = year_singular if years == 1 else year_plural
+            parts.append(f"{years} {year_label}")
         if rem:
-            parts.append(f"{rem} mo{'s' if rem > 1 else ''}")
-        return " ".join(parts) if parts else "1 mo"
-    parts = []
-    if years:
-        parts.append(f"{years} an{'s' if years > 1 else ''}")
-    if rem:
-        parts.append(f"{rem} mois")
-    return " ".join(parts) if parts else "1 mois"
+            month_label = month_singular if rem == 1 else month_plural
+            parts.append(f"{rem} {month_label}")
+        if parts:
+            return " ".join(parts)
+        return f"1 {month_singular}"
+
+    def format_compact_parts(
+        total_months: int,
+        *,
+        year_unit: str,
+        month_unit: str,
+    ) -> str:
+        years, rem = divmod(total_months, 12)
+        parts: List[str] = []
+        if years:
+            parts.append(f"{years}{year_unit}")
+        if rem:
+            parts.append(f"{rem}{month_unit}")
+        if parts:
+            return " ".join(parts)
+        return f"1{month_unit}"
+
+    language = normalize_language(language_code)
+    compact_units = {
+        "ja": ("\u5e74", "\u304b\u6708"),
+        "zh": ("\u5e74", "\u4e2a\u6708"),
+        "ko": ("\ub144", "\uac1c\uc6d4"),
+        "ru": (" \u0433.", " \u043c\u0435\u0441."),
+        "pl": (" r.", " mies."),
+        "cs": (" r.", " m\u011bs."),
+    }
+    if language in compact_units:
+        year_unit, month_unit = compact_units[language]
+        return format_compact_parts(months, year_unit=year_unit, month_unit=month_unit)
+
+    word_units = {
+        "fr": ("an", "ans", "mois", "mois"),
+        "en": ("yr", "yrs", "mo", "mos"),
+        "de": ("Jahr", "Jahre", "Monat", "Monate"),
+        "es": ("a\u00f1o", "a\u00f1os", "mes", "meses"),
+        "it": ("anno", "anni", "mese", "mesi"),
+        "pt": ("ano", "anos", "m\u00eas", "meses"),
+        "nl": ("jaar", "jaar", "maand", "maanden"),
+        "ar": (
+            "\u0633\u0646\u0629",
+            "\u0633\u0646\u0648\u0627\u062a",
+            "\u0634\u0647\u0631",
+            "\u0623\u0634\u0647\u0631",
+        ),
+        "hi": ("\u0935\u0930\u094d\u0937", "\u0935\u0930\u094d\u0937", "\u092e\u093e\u0939", "\u092e\u093e\u0939"),
+        "tr": ("y\u0131l", "y\u0131l", "ay", "ay"),
+        "sv": ("\u00e5r", "\u00e5r", "m\u00e5nad", "m\u00e5nader"),
+        "no": ("\u00e5r", "\u00e5r", "m\u00e5ned", "m\u00e5neder"),
+        "da": ("\u00e5r", "\u00e5r", "m\u00e5ned", "m\u00e5neder"),
+        "fi": ("vuosi", "vuotta", "kuukausi", "kuukautta"),
+        "el": (
+            "\u03ad\u03c4\u03bf\u03c2",
+            "\u03ad\u03c4\u03b7",
+            "\u03bc\u03ae\u03bd\u03b1\u03c2",
+            "\u03bc\u03ae\u03bd\u03b5\u03c2",
+        ),
+        "ro": ("an", "ani", "lun\u0103", "luni"),
+        "hu": ("\u00e9v", "\u00e9v", "h\u00f3nap", "h\u00f3nap"),
+    }
+    year_singular, year_plural, month_singular, month_plural = word_units.get(
+        language,
+        word_units["en"] if language != "fr" else word_units["fr"],
+    )
+    return format_word_parts(
+        months,
+        year_singular=year_singular,
+        year_plural=year_plural,
+        month_singular=month_singular,
+        month_plural=month_plural,
+    )
 
 
 def _compute_duration_label(
