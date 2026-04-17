@@ -4319,7 +4319,7 @@ class CVGenerationWorker(QThread):
             missing_experience_terms=missing_experience_terms,
             missing_skills_terms=missing_skills_terms,
             missing_projects_terms=missing_projects_terms,
-            missing_education_terms=missing_education_terms_postprocess,
+            missing_education_terms=missing_education_terms,
             missing_certification_terms=missing_certification_terms,
             missing_language_terms=missing_language_terms,
             summary_term_limit=None,

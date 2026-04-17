@@ -1335,6 +1335,18 @@ def _reconcile_experience_section(
     experience_entries = cv_json.get("experience")
     if not isinstance(experience_entries, list):
         return
+    if not experience_entries:
+        seeded_count = _seed_experience_from_profile(
+            cv_json,
+            profile_json,
+            language_code=language_code,
+        )
+        if seeded_count:
+            logger.warning(
+                "Experience reconciliation rebuilt %s missing profile entries.",
+                seeded_count,
+            )
+        return
 
     profile_experiences = _extract_profile_experiences(profile_json)
     if not profile_experiences:
@@ -1883,6 +1895,45 @@ def _reconcile_languages_section(
         )
 
 
+def _rebuild_skills_section_from_profile(
+    cv_json: Dict[str, Any],
+    profile_json: Dict[str, Any],
+    *,
+    language_code: str = "fr",
+) -> None:
+    if not isinstance(cv_json, dict) or not isinstance(profile_json, dict):
+        return
+
+    try:
+        from .cv_skill_recovery import (
+            build_skill_blocks_from_profile,
+            skills_section_low_signal,
+        )
+    except Exception:
+        return
+
+    current_skills = cv_json.get("skills")
+    if (
+        isinstance(current_skills, list)
+        and current_skills
+        and not skills_section_low_signal(current_skills, profile_json)
+    ):
+        return
+
+    recovered = build_skill_blocks_from_profile(
+        profile_json,
+        language_code=language_code,
+    )
+    if not recovered:
+        return
+
+    cv_json["skills"] = recovered
+    logger.warning(
+        "Skills reconciliation rebuilt %s profile-backed blocks.",
+        len(recovered),
+    )
+
+
 def reconcile_cv_sections_with_profile(
     cv_json: Dict[str, Any],
     profile_json: Dict[str, Any],
@@ -1892,6 +1943,11 @@ def reconcile_cv_sections_with_profile(
     if not isinstance(cv_json, dict) or not isinstance(profile_json, dict):
         return
     _reconcile_experience_section(
+        cv_json,
+        profile_json,
+        language_code=language_code,
+    )
+    _rebuild_skills_section_from_profile(
         cv_json,
         profile_json,
         language_code=language_code,
@@ -2408,11 +2464,23 @@ def coerce_generated_cv_payload(
 
     # Apply keyword alignment if provided
     if keyword_alignment_fn:
-        keyword_alignment_fn(merged, critic_json)
+        try:
+            keyword_alignment_fn(merged, critic_json)
+        except Exception as exc:
+            logger.warning(
+                "Keyword alignment postprocess failed; keeping deterministic candidate: %s",
+                exc,
+            )
 
     # Apply offer adaptation if provided
     if offer_adaptation_fn:
-        offer_adaptation_fn(merged, critic_json)
+        try:
+            offer_adaptation_fn(merged, critic_json)
+        except Exception as exc:
+            logger.warning(
+                "Offer adaptation postprocess failed; keeping deterministic candidate: %s",
+                exc,
+            )
 
     # Deterministic quality pass: avoid overstuffed summary + empty bullets.
     rebalance_cv_narrative(
@@ -2432,24 +2500,31 @@ def coerce_generated_cv_payload(
     # Second offer-adaptation pass: rebalance/reconcile may overwrite
     # earlier keyword injections in summary/experience.
     if offer_adaptation_fn:
-        offer_adaptation_fn(merged, critic_json)
-        sanitize_cv_json_output(merged, language_code=language_code)
-        reconcile_cv_sections_with_profile(
-            merged,
-            profile_json,
-            language_code=language_code,
-        )
-        rebalance_cv_narrative(
-            merged,
-            profile_json=profile_json,
-            language_code=language_code,
-        )
-        sanitize_cv_json_output(merged, language_code=language_code)
-        reconcile_cv_sections_with_profile(
-            merged,
-            profile_json,
-            language_code=language_code,
-        )
+        try:
+            offer_adaptation_fn(merged, critic_json)
+        except Exception as exc:
+            logger.warning(
+                "Second-pass offer adaptation failed; keeping deterministic candidate: %s",
+                exc,
+            )
+        else:
+            sanitize_cv_json_output(merged, language_code=language_code)
+            reconcile_cv_sections_with_profile(
+                merged,
+                profile_json,
+                language_code=language_code,
+            )
+            rebalance_cv_narrative(
+                merged,
+                profile_json=profile_json,
+                language_code=language_code,
+            )
+            sanitize_cv_json_output(merged, language_code=language_code)
+            reconcile_cv_sections_with_profile(
+                merged,
+                profile_json,
+                language_code=language_code,
+            )
 
     if callable(classify_cv_payload_source):
         try:
