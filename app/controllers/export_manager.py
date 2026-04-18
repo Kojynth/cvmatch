@@ -156,7 +156,7 @@ class ExportManager:
             "contact": "Contact" if is_en else "Contact",
             "profile": "Profile" if is_en else "Profil",
             "experience": "Experience" if is_en else "Experience",
-            "additional_relevant": "Additional relevant details" if is_en else "Elements complementaires pertinents",
+            "additional_relevant": "Additional relevant details" if is_en else "Éléments complémentaires pertinents",
             "skills": "Skills" if is_en else "Competences",
             "education": "Education" if is_en else "Formation",
             "projects": "Projects" if is_en else "Projets",
@@ -188,7 +188,10 @@ class ExportManager:
         try:
             experience_data = formatted_data.get("experience")
             if experience_data is not None and isinstance(experience_data, list):
-                normalized_experience = self.format_experience(experience_data)
+                normalized_experience = self.format_experience(
+                    experience_data,
+                    language_code=formatted_data["language"],
+                )
                 job_title_hint = (
                     formatted_data.get("job_title")
                     or formatted_data.get("target_job_title")
@@ -300,24 +303,53 @@ class ExportManager:
             return []
         
         try:
+            try:
+                from ..utils.cv_skill_recovery import _clean_skill_candidate
+            except Exception:
+                def _clean_skill_candidate(value, profile_json=None):
+                    return str(value or "").strip()
+
             # Si c'est une liste simple, la convertir en structure categorisee
             if skills and len(skills) > 0 and isinstance(skills[0], str):
+                cleaned_simple_skills = []
+                for skill in skills:
+                    if not isinstance(skill, str) or not skill.strip():
+                        continue
+                    cleaned = _clean_skill_candidate(skill, None)
+                    if cleaned:
+                        cleaned_simple_skills.append(cleaned)
                 return [
                     {
                         "category": default_category,
                         "skills_list": [
                             {"name": skill, "level": None}
-                            for skill in skills
-                            if isinstance(skill, str) and skill.strip()
+                            for skill in cleaned_simple_skills
                         ],
                     }
-                ]
+                ] if cleaned_simple_skills else []
 
             normalized = []
             for block in skills:
                 if isinstance(block, dict):
                     if isinstance(block.get("skills_list"), list):
-                        normalized.append(block)
+                        filtered_skills_list = []
+                        for item in block.get("skills_list") or []:
+                            if isinstance(item, dict):
+                                name = item.get("name") or item.get("skill") or ""
+                                level = item.get("level")
+                            else:
+                                name = str(item)
+                                level = None
+                            cleaned_name = _clean_skill_candidate(name, None)
+                            if cleaned_name:
+                                filtered_skills_list.append({"name": cleaned_name, "level": level})
+                        if filtered_skills_list:
+                            normalized.append(
+                                {
+                                    "category": block.get("category") or default_category,
+                                    "skills_list": filtered_skills_list,
+                                }
+                            )
                         continue
 
                     items = block.get("items") or block.get("skills") or []
@@ -329,7 +361,7 @@ class ExportManager:
                         else:
                             name = str(item)
                             level = None
-                        name = str(name).strip()
+                        name = _clean_skill_candidate(name, None)
                         if name:
                             skills_list.append({"name": name, "level": level})
 
@@ -341,7 +373,7 @@ class ExportManager:
                             }
                         )
                 elif isinstance(block, str):
-                    name = block.strip()
+                    name = _clean_skill_candidate(block, None)
                     if not name:
                         continue
                     if not normalized:
@@ -356,12 +388,20 @@ class ExportManager:
         except Exception as e:
             logger.error(f"Erreur format_skills: {e}")
             return []
-    def format_experience(self, experience: list) -> list:
+    def format_experience(self, experience: list, language_code: str = "fr") -> list:
         """Formate l'experience pour les templates."""
         if not experience or not isinstance(experience, list):
             return []
 
         try:
+            try:
+                from ..utils.cv_postprocessing import _polish_experience_fragment
+            except Exception:
+                def _polish_experience_fragment(
+                    text, *, company="", language_code="fr", prefer_articleless=False
+                ):
+                    return str(text or "").strip()
+
             def word_count(text: Any) -> int:
                 return len(re.findall(r"\b\S+\b", str(text or "").strip()))
 
@@ -412,6 +452,46 @@ class ExportManager:
                         output.append(cleaned)
                 return output[:4]
 
+            def polish_line(
+                text: Any,
+                *,
+                company: str,
+                prefer_articleless: bool = False,
+            ) -> str:
+                return str(
+                    _polish_experience_fragment(
+                        text,
+                        company=company,
+                        language_code=language_code,
+                        prefer_articleless=prefer_articleless,
+                    )
+                    or ""
+                ).strip()
+
+            def collect_description_lines(text: Any, *, company: str) -> List[str]:
+                raw = str(text or "").strip()
+                if not raw:
+                    return []
+                parsed = split_inline_pseudo_bullets(raw)
+                candidates = (
+                    parsed
+                    if parsed
+                    else re.split(r"[\r\n]+|(?<=[\.\!\?])\s+", raw)
+                )
+                cleaned_lines: List[str] = []
+                for candidate in candidates:
+                    cleaned = polish_line(
+                        candidate,
+                        company=company,
+                        prefer_articleless=True,
+                    )
+                    if not cleaned:
+                        continue
+                    cleaned_lines.append(cleaned)
+                    if len(cleaned_lines) >= 4:
+                        break
+                return cleaned_lines
+
             normalized: List[Dict[str, Any]] = []
             for exp in experience:
                 if not isinstance(exp, dict):
@@ -419,24 +499,26 @@ class ExportManager:
 
                 entry = dict(exp)
                 entry["location"] = normalize_location(entry.get("location") or "")
+                company_name = str(entry.get("company") or "").strip()
                 description_lines: List[str] = []
                 compact_lines: List[str] = []
                 description_raw = entry.get("description")
                 if isinstance(description_raw, str) and description_raw.strip():
-                    parsed_description = split_inline_pseudo_bullets(description_raw)
-                    if parsed_description:
-                        description_lines.extend(parsed_description)
-                    elif not looks_like_inline_pseudo_bullets(description_raw):
-                        description_lines.append(description_raw.strip())
+                    description_lines.extend(
+                        collect_description_lines(
+                            description_raw,
+                            company=company_name,
+                        )
+                    )
                 elif isinstance(description_raw, list):
                     for value in description_raw:
                         if isinstance(value, str) and value.strip():
-                            text = value.strip()
-                            parsed_text = split_inline_pseudo_bullets(text)
-                            if parsed_text:
-                                description_lines.extend(parsed_text)
-                            elif not looks_like_inline_pseudo_bullets(text):
-                                description_lines.append(text)
+                            description_lines.extend(
+                                collect_description_lines(
+                                    value,
+                                    company=company_name,
+                                )
+                            )
 
                 summary = entry.get("summary")
                 highlights = entry.get("highlights")
@@ -444,7 +526,13 @@ class ExportManager:
                 if isinstance(highlights, list):
                     for value in highlights:
                         if isinstance(value, str) and value.strip():
-                            cleaned_highlights.append(value.strip())
+                            cleaned = polish_line(
+                                value,
+                                company=company_name,
+                                prefer_articleless=True,
+                            )
+                            if cleaned:
+                                cleaned_highlights.append(cleaned)
 
                 has_highlights = bool(cleaned_highlights)
                 if isinstance(summary, str) and summary.strip():
@@ -453,16 +541,31 @@ class ExportManager:
                     if is_generic_summary(summary_text):
                         parsed_summary = []
                     if parsed_summary and not has_highlights:
-                        compact_lines.extend(parsed_summary)
+                        compact_lines.extend(
+                            collect_description_lines(
+                                summary_text,
+                                company=company_name,
+                            )
+                        )
                     elif (
                         not is_generic_summary(summary_text)
                         and
                         not looks_like_inline_pseudo_bullets(summary_text)
                         and word_count(summary_text) <= 32
                     ):
-                        compact_lines.append(summary_text)
+                        cleaned_summary = polish_line(
+                            summary_text,
+                            company=company_name,
+                        )
+                        if cleaned_summary:
+                            compact_lines.append(cleaned_summary)
                     elif not has_highlights:
-                        description_lines.insert(0, summary_text)
+                        cleaned_summary = polish_line(
+                            summary_text,
+                            company=company_name,
+                        )
+                        if cleaned_summary:
+                            description_lines.insert(0, cleaned_summary)
 
                 if has_highlights:
                     compact_lines.extend(cleaned_highlights[:4])
@@ -786,6 +889,13 @@ class ExportManager:
         except Exception:
             def text_matches_target_language(value, _target_language):
                 return True
+        try:
+            from ..utils.cv_postprocessing import _polish_experience_fragment
+        except Exception:
+            def _polish_experience_fragment(
+                text, *, company="", language_code="fr", prefer_articleless=False
+            ):
+                return str(text or "").strip()
 
         def _date_text(exp: Dict[str, Any]) -> str:
             start = str(exp.get("start_date") or "").strip()
@@ -798,8 +908,44 @@ class ExportManager:
             title = str(exp.get("title") or "").strip()
             company = str(exp.get("company") or "").strip()
             date_part = _date_text(exp)
-            if title and not text_matches_target_language(title, target_language):
-                title = ""
+
+            details_text: List[str] = []
+            detail_candidates: List[str] = []
+            description = exp.get("description")
+            if isinstance(description, list):
+                detail_candidates.extend(
+                    item for item in description if isinstance(item, str) and item.strip()
+                )
+            elif isinstance(description, str) and description.strip():
+                detail_candidates.append(description)
+            summary = exp.get("summary")
+            if isinstance(summary, str) and summary.strip():
+                detail_candidates.append(summary)
+            highlights = exp.get("highlights")
+            if isinstance(highlights, list):
+                detail_candidates.extend(
+                    item for item in highlights if isinstance(item, str) and item.strip()
+                )
+
+            for candidate in detail_candidates:
+                if not text_matches_target_language(candidate, target_language):
+                    continue
+                cleaned = str(
+                    _polish_experience_fragment(
+                        candidate,
+                        company=company,
+                        language_code=target_language,
+                        prefer_articleless=True,
+                    )
+                    or ""
+                ).strip()
+                if len(re.findall(r"\b\S+\b", cleaned, flags=re.UNICODE)) < 3:
+                    continue
+                clean_detail = cleaned.rstrip(".")
+                if clean_detail not in details_text:
+                    details_text.append(clean_detail)
+                if len(details_text) >= 2:
+                    break
 
             head = title or company or ("Role" if is_en else "Role")
             details: List[str] = []
@@ -808,7 +954,9 @@ class ExportManager:
             if date_part:
                 details.append(date_part)
             if details:
-                return f"{head} ({', '.join(details)})"
+                head = f"{head} ({', '.join(details)})"
+            if details_text:
+                return f"{head} - {'; '.join(details_text)}"
             return head
 
         preview = [_exp_snippet(exp) for exp in additional_items[:4] if isinstance(exp, dict)]

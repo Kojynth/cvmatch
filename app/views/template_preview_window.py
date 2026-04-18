@@ -1119,6 +1119,7 @@ class TemplatePreviewWindow(QMainWindow):
 
     def back_to_edit(self):
         """Retourne vers l'editeur CV/lettre (Historique)."""
+        self._persist_current_edits_to_history()
         if self._navigate_to_history_editor():
             return
         if self._navigate_back_to_source_editor():
@@ -1133,6 +1134,56 @@ class TemplatePreviewWindow(QMainWindow):
             "Edition indisponible",
             "Impossible d'ouvrir l'editeur. Ouvrez l'Historique et choisissez la candidature.",
         )
+
+    def _persist_current_edits_to_history(self) -> bool:
+        application_id = self.cv_data.get("application_id")
+        if not application_id:
+            return False
+
+        history_widget = getattr(self, "_history_widget_context", None)
+        coordinator = getattr(history_widget, "coordinator", None) if history_widget is not None else None
+        if coordinator is None or not hasattr(coordinator, "save_user_edits"):
+            return False
+
+        final_cv_html = None
+        final_cv_markdown = None
+        final_cover_letter = str(self.cv_data.get("cover_letter") or "")
+
+        try:
+            editor_text = ""
+            if hasattr(self, "content_editor") and self.content_editor is not None:
+                editor_text = str(self.content_editor.toPlainText() or "")
+            html_candidate = editor_text or str(
+                self.cv_data.get("raw_html") or self.last_rendered_html or ""
+            )
+            markdown_candidate = editor_text or str(self.cv_data.get("raw_content") or "")
+
+            if html_candidate.lstrip().startswith("<"):
+                final_cv_html = html_candidate
+            elif markdown_candidate.strip():
+                final_cv_markdown = markdown_candidate
+
+            updated = coordinator.save_user_edits(
+                int(application_id),
+                final_cv_html=final_cv_html,
+                final_cv_markdown=final_cv_markdown,
+                final_cover_letter=final_cover_letter,
+            )
+            if updated is None:
+                return False
+
+            if history_widget is not None and hasattr(history_widget, "refresh_history"):
+                history_widget.refresh_history()
+            try:
+                refreshed = history_widget.get_cv_data_for_application(int(application_id))
+            except Exception:
+                refreshed = None
+            if isinstance(refreshed, dict):
+                self.set_cv_data(refreshed)
+            return True
+        except Exception as exc:
+            logger.warning(f"Sauvegarde des edits preview avant retour impossible: {exc}")
+            return False
 
     def _navigate_to_history_editor(self) -> bool:
         application_id = self.cv_data.get("application_id")
