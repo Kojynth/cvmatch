@@ -31,13 +31,15 @@ and must stay usable on heterogeneous Windows/Linux machines.
   is incomplete; preserve or restore it in source form before refactoring it.
 
 ## Invariants
-- Never invent new candidate facts. Do not create new experiences,
-  certifications, employers, dates, or achievements.
+- Do not introduce invented facts. Do not create new experiences,
+  certifications, employers, dates, achievements, or exact metrics that are not
+  grounded in the source profile.
 - Controlled inferred enrichment is allowed only when it stays implicit and
   coherent with existing profile evidence, role context, and reliable dates or
-  durations. This may strengthen phrasing or surface qualitative impact, but it
-  must not introduce new employers, roles, projects, technologies, degrees,
-  certifications, or exact unsupported metrics.
+  durations. This may strengthen phrasing, surface qualitative impact, or
+  highlight already-evidenced tools/contexts, but it must not introduce new
+  employers, roles, projects, technologies, degrees, certifications, or exact
+  unsupported metrics.
 - Keep deterministic minimum-schema recovery active for invalid or empty LLM
   outputs.
 - Preserve round-trip integrity across:

@@ -148,7 +148,7 @@ def _display_language_name(value: Any, *, is_en: bool) -> str:
     }
     labels_fr = {
         "english": "Anglais",
-        "french": "Francais",
+        "french": "Français",
         "german": "Allemand",
         "spanish": "Espagnol",
         "italian": "Italien",
@@ -172,12 +172,12 @@ def _display_language_level(value: Any, *, is_en: bool) -> str:
         return raw
     level = cefr_match.group(1)
     fr_label = {
-        "A1": "Debutant",
-        "A2": "Elementaire",
-        "B1": "Intermediaire",
-        "B2": "Intermediaire superieur",
-        "C1": "Avance",
-        "C2": "Maitrise",
+        "A1": "Débutant",
+        "A2": "Élémentaire",
+        "B1": "Intermédiaire",
+        "B2": "Intermédiaire supérieur",
+        "C1": "Avancé",
+        "C2": "Maîtrise",
     }
     en_label = {
         "A1": "Beginner",
@@ -220,13 +220,33 @@ def cv_json_to_cv_data(
         "contact": "Contact" if is_en else "Contact",
         "profile": "Profile" if is_en else "Profil",
         "experience": "Experience" if is_en else "Experience",
-        "skills": "Skills" if is_en else "Competences",
+        "skills": "Skills" if is_en else "Compétences",
         "education": "Education" if is_en else "Formation",
         "projects": "Projects" if is_en else "Projets",
         "languages": "Languages" if is_en else "Langues",
         "certifications": "Certifications" if is_en else "Certifications",
-        "interests": "Interests" if is_en else "Centres d'interet",
+        "interests": "Interests" if is_en else "Centres d'intérêt",
     }
+
+    def _entry_recency_rank(entry: Dict[str, Any]) -> int:
+        def _rank(raw: Any) -> int:
+            text = str(raw or "").strip()
+            if not text:
+                return 0
+            lowered = text.casefold()
+            if any(token in lowered for token in ("present", "current", "en cours", "aujourd")):
+                return 999912
+            month_year = re.search(r"\b(?P<m>0[1-9]|1[0-2])/(?P<y>\d{4})\b", text)
+            if month_year:
+                return int(month_year.group("y")) * 100 + int(month_year.group("m"))
+            year = re.search(r"\b(?P<y>19\d{2}|20\d{2})\b", text)
+            if year:
+                return int(year.group("y")) * 100 + 12
+            return 0
+
+        if not isinstance(entry, dict):
+            return 0
+        return _rank(entry.get("end_date")) or _rank(entry.get("start_date")) or _rank(entry.get("year"))
     skills_section: List[Dict[str, Any]] = []
     for category in cv_json.get("skills", []) or []:
         if not isinstance(category, dict):
@@ -246,9 +266,11 @@ def cv_json_to_cv_data(
         )
 
     experience_section = []
-    for item in cv_json.get("experience", []) or []:
-        if not isinstance(item, dict):
-            continue
+    for item in sorted(
+        [item for item in (cv_json.get("experience") or []) if isinstance(item, dict)],
+        key=_entry_recency_rank,
+        reverse=True,
+    ):
         description: List[str] = []
         summary = item.get("summary")
         if isinstance(summary, str) and summary.strip():
@@ -292,9 +314,11 @@ def cv_json_to_cv_data(
         )
 
     education_section = []
-    for item in cv_json.get("education", []) or []:
-        if not isinstance(item, dict):
-            continue
+    for item in sorted(
+        [item for item in (cv_json.get("education") or []) if isinstance(item, dict)],
+        key=_entry_recency_rank,
+        reverse=True,
+    ):
         year = item.get("end_date") or item.get("start_date") or ""
         details = [
             detail
@@ -410,8 +434,10 @@ def cv_json_to_markdown(cv_json: Dict[str, Any], language: Optional[str] = None)
         lines.append(f"# {name}")
 
     job_title = data.get("job_title") or ""
-    if job_title:
-        lines.append(f"## {job_title}")
+    company = data.get("company") or ""
+    if job_title or company:
+        title_line = " | ".join([part for part in [job_title, company] if part])
+        lines.append(f"## {title_line}")
 
     contact_labels = {
         "email": "Email" if data.get("language") == "en" else "Email",

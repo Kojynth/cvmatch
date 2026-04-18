@@ -156,6 +156,11 @@ OUTPUT RULES:
   * highlights: 2-4 short plain strings; each must start with a strong action verb,
     express one main idea, and include at least one term from PRIORITY_OFFER_TERMS
     or JOB_OFFER_TEXT when factual.
+  * highlights must read like recruiter bullets, not topic labels: reject noun fragments such as
+    "Validation fonctionnelle...", "Testing of...", or "Conception, execution et suivi...".
+  * When source evidence supports it, shape each highlight as: action verb + what was done + grounded effect/operational outcome.
+  * If exact metrics are absent but the effect is implicit in PROFILE_JSON, you may express a qualitative impact
+    (e.g. smoother releases, reduced manual effort, clearer reporting, stronger test coverage) without inventing numbers.
   * highlights must not start with '-', '*', digits, or decorative bullet glyphs.
   * If source description is a long paragraph or dash-separated list, condense it into these 2-4 ATS-safe highlights.
 - If PROFILE_JSON text is in another language, translate it to LANGUAGE (keep proper nouns, tools, company names).
@@ -179,9 +184,11 @@ OUTPUT RULES:
   * Avoid cliché adjectives and filler intensifiers: do not use passionné, dynamique, motivé, polyvalent, rigoureux, très, vraiment, extrêmement, or similar; replace with concrete evidence instead.
   * Vary action verbs — do not repeat the same verb more than twice across all highlights and summary combined.
   * Use consistent punctuation style: if bullets end without a period, apply that to all; never mix styles.
+  * Reject noun-fragment bullets without a verb; rewrite them into action-led recruiter bullets.
   * Prefer direct, concrete phrasing; remove decorative filler.
 - Impact and personalization:
-  * Bullet structure preference when facts support it: "action verb + what was done + measurable result/impact".
+  * Bullet structure preference when facts support it: "action verb + what was done + measurable or qualitative result/impact".
+  * If exact metrics are absent but PROFILE_JSON makes the operational effect clear, you may express a qualitative impact without inventing numbers.
   * Include quantitative evidence when available: team size, percentages, user count, volumes, time saved, revenue figures.
   * Mention the target company (COMPANY) at least once — in summary or in a highlight — to reinforce personalization; do not invent facts.
 """.strip()
@@ -314,7 +321,9 @@ OUTPUT RULES:
   * Use present tense for current/ongoing role; past tense for former roles.
   * Avoid cliche adjectives: passionné, dynamique, motivé, polyvalent, rigoureux, très, vraiment.
   * Vary action verbs across all highlights and summary.
-  * Bullet structure preference when facts support it: action verb + what + measurable result/impact.
+  * Reject noun-fragment bullets such as "Validation fonctionnelle..." or "Testing of..." without a verb; rewrite them into action-led recruiter bullets.
+  * Bullet structure preference when facts support it: action verb + what + measurable or qualitative result/impact.
+  * If exact metrics are absent but PROFILE_JSON makes the operational effect clear, you may express a qualitative impact without inventing numbers.
   * Include quantitative evidence when available in PROFILE_JSON.
 - Summary: candidate-focused (role, strengths, key achievements). Do not describe employer.
 - Generate the best standalone professional CV from this profile.

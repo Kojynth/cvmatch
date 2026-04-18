@@ -1042,6 +1042,196 @@ _ARTICLE_PREFIX_PATTERNS = {
     ),
 }
 
+_ACTION_LEAD_TOKENS = {
+    "fr": {
+        "accompagne",
+        "ameliore",
+        "analyse",
+        "anime",
+        "assure",
+        "automatise",
+        "collabore",
+        "concoit",
+        "conseille",
+        "consolide",
+        "contribue",
+        "coordonne",
+        "cree",
+        "definit",
+        "deploie",
+        "developpe",
+        "documente",
+        "execute",
+        "fiabilise",
+        "gere",
+        "identifie",
+        "implemente",
+        "met",
+        "mene",
+        "optimise",
+        "pilote",
+        "prepare",
+        "qualifie",
+        "realise",
+        "redige",
+        "renforce",
+        "revoit",
+        "soutient",
+        "structure",
+        "suit",
+        "supervise",
+        "teste",
+        "valide",
+    },
+    "en": {
+        "accelerated",
+        "analyzed",
+        "automated",
+        "built",
+        "coordinated",
+        "created",
+        "defined",
+        "delivered",
+        "designed",
+        "developed",
+        "documented",
+        "drove",
+        "executed",
+        "implemented",
+        "improved",
+        "led",
+        "managed",
+        "optimized",
+        "prepared",
+        "qualified",
+        "reduced",
+        "reviewed",
+        "streamlined",
+        "structured",
+        "supported",
+        "tested",
+        "tracked",
+        "validated",
+    },
+}
+
+_ACTIONIZED_SERIES_PATTERNS = {
+    "fr": (
+        (
+            re.compile(
+                r"^(?:la\s+)?conception,\s*(?:l[\u0027\u2019])?execution\s+et\s+le\s+suivi\s+"
+                r"(?P<object>(?:des?|du|de la|de l[\u0027\u2019])\s+.+)$",
+                re.IGNORECASE,
+            ),
+            lambda match: f"Concevoir, executer et suivre {match.group('object')}",
+        ),
+        (
+            re.compile(
+                r"^(?:la\s+)?redaction\s+et\s+le\s+suivi\s+"
+                r"(?P<object>(?:des?|du|de la|de l[\u0027\u2019])\s+.+)$",
+                re.IGNORECASE,
+            ),
+            lambda match: f"Rediger et suivre {match.group('object')}",
+        ),
+    ),
+}
+
+_ACTIONIZED_PREFIX_PATTERNS = {
+    "fr": (
+        (re.compile(r"^(?:la\s+)?validation\b", re.IGNORECASE), "Assurer la validation"),
+        (re.compile(r"^(?:la\s+)?qualit[eé]\b", re.IGNORECASE), "Renforcer la qualite"),
+        (re.compile(r"^(?:la\s+)?qualification\b", re.IGNORECASE), "Assurer la qualification"),
+        (re.compile(r"^(?:la\s+)?coordination\b", re.IGNORECASE), "Coordonner"),
+        (re.compile(r"^(?:la\s+)?conception\b", re.IGNORECASE), "Piloter la conception"),
+        (re.compile(r"^(?:l[\u0027\u2019])?execution\b", re.IGNORECASE), "Piloter l'execution"),
+        (re.compile(r"^(?:le\s+)?suivi\b", re.IGNORECASE), "Assurer le suivi"),
+        (re.compile(r"^(?:la\s+)?redaction\b", re.IGNORECASE), "Rediger"),
+        (re.compile(r"^(?:la\s+)?revue\b", re.IGNORECASE), "Revoir"),
+        (re.compile(r"^(?:l[\u0027\u2019])?analyse\b", re.IGNORECASE), "Analyser"),
+        (re.compile(r"^(?:l[\u0027\u2019])?optimisation\b", re.IGNORECASE), "Optimiser"),
+        (re.compile(r"^(?:l[\u0027\u2019])?automatisation\b", re.IGNORECASE), "Automatiser"),
+        (re.compile(r"^(?:le\s+)?benchmark\b", re.IGNORECASE), "Mener un benchmark"),
+        (re.compile(r"^(?:le\s+)?pilotage\b", re.IGNORECASE), "Piloter"),
+        (re.compile(r"^(?:la\s+)?gestion\b", re.IGNORECASE), "Gerer"),
+        (re.compile(r"^(?:la\s+)?documentation\b", re.IGNORECASE), "Documenter"),
+        (re.compile(r"^(?:les?\s+)?tests?\b", re.IGNORECASE), "Executer des tests"),
+    ),
+    "en": (
+        (re.compile(r"^validation\b", re.IGNORECASE), "Led validation"),
+        (re.compile(r"^testing\b", re.IGNORECASE), "Executed testing"),
+        (re.compile(r"^test\b", re.IGNORECASE), "Executed tests"),
+        (re.compile(r"^automation\b", re.IGNORECASE), "Automated"),
+        (re.compile(r"^analysis\b", re.IGNORECASE), "Analyzed"),
+        (re.compile(r"^review\b", re.IGNORECASE), "Reviewed"),
+        (re.compile(r"^documentation\b", re.IGNORECASE), "Documented"),
+        (re.compile(r"^tracking\b", re.IGNORECASE), "Tracked"),
+        (re.compile(r"^coordination\b", re.IGNORECASE), "Coordinated"),
+        (re.compile(r"^optimization\b", re.IGNORECASE), "Optimized"),
+        (re.compile(r"^implementation\b", re.IGNORECASE), "Implemented"),
+        (re.compile(r"^support\b", re.IGNORECASE), "Supported"),
+    ),
+}
+
+
+def _starts_with_action_phrase(text: Any, *, language_code: str = "fr") -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+
+    language = str(language_code or "fr").strip().lower().split("-", 1)[0]
+    normalized = _normalize_for_match(raw)
+    if not normalized:
+        return False
+
+    if language == "fr" and normalized.startswith(("mettre en place ", "mis en place ")):
+        return True
+    if language == "en" and normalized.startswith(("set up ", "setting up ")):
+        return True
+
+    first_token = normalized.split(" ", 1)[0]
+    if not first_token:
+        return False
+
+    if first_token in _ACTION_LEAD_TOKENS.get(language, set()):
+        return True
+    if language == "fr" and re.fullmatch(r"[a-z]+(?:er|ir|re)", first_token):
+        return True
+    if language == "en" and (
+        first_token.endswith("ed")
+        or first_token in {"build", "drive", "lead", "manage", "review", "support", "test", "track", "validate"}
+    ):
+        return True
+    return False
+
+
+def _actionize_experience_fragment(text: Any, *, language_code: str = "fr") -> str:
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+
+    language = str(language_code or "fr").strip().lower().split("-", 1)[0]
+    if _starts_with_action_phrase(raw, language_code=language):
+        return raw
+
+    for pattern, builder in _ACTIONIZED_SERIES_PATTERNS.get(language, ()):
+        match = pattern.match(raw)
+        if not match:
+            continue
+        rewritten = str(builder(match) or "").strip(" ;,.-")
+        if rewritten:
+            return rewritten
+
+    for pattern, replacement in _ACTIONIZED_PREFIX_PATTERNS.get(language, ()):
+        match = pattern.match(raw)
+        if not match:
+            continue
+        remainder = raw[match.end() :].lstrip(" ,;:-")
+        rewritten = f"{replacement} {remainder}".strip(" ;,.-")
+        if rewritten:
+            return rewritten
+
+    return raw
+
 
 def _looks_like_company_description(text: str, company: str = "") -> bool:
     normalized = _normalize_for_match(text)
@@ -1126,6 +1316,7 @@ def _polish_experience_fragment(
             if updated and updated != raw:
                 raw = updated
                 break
+        raw = _actionize_experience_fragment(raw, language_code=language)
 
     raw = re.sub(r"\s{2,}", " ", raw).strip(" ;,.-")
     if not raw or _looks_like_company_description(raw, company):

@@ -760,6 +760,19 @@ class GenericCVExportWorker(QThread):
         ):
             return True
 
+        try:
+            from ..utils.cv_postprocessing import _starts_with_action_phrase
+        except Exception:
+            _starts_with_action_phrase = None
+
+        if (
+            not is_summary
+            and _starts_with_action_phrase is not None
+            and word_count >= 4
+            and not _starts_with_action_phrase(raw, language_code=self._language_code)
+        ):
+            return True
+
         return False
 
     @staticmethod
@@ -830,6 +843,9 @@ OUTPUT RULES:
 - Do not use placeholders such as "Delivered key contributions in this role."
 - Do not copy SOURCE_DESCRIPTION verbatim; rewrite it into concise CV wording.
 - Remove company boilerplate, first-person phrasing, and weak lead-ins such as "Mes missions couvrent".
+- Each highlight must follow: action verb + concrete task + grounded effect or operational outcome when the source supports it.
+- When SOURCE_DESCRIPTION implies an outcome but gives no exact metric, you may express a qualitative impact in LANGUAGE (for example: clearer reporting, smoother releases, reduced manual work, stronger test coverage) without inventing numbers.
+- Reject noun-fragment bullets such as "Validation fonctionnelle..." or "Conception, execution et suivi..."; rewrite them into verb-led recruiter bullets.
 - Use strong action verbs and one idea per highlight.
 - Start each highlight with a clear action verb or infinitive in LANGUAGE.
 - If CURRENT_SUMMARY or CURRENT_HIGHLIGHTS are already strong and in LANGUAGE, you may keep them.
