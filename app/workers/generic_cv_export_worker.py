@@ -666,10 +666,26 @@ class GenericCVExportWorker(QThread):
             for value in highlights
             if text_matches_target_language(value, self._language_code)
         ]
+        company_name = str(entry.get("company") or "").strip()
         summary_in_target_language = bool(summary) and text_matches_target_language(
             summary,
             self._language_code,
         )
+        if summary and self._experience_text_needs_rewrite(
+            summary,
+            company=company_name,
+            is_summary=True,
+        ):
+            return True
+        if any(
+            self._experience_text_needs_rewrite(
+                value,
+                company=company_name,
+                is_summary=False,
+            )
+            for value in translated_highlights
+        ):
+            return True
         if (
             translated_highlights
             and summary_in_target_language
@@ -681,6 +697,70 @@ class GenericCVExportWorker(QThread):
         if not summary_in_target_language:
             return True
         return self._is_generic_experience_summary(summary) or len(translated_highlights) < 2
+
+    def _experience_text_needs_rewrite(
+        self,
+        text: str,
+        *,
+        company: str,
+        is_summary: bool,
+    ) -> bool:
+        raw = str(text or "").strip()
+        if not raw:
+            return False
+
+        lowered = raw.lower()
+        word_count = len(re.findall(r"\b\w+\b", raw, flags=re.UNICODE))
+        if word_count == 0:
+            return False
+
+        if raw.endswith(":"):
+            return True
+        if not is_summary and raw[:1].islower() and word_count >= 4:
+            return True
+        if word_count > (24 if is_summary else 20):
+            return True
+
+        if any(
+            marker in lowered
+            for marker in (
+                "mes missions",
+                "my responsibilities",
+                "responsibilities included",
+                "i worked",
+                "i supported",
+                "j'interviens",
+                "j'assure",
+                "j'ai",
+            )
+        ):
+            return True
+
+        try:
+            from ..utils.cv_fallback_generator import (
+                _contains_first_person_reference,
+                _looks_like_company_description,
+            )
+        except Exception:
+            _contains_first_person_reference = None
+            _looks_like_company_description = None
+
+        if (
+            _contains_first_person_reference is not None
+            and _contains_first_person_reference(
+                raw,
+                language_code=self._language_code,
+            )
+        ):
+            return True
+
+        if (
+            _looks_like_company_description is not None
+            and _looks_like_company_description(raw, company)
+        ):
+            return True
+
+        return False
 
     @staticmethod
     def _is_generic_experience_summary(text: str) -> bool:
@@ -743,12 +823,15 @@ EXPERIENCES_TO_REWRITE:
 OUTPUT RULES:
 - Return JSON only with the shape: {{"items": [{{"index": 0, "summary": "...", "highlights": ["...", "..."]}}]}}
 - Keep the same index values.
-- summary: exactly 1 compact sentence, factual, not generic.
+- summary: exactly 1 compact sentence, factual, recruiter-facing, not generic.
 - highlights: 2 to 4 short ATS-safe lines when SOURCE_DESCRIPTION supports them.
 - Translate SOURCE_DESCRIPTION fully into LANGUAGE when needed.
 - Do not leave French text when LANGUAGE is English.
 - Do not use placeholders such as "Delivered key contributions in this role."
+- Do not copy SOURCE_DESCRIPTION verbatim; rewrite it into concise CV wording.
+- Remove company boilerplate, first-person phrasing, and weak lead-ins such as "Mes missions couvrent".
 - Use strong action verbs and one idea per highlight.
+- Start each highlight with a clear action verb or infinitive in LANGUAGE.
 - If CURRENT_SUMMARY or CURRENT_HIGHLIGHTS are already strong and in LANGUAGE, you may keep them.
 """.strip()
         return {"system": system_prompt, "user": user_prompt}
