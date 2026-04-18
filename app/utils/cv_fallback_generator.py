@@ -37,6 +37,64 @@ from .language_policy import (
 )
 
 
+_FIRST_PERSON_HINTS = {
+    "fr": (
+        r"\bje\b",
+        r"\bj['’]",
+        r"\bmon\b",
+        r"\bma\b",
+        r"\bmes\b",
+        r"\bnous\b",
+        r"\bnotre\b",
+        r"\bnos\b",
+        r"\bmes missions\b",
+        r"\bj'interviens\b",
+        r"\bj'assure\b",
+    ),
+    "en": (
+        r"\bi\b",
+        r"\bmy\b",
+        r"\bme\b",
+        r"\bwe\b",
+        r"\bour\b",
+        r"\bmy responsibilities\b",
+        r"\bi worked\b",
+        r"\bi supported\b",
+    ),
+}
+
+_SUMMARY_ACTION_REJECTORS = {
+    "fr": {
+        "concevoir",
+        "executer",
+        "rediger",
+        "suivre",
+        "proposer",
+        "automatiser",
+        "consolider",
+        "fiabiliser",
+        "assurer",
+        "realiser",
+        "gerer",
+        "coordonner",
+    },
+    "en": {
+        "design",
+        "build",
+        "write",
+        "track",
+        "execute",
+        "support",
+        "lead",
+        "manage",
+        "deliver",
+        "develop",
+        "coordinate",
+        "improve",
+    },
+}
+
+
 def _dedup_preserve(items: List[str]) -> List[str]:
     """Deduplicate list while preserving order."""
     seen: set = set()
@@ -71,6 +129,16 @@ def _coerce_list(value: Any) -> List[Any]:
     if isinstance(value, list):
         return value
     return [value]
+
+
+def _contains_first_person_reference(text: Any, *, language_code: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    target = normalize_language_code(language_code)
+    patterns = _FIRST_PERSON_HINTS.get(target, ()) + _FIRST_PERSON_HINTS.get("en", ())
+    lowered = raw.lower()
+    return any(re.search(pattern, lowered) for pattern in patterns)
 
 
 def _normalize_contact_links(raw_links: Any) -> List[Dict[str, str]]:
@@ -345,6 +413,40 @@ def _build_generic_profile_summary(
     experience_titles: List[str],
     skill_items: List[str],
 ) -> str:
+    def _is_summary_focus_term(text: str) -> bool:
+        candidate = str(text or "").strip().strip(".,;:")
+        if not candidate:
+            return False
+        if _contains_first_person_reference(candidate, language_code=language_code):
+            return False
+        token_count = len(re.findall(r"[A-Za-zÀ-ÿ0-9+#]+", candidate))
+        if token_count == 0 or token_count > 4:
+            return False
+        lowered_tokens = [
+            token.lower()
+            for token in re.findall(r"[A-Za-zÀ-ÿ]+", candidate)
+            if token
+        ]
+        if lowered_tokens and lowered_tokens[0] in _SUMMARY_ACTION_REJECTORS.get(
+            normalize_language_code(language_code),
+            set(),
+        ):
+            return False
+        return True
+
+    def _join_focus_terms(terms: List[str]) -> str:
+        cleaned_terms = [str(item or "").strip() for item in terms if str(item or "").strip()]
+        if len(cleaned_terms) == 1 and re.fullmatch(r"[A-Z0-9+#]{2,}", cleaned_terms[0]):
+            return ""
+        if not cleaned_terms:
+            return ""
+        if len(cleaned_terms) == 1:
+            return cleaned_terms[0]
+        conjunction = "and" if is_en else "et"
+        if len(cleaned_terms) == 2:
+            return f"{cleaned_terms[0]} {conjunction} {cleaned_terms[1]}"
+        return ", ".join(cleaned_terms[:-1]) + f" {conjunction} {cleaned_terms[-1]}"
+
     titles = _dedup_preserve(
         [
             str(title or "").strip()
@@ -361,6 +463,7 @@ def _build_generic_profile_summary(
             str(item or "").strip()
             for item in skill_items
             if str(item or "").strip()
+            and _is_summary_focus_term(str(item or "").strip())
             and not _is_cross_language_label(
                 item,
                 language_code=language_code,
@@ -368,30 +471,32 @@ def _build_generic_profile_summary(
         ]
     )[:4]
 
-    if is_en:
-        parts: List[str] = ["Professional profile"]
-        if titles:
-            parts.append(f"with hands-on experience across roles such as {titles[0]}")
-        else:
-            parts.append("with hands-on experience across operational and technical environments")
-        if focus_terms:
-            parts.append(f"and practical exposure to {', '.join(focus_terms[:3])}")
-        summary = " ".join(parts).rstrip(" .") + "."
-    else:
-        parts = ["Profil professionnel"]
-        if titles:
-            parts.append(f"avec une experience terrain sur des fonctions telles que {titles[0]}")
-        else:
-            parts.append("avec une experience terrain dans des environnements operationnels et techniques")
-        if focus_terms:
-            parts.append(f"et une pratique de {', '.join(focus_terms[:3])}")
-        summary = " ".join(parts).rstrip(" .") + "."
+    lead_title = titles[0] if titles else ""
+    focus_phrase = _join_focus_terms(focus_terms[:3])
 
-    if profile_summary and not _is_cross_language_narrative(
-        profile_summary,
-        language_code=language_code,
-    ):
-        summary = f"{summary} {_trim_text(profile_summary, 180)}".strip()
+    if is_en:
+        if lead_title and focus_phrase:
+            summary = f"{lead_title} with hands-on experience in {focus_phrase}."
+        elif lead_title:
+            summary = (
+                f"{lead_title} with experience across technical and operational environments."
+            )
+        elif focus_phrase:
+            summary = f"Professional background with experience in {focus_phrase}."
+        else:
+            summary = "Professional background across technical and operational environments."
+    else:
+        if lead_title and focus_phrase:
+            summary = f"{lead_title} avec une expérience en {focus_phrase}."
+        elif lead_title:
+            summary = (
+                f"{lead_title} avec une expérience dans des environnements techniques et opérationnels."
+            )
+        elif focus_phrase:
+            summary = f"Parcours avec une expérience en {focus_phrase}."
+        else:
+            summary = "Parcours au sein d'environnements techniques et opérationnels."
+
     return _trim_text(summary, 260)
 
 

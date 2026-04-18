@@ -803,37 +803,6 @@ class ExportManager:
         if remaining > 0:
             sentence += f"; +{remaining} {'more' if is_en else 'autres'}"
 
-        extras: List[str] = []
-
-        skill_names = [
-            name
-            for name in self._collect_skill_names_for_compact_summary((formatted_data or {}).get("skills"))
-            if text_matches_target_language(name, target_language)
-        ]
-        if skill_names:
-            shown = skill_names[:3]
-            suffix = ""
-            if len(skill_names) > len(shown):
-                suffix = f" (+{len(skill_names) - len(shown)})"
-            prefix = "Additional skills: " if is_en else "Competences complementaires: "
-            extras.append(prefix + ", ".join(shown) + suffix)
-
-        edu_names = [
-            name
-            for name in self._collect_education_labels_for_compact_summary((formatted_data or {}).get("education"))
-            if text_matches_target_language(name, target_language)
-        ]
-        if edu_names:
-            shown_edu = edu_names[:2]
-            suffix = ""
-            if len(edu_names) > len(shown_edu):
-                suffix = f" (+{len(edu_names) - len(shown_edu)})"
-            prefix = "Education: " if is_en else "Formation: "
-            extras.append(prefix + " | ".join(shown_edu) + suffix)
-
-        if extras:
-            sentence = sentence + ". " + " ".join(extras)
-
         return sentence
 
     def _collect_skill_names_for_compact_summary(self, skills: Any) -> List[str]:
