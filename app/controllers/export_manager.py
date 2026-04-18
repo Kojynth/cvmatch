@@ -157,12 +157,12 @@ class ExportManager:
             "profile": "Profile" if is_en else "Profil",
             "experience": "Experience" if is_en else "Experience",
             "additional_relevant": "Additional relevant details" if is_en else "Éléments complémentaires pertinents",
-            "skills": "Skills" if is_en else "Competences",
+            "skills": "Skills" if is_en else "Compétences",
             "education": "Education" if is_en else "Formation",
             "projects": "Projects" if is_en else "Projets",
             "languages": "Languages" if is_en else "Langues",
             "certifications": "Certifications",
-            "interests": "Interests" if is_en else "Centres d'interet",
+            "interests": "Interests" if is_en else "Centres d'intérêt",
         }
         labels = formatted_data.get("labels")
         if not isinstance(labels, dict):
@@ -188,6 +188,7 @@ class ExportManager:
         try:
             experience_data = formatted_data.get("experience")
             if experience_data is not None and isinstance(experience_data, list):
+                experience_data = self._sort_entries_by_recency(experience_data)
                 normalized_experience = self.format_experience(
                     experience_data,
                     language_code=formatted_data["language"],
@@ -228,6 +229,16 @@ class ExportManager:
             formatted_data["additional_relevant_items"] = []
             formatted_data["experience_top_n"] = 0
             formatted_data["additional_relevant_summary"] = ""
+
+        try:
+            education_data = formatted_data.get("education")
+            if education_data is not None and isinstance(education_data, list):
+                formatted_data["education"] = self._sort_entries_by_recency(education_data)
+            elif education_data is None:
+                formatted_data["education"] = []
+        except Exception as e:
+            logger.warning(f"Erreur tri education: {e}")
+            formatted_data["education"] = formatted_data.get("education") or []
         
         return formatted_data
     
@@ -309,6 +320,17 @@ class ExportManager:
                 def _clean_skill_candidate(value, profile_json=None):
                     return str(value or "").strip()
 
+            def _normalize_category_label(label: Any) -> str:
+                text = str(label or "").strip()
+                lowered = text.casefold()
+                replacements = {
+                    "competences": "Compétences",
+                    "competences techniques": "Compétences techniques",
+                    "qualites": "Qualités",
+                    "soft skills": "Soft Skills",
+                }
+                return replacements.get(lowered, text or str(default_category or "Skills"))
+
             # Si c'est une liste simple, la convertir en structure categorisee
             if skills and len(skills) > 0 and isinstance(skills[0], str):
                 cleaned_simple_skills = []
@@ -320,7 +342,7 @@ class ExportManager:
                         cleaned_simple_skills.append(cleaned)
                 return [
                     {
-                        "category": default_category,
+                        "category": _normalize_category_label(default_category),
                         "skills_list": [
                             {"name": skill, "level": None}
                             for skill in cleaned_simple_skills
@@ -346,7 +368,7 @@ class ExportManager:
                         if filtered_skills_list:
                             normalized.append(
                                 {
-                                    "category": block.get("category") or default_category,
+                                    "category": _normalize_category_label(block.get("category") or default_category),
                                     "skills_list": filtered_skills_list,
                                 }
                             )
@@ -368,7 +390,7 @@ class ExportManager:
                     if skills_list:
                         normalized.append(
                             {
-                                "category": block.get("category") or default_category,
+                                "category": _normalize_category_label(block.get("category") or default_category),
                                 "skills_list": skills_list,
                             }
                         )
@@ -378,7 +400,7 @@ class ExportManager:
                         continue
                     if not normalized:
                         normalized.append(
-                            {"category": default_category, "skills_list": []}
+                            {"category": _normalize_category_label(default_category), "skills_list": []}
                         )
                     normalized[0]["skills_list"].append(
                         {"name": name, "level": None}
@@ -813,6 +835,8 @@ class ExportManager:
         total = len(scored_rows)
         if total == 0:
             return 0
+        if total <= 3:
+            return total
         if total <= self.MIN_PRIMARY_EXPERIENCE_COUNT:
             return total
 
@@ -900,9 +924,14 @@ class ExportManager:
         def _date_text(exp: Dict[str, Any]) -> str:
             start = str(exp.get("start_date") or "").strip()
             end = str(exp.get("end_date") or "").strip()
+            duration = str(exp.get("duration") or "").strip()
             if start and end:
-                return f"{start}-{end}"
-            return start or end
+                date_text = f"{start}-{end}"
+            else:
+                date_text = start or end
+            if date_text and duration:
+                return f"{date_text} ({duration})"
+            return date_text or duration
 
         def _exp_snippet(exp: Dict[str, Any]) -> str:
             title = str(exp.get("title") or "").strip()
@@ -970,6 +999,19 @@ class ExportManager:
             sentence += f"; +{remaining} {'more' if is_en else 'autres'}"
 
         return sentence
+
+    def _sort_entries_by_recency(
+        self,
+        entries: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        if not isinstance(entries, list):
+            return []
+        sortable = [entry for entry in entries if isinstance(entry, dict)]
+        return sorted(
+            sortable,
+            key=lambda entry: self._experience_recency_rank(entry),
+            reverse=True,
+        )
 
     def _collect_skill_names_for_compact_summary(self, skills: Any) -> List[str]:
         if not isinstance(skills, list):

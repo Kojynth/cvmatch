@@ -57,9 +57,9 @@
   - prefer `action + what + impact`, strong verbs, no first-person pronouns,
     no filler or keyword stuffing
   - use offer keywords pertinently by section and company context
-  - controlled inferred impact is allowed when implicit in the profile, but do
-    not invent new hard facts, technologies, projects, certifications, or exact
-    metrics
+  - controlled inferred impact and grounded reframing are allowed when implicit
+    in the profile, but do not introduce invented facts, technologies,
+    projects, certifications, or exact metrics
   - `CVMATCH_CV_EVIDENCE_MODE=strict_factual|inferred_impact` controls this
     boundary; default runtime behavior is `inferred_impact`
 - Generic standalone CV export:

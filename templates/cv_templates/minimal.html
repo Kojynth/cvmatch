@@ -25,7 +25,7 @@
       {% endif %}
       <div class="header-content">
         <h1 class="name">{{ name }}</h1>
-        {% if job_title %}<p class="title">{{ job_title }}</p>{% endif %}
+        {% if job_title or company %}<p class="title">{% if job_title %}{{ job_title }}{% endif %}{% if company %}{% if job_title %} | {% endif %}{{ company }}{% endif %}</p>{% endif %}
         <div class="contact-info">
           {% if email %}<span class="contact-item">{{ email }}</span>{% endif %}
           {% if phone %}<span class="contact-item">{{ phone }}</span>{% endif %}

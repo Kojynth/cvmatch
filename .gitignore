@@ -134,6 +134,9 @@ data/**
 .debug/**
 !.debug/.gitkeep
 
+# Local planning notes
+development/generic_cv_quality_plan.md
+
 # Archive complet (pas seulement les .log)
 archive/**
 !archive/.gitkeep

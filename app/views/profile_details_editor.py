@@ -538,6 +538,8 @@ class ExperienceItem(QFrame):
         super().__init__()
         self.experience_data = experience_data or {}
         self.fields = {}
+        self.editor_feedback_label = None
+        self.date_feedback_label = None
         # Stocker la source des données
         self.data_source = self.experience_data.get("source", "manual")
         self.setup_ui()
@@ -571,13 +573,13 @@ class ExperienceItem(QFrame):
 
         self.fields['title'] = QLineEdit(self.experience_data.get('title', ''))
         self.fields['title'].setPlaceholderText("Intitulé du poste...")
-        self.fields['title'].textChanged.connect(lambda: self.data_changed.emit())
+        self.fields['title'].textChanged.connect(self._on_field_changed)
         header_layout.addWidget(QLabel("Poste:"))
         header_layout.addWidget(self.fields['title'], 2)
 
         self.fields['company'] = QLineEdit(self.experience_data.get('company', ''))
         self.fields['company'].setPlaceholderText("Entreprise...")
-        self.fields['company'].textChanged.connect(lambda: self.data_changed.emit())
+        self.fields['company'].textChanged.connect(self._on_field_changed)
         header_layout.addWidget(QLabel("Entreprise:"))
         header_layout.addWidget(self.fields['company'], 2)
 
@@ -604,16 +606,18 @@ class ExperienceItem(QFrame):
         self.fields['start_date'] = QLineEdit(self.experience_data.get('start_date', ''))
         self.fields['start_date'].setPlaceholderText("MM/YYYY")
         self.fields['start_date'].setMaximumWidth(100)
-        self.fields['start_date'].textChanged.connect(lambda: self.data_changed.emit())
+        self.fields['start_date'].setToolTip("Format conseillé: MM/YYYY. YYYY reste accepté si le mois est inconnu.")
+        self.fields['start_date'].textChanged.connect(self._on_field_changed)
 
         self.fields['end_date'] = QLineEdit(self.experience_data.get('end_date', ''))
         self.fields['end_date'].setPlaceholderText("MM/YYYY ou Présent")
         self.fields['end_date'].setMaximumWidth(120)
-        self.fields['end_date'].textChanged.connect(lambda: self.data_changed.emit())
+        self.fields['end_date'].setToolTip("Format conseillé: MM/YYYY ou Présent. YYYY reste accepté si le mois est inconnu.")
+        self.fields['end_date'].textChanged.connect(self._on_field_changed)
 
         self.fields['location'] = QLineEdit(self.experience_data.get('location', ''))
         self.fields['location'].setPlaceholderText("Lieu...")
-        self.fields['location'].textChanged.connect(lambda: self.data_changed.emit())
+        self.fields['location'].textChanged.connect(self._on_field_changed)
 
         period_layout.addWidget(QLabel("📅"))
         period_layout.addWidget(self.fields['start_date'])
@@ -624,14 +628,69 @@ class ExperienceItem(QFrame):
         period_layout.addStretch()
         layout.addLayout(period_layout)
 
+        self.date_feedback_label = QLabel()
+        self.date_feedback_label.setWordWrap(True)
+        self.date_feedback_label.setStyleSheet(
+            f"color: {StyleManager.COLORS['warning']}; font-size: 11px; padding-left: 2px;"
+        )
+        self.date_feedback_label.hide()
+        layout.addWidget(self.date_feedback_label)
+
         # Description
         self.fields['description'] = QTextEdit(self.experience_data.get('description', ''))
         self.fields['description'].setPlaceholderText("Description des responsabilités et réalisations...")
         self.fields['description'].setMaximumHeight(100)
-        self.fields['description'].textChanged.connect(lambda: self.data_changed.emit())
+        self.fields['description'].textChanged.connect(self._on_field_changed)
         layout.addWidget(self.fields['description'])
 
+        self.editor_feedback_label = QLabel()
+        self.editor_feedback_label.setWordWrap(True)
+        self.editor_feedback_label.setStyleSheet(
+            f"color: {StyleManager.COLORS['info']}; font-size: 11px; padding-left: 2px;"
+        )
+        self.editor_feedback_label.hide()
+        layout.addWidget(self.editor_feedback_label)
+
         self.setLayout(layout)
+        self._refresh_feedback()
+
+    def _on_field_changed(self, *args):
+        self._refresh_feedback()
+        self.data_changed.emit()
+
+    def _refresh_feedback(self) -> None:
+        try:
+            from ..domain.profile.experience_feedback import build_experience_editor_feedback
+        except Exception:
+            build_experience_editor_feedback = None
+
+        if build_experience_editor_feedback is None:
+            if self.date_feedback_label is not None:
+                self.date_feedback_label.hide()
+            if self.editor_feedback_label is not None:
+                self.editor_feedback_label.hide()
+            return
+
+        feedback = build_experience_editor_feedback(
+            {
+                "title": self.fields["title"].text(),
+                "company": self.fields["company"].text(),
+                "start_date": self.fields["start_date"].text(),
+                "end_date": self.fields["end_date"].text(),
+                "description": self.fields["description"].toPlainText(),
+            },
+            language_code="fr",
+        )
+
+        date_feedback = str(feedback.get("date_feedback") or "").strip()
+        editorial_feedback = str(feedback.get("editorial_feedback") or "").strip()
+
+        if self.date_feedback_label is not None:
+            self.date_feedback_label.setText(date_feedback)
+            self.date_feedback_label.setVisible(bool(date_feedback))
+        if self.editor_feedback_label is not None:
+            self.editor_feedback_label.setText(editorial_feedback)
+            self.editor_feedback_label.setVisible(bool(editorial_feedback))
 
     def get_data(self) -> Dict[str, Any]:
         """Retourne les données de l'expérience."""
