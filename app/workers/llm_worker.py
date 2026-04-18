@@ -1120,6 +1120,7 @@ class CVGenerationWorker(QThread):
         self._pipeline_profile_json: dict = {}
         self._pipeline_cv_json_draft: dict = {}
         self._pipeline_offer_keywords: dict = {}
+        self._summary_regeneration_cache: dict = {}
 
     def _get_runtime_memory_pressure_level(self, *, force_refresh: bool = False) -> str:
         try:
@@ -2168,18 +2169,296 @@ class CVGenerationWorker(QThread):
             return True
         return self._text_has_review_markers(summary)
 
+    def _summary_matches_target_language(
+        self,
+        summary: str,
+        *,
+        language_code: str = "",
+    ) -> bool:
+        text = str(summary or "").strip()
+        if not text:
+            return False
+        try:
+            from ..utils.language_policy import text_matches_target_language
+
+            target = str(language_code or self._resolve_language_code()).strip() or "fr"
+            return bool(text_matches_target_language(text, target))
+        except Exception:
+            return True
+
+    def _summary_requires_regeneration(
+        self,
+        summary: str,
+        *,
+        enforce_target_language: bool = False,
+        language_code: str = "",
+    ) -> bool:
+        text = str(summary or "").strip()
+        if self._summary_needs_rewrite(text):
+            return True
+        if enforce_target_language and not self._summary_matches_target_language(
+            text,
+            language_code=language_code,
+        ):
+            return True
+        return False
+
+    @staticmethod
+    def _should_attempt_targeted_summary_regeneration(stage: str = "") -> bool:
+        stage_key = str(stage or "").strip().lower()
+        if not stage_key:
+            return False
+        return stage_key.startswith("final")
+
+    def _get_valid_draft_summary(self, *, language_code: str = "") -> str:
+        draft_payload = getattr(self, "_pipeline_cv_json_draft", {}) or {}
+        if not isinstance(draft_payload, dict):
+            return ""
+        draft_summary = str(draft_payload.get("summary") or "").strip()
+        if self._summary_requires_regeneration(
+            draft_summary,
+            enforce_target_language=True,
+            language_code=language_code,
+        ):
+            return ""
+        return _trim_text(draft_summary, 420)
+
+    def _build_summary_regeneration_messages(
+        self,
+        *,
+        profile_json: Dict[str, Any],
+        current_summary: str,
+        target_job_title: str,
+        target_company: str,
+        language_code: str,
+    ) -> Dict[str, str]:
+        compact_profile = _compact_profile_json_for_prompt(profile_json)
+        profile_block = _trim_text(
+            json.dumps(compact_profile, indent=2, ensure_ascii=False),
+            2400,
+        )
+        current_summary_block = _trim_text(str(current_summary or "").strip(), 420)
+        offer_keywords = self._get_offer_keywords_json()
+        priority_terms = collect_offer_keywords_merged(
+            offer_keywords_json=offer_keywords if isinstance(offer_keywords, dict) else None,
+            offer_analysis=(
+                self.offer_data.get("analysis")
+                if isinstance(self.offer_data, dict)
+                and isinstance(self.offer_data.get("analysis"), dict)
+                else None
+            ),
+            critic_json=None,
+            job_title=target_job_title,
+            max_items=10,
+        )
+        priority_terms_block = (
+            ", ".join(priority_terms)
+            if isinstance(priority_terms, list) and priority_terms
+            else ""
+        )
+        system_prompt = (
+            "You are a professional CV summary writer. Return JSON only. "
+            "Write a concise candidate-focused summary from PROFILE_JSON facts. "
+            "Do not invent metrics, employers, projects, technologies, dates, degrees, "
+            "or certifications."
+        )
+        user_prompt = f"""
+LANGUAGE: {language_code}
+TARGET_JOB_TITLE: {target_job_title}
+TARGET_COMPANY: {target_company}
+
+CURRENT_SUMMARY:
+{current_summary_block or "<empty>"}
+
+PROFILE_JSON (source of truth):
+{profile_block}
+
+PRIORITY_OFFER_TERMS:
+{priority_terms_block or "<none>"}
+
+OUTPUT RULES:
+- Return JSON only with the shape: {{"summary": "..."}}
+- summary: 1 to 2 sentences, concise, recruiter-facing, and not generic.
+- Keep the summary candidate-focused. Do not describe the employer or company.
+- Reuse PRIORITY_OFFER_TERMS only when PROFILE_JSON supports them.
+- Keep proper nouns, company names, product names, acronyms, and locations unchanged.
+- Write the summary fully in LANGUAGE.
+- If CURRENT_SUMMARY is empty, generic, or in the wrong language, replace it with a better summary.
+- Do not use placeholders, bracketed notes, or review comments.
+""".strip()
+        return {"system": system_prompt, "user": user_prompt}
+
+    def _generate_targeted_summary(
+        self,
+        *,
+        profile_json: Dict[str, Any],
+        current_summary: str = "",
+        target_job_title: str = "",
+        target_company: str = "",
+        stage: str = "",
+    ) -> str:
+        qwen_manager = getattr(self, "qwen_manager", None)
+        if qwen_manager is None or not callable(
+            getattr(qwen_manager, "generate_structured_json", None)
+        ):
+            return ""
+
+        language_code = str(self._resolve_language_code() or "").strip() or "fr"
+        current_text = str(current_summary or "").strip()
+        cache = getattr(self, "_summary_regeneration_cache", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._summary_regeneration_cache = cache
+        cache_key = (
+            language_code,
+            str(target_job_title or "").strip(),
+            str(target_company or "").strip(),
+            current_text,
+        )
+        if cache_key in cache:
+            return str(cache.get(cache_key) or "").strip()
+
+        messages = self._build_summary_regeneration_messages(
+            profile_json=profile_json,
+            current_summary=current_text,
+            target_job_title=target_job_title,
+            target_company=target_company,
+            language_code=language_code,
+        )
+        generation_overrides = {
+            **self._non_strict_json_generation_overrides("generator"),
+            "max_new_tokens": 240,
+            "temperature": 0.18,
+            "do_sample": True,
+            "top_p": 0.92,
+            "top_k": 50,
+            "repetition_penalty": 1.05,
+        }
+        try:
+            raw = qwen_manager.generate_structured_json(
+                messages["system"],
+                messages["user"],
+                generation_overrides=generation_overrides,
+                role="generator",
+            )
+        except Exception as exc:
+            logger.warning(
+                "Targeted summary regeneration unavailable: stage=%s error=%s",
+                stage or "-",
+                exc,
+            )
+            cache[cache_key] = ""
+            return ""
+
+        payload = self._parse_json_response(raw)
+        candidate = ""
+        if isinstance(payload, dict):
+            candidate = str(payload.get("summary") or "").strip()
+        if not candidate and isinstance(raw, str):
+            raw_text = raw.strip()
+            if raw_text and not raw_text.startswith("{"):
+                candidate = raw_text.strip("`").strip().strip('"')
+
+        try:
+            from ..utils.cv_postprocessing import clean_text_field
+        except Exception:
+            clean_text_field = None
+        try:
+            from ..utils.cv_summary_adaptation import is_minimum_summary_template
+        except Exception:
+            is_minimum_summary_template = None
+
+        if callable(clean_text_field):
+            candidate = clean_text_field(
+                candidate,
+                max_length=420,
+                dedupe_narrative=True,
+            )
+        else:
+            candidate = _trim_text(candidate, 420)
+
+        if self._summary_requires_regeneration(
+            candidate,
+            enforce_target_language=True,
+            language_code=language_code,
+        ):
+            cache[cache_key] = ""
+            return ""
+        if callable(is_minimum_summary_template) and is_minimum_summary_template(
+            candidate
+        ):
+            cache[cache_key] = ""
+            return ""
+
+        logger.info(
+            "Targeted summary regeneration applied: stage=%s len=%s",
+            stage or "-",
+            len(candidate),
+        )
+        cache[cache_key] = candidate
+        return candidate
+
+    def _resolve_required_summary(
+        self,
+        *,
+        summary: str,
+        profile_json: Dict[str, Any],
+        target_job_title: str = "",
+        target_company: str = "",
+        stage: str = "",
+    ) -> str:
+        language_code = str(self._resolve_language_code() or "").strip() or "fr"
+        current_summary = str(summary or "").strip()
+        if not self._summary_requires_regeneration(
+            current_summary,
+            enforce_target_language=True,
+            language_code=language_code,
+        ):
+            return _trim_text(current_summary, 420)
+
+        draft_summary = self._get_valid_draft_summary(language_code=language_code)
+        if draft_summary:
+            logger.info("Summary restored from draft payload: stage=%s", stage or "-")
+            return draft_summary
+
+        if self._should_attempt_targeted_summary_regeneration(stage):
+            regenerated = self._generate_targeted_summary(
+                profile_json=profile_json,
+                current_summary=current_summary,
+                target_job_title=target_job_title,
+                target_company=target_company,
+                stage=stage,
+            )
+            if regenerated:
+                return regenerated
+            logger.warning(
+                "Targeted summary regeneration failed; using minimum summary: stage=%s",
+                stage or "-",
+            )
+        return self._build_minimum_summary(
+            profile_json=profile_json,
+            target_job_title=target_job_title,
+            target_company=target_company,
+        )
+
     def _repair_summary_if_needed(
         self, cv_json_final: Dict[str, Any], cv_json_draft: Dict[str, Any]
     ) -> None:
         if not isinstance(cv_json_final, dict):
             return
         summary = cv_json_final.get("summary") or ""
-        if not self._summary_needs_rewrite(summary):
+        if not self._summary_requires_regeneration(
+            summary,
+            enforce_target_language=True,
+        ):
             return
         draft_summary = ""
         if isinstance(cv_json_draft, dict):
             draft_summary = cv_json_draft.get("summary") or ""
-        if draft_summary and not self._summary_needs_rewrite(draft_summary):
+        if draft_summary and not self._summary_requires_regeneration(
+            draft_summary,
+            enforce_target_language=True,
+        ):
             cv_json_final["summary"] = draft_summary
             logger.warning(
                 "Final summary looked like review text; reverted to draft summary."
@@ -2222,19 +2501,26 @@ class CVGenerationWorker(QThread):
         if not isinstance(personal, dict):
             personal = {}
 
+        lang = self._resolve_language_code()
         headline = str(
             personal.get("summary") or personal.get("headline") or ""
         ).strip()
-        if headline and not self._text_has_review_markers(headline):
+        if headline and not self._summary_requires_regeneration(
+            headline,
+            enforce_target_language=True,
+            language_code=lang,
+        ):
             return _trim_text(headline, 420)
-        lang = self._resolve_language_code()
         if callable(build_minimum_profile_summary):
             summary = build_minimum_profile_summary(
                 profile_data,
                 target_job_title=target_job_title,
                 language_code=lang,
             )
-            if summary:
+            if summary and self._summary_matches_target_language(
+                summary,
+                language_code=lang,
+            ):
                 return _trim_text(summary, 420)
 
         fallback_role = str(target_job_title or "").strip() or (
@@ -2531,13 +2817,13 @@ class CVGenerationWorker(QThread):
                 "Candidate" if lang == "en" else "Candidat"
             )
 
-        summary = str(base.get("summary") or "").strip()
-        if not summary or self._summary_needs_rewrite(summary):
-            base["summary"] = self._build_minimum_summary(
-                profile_json=profile_json,
-                target_job_title=job_title,
-                target_company=company,
-            )
+        base["summary"] = self._resolve_required_summary(
+            summary=str(base.get("summary") or "").strip(),
+            profile_json=profile_json,
+            target_job_title=job_title,
+            target_company=company,
+            stage=stage,
+        )
 
         return base
 

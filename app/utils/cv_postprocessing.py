@@ -648,7 +648,10 @@ def sanitize_cv_json_output(
     contact = cv_json.get("contact")
     if isinstance(contact, dict):
         for field in ("full_name", "email", "phone", "linkedin_url", "location"):
-            contact[field] = clean_text_field(contact.get(field))
+            if field == "location":
+                contact[field] = _normalize_location_display(contact.get(field))
+            else:
+                contact[field] = clean_text_field(contact.get(field))
         links = _normalize_contact_links(contact.get("links"))
         if links:
             contact["links"] = links
@@ -744,7 +747,7 @@ def sanitize_cv_json_output(
             "start_date": clean_text_field(entry.get("start_date") or ""),
             "end_date": clean_text_field(entry.get("end_date") or ""),
             "duration": clean_text_field(entry.get("duration") or ""),
-            "location": clean_text_field(entry.get("location") or ""),
+            "location": _normalize_location_display(entry.get("location") or ""),
             "summary": clean_text_field(
                 entry.get("summary") or "",
                 dedupe_narrative=True,
@@ -772,7 +775,7 @@ def sanitize_cv_json_output(
             "field_of_study": clean_text_field(entry.get("field_of_study") or ""),
             "start_date": clean_text_field(entry.get("start_date") or ""),
             "end_date": clean_text_field(entry.get("end_date") or ""),
-            "location": clean_text_field(entry.get("location") or ""),
+            "location": _normalize_location_display(entry.get("location") or ""),
             "details": [],
         }
         details = []
@@ -960,6 +963,10 @@ _CORPORATE_DESCRIPTION_HINTS = (
     "company",
     "filiale",
     "subsidiary",
+    "specialisee",
+    "specialized",
+    "digitalisation",
+    "digitalization",
     "leader",
 )
 
@@ -990,6 +997,42 @@ _ACTION_EXPERIENCE_HINTS = (
     "analyse",
     "ameliore",
 )
+
+_EXPERIENCE_LEADIN_PATTERNS = {
+    "fr": (
+        re.compile(
+            r"^(?:mes missions(?: couvrent| consistent| ont notamment consist[ée]?\s+[àa])?|"
+            r"responsabilit[ée]s(?: principales)?|missions principales)\s*:?\s*",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"^(?:[^,]{0,80},\s*)?j['’](?:interviens|assure|accompagne|coordonne|pilote|"
+            r"ai(?:\s+participe|\s+contribu[ée])?)\s+(?:sur|[àa]|au sein de|dans|pour)\s*",
+            re.IGNORECASE,
+        ),
+    ),
+    "en": (
+        re.compile(
+            r"^(?:my responsibilities(?: included)?|responsibilities included|key responsibilities|scope)\s*:?\s*",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"^(?:as [^,]{0,60},\s*)?i\s+(?:worked|supported|led|handled|managed|focused|"
+            r"contributed|was responsible)\s+(?:on|for|across|within)\s*",
+            re.IGNORECASE,
+        ),
+    ),
+}
+
+_ARTICLE_PREFIX_PATTERNS = {
+    "fr": (
+        re.compile(r"^(?:la|le|les)\s+", re.IGNORECASE),
+        re.compile(r"^l['’]", re.IGNORECASE),
+    ),
+    "en": (
+        re.compile(r"^the\s+", re.IGNORECASE),
+    ),
+}
 
 
 def _looks_like_company_description(text: str, company: str = "") -> bool:
@@ -1025,27 +1068,98 @@ def _looks_like_company_description(text: str, company: str = "") -> bool:
     return False
 
 
+def _normalize_location_display(value: Any) -> str:
+    text = clean_text_field(value or "", dedupe_narrative=False)
+    if not text:
+        return ""
+    return re.sub(r"\s+-\s+", ", ", text)
+
+
+def _strip_experience_leadins(text: str, *, language_code: str) -> str:
+    output = str(text or "").strip()
+    if not output:
+        return ""
+
+    language = str(language_code or "fr").strip().lower().split("-", 1)[0]
+    patterns = _EXPERIENCE_LEADIN_PATTERNS.get(language, ()) + _EXPERIENCE_LEADIN_PATTERNS.get("en", ())
+    changed = True
+    while changed and output:
+        changed = False
+        for pattern in patterns:
+            updated = pattern.sub("", output, count=1).strip()
+            if updated != output:
+                output = updated
+                changed = True
+    return output.strip()
+
+
+def _polish_experience_fragment(
+    text: Any,
+    *,
+    company: str = "",
+    language_code: str = "fr",
+    prefer_articleless: bool = False,
+) -> str:
+    raw = clean_narrative_text(text or "")
+    if not raw:
+        return ""
+
+    raw = _strip_experience_leadins(raw, language_code=language_code)
+    raw = re.sub(r"^[\-\*\u2022\u25AA\u279C]+\s*", "", raw).strip(" ;,.-")
+    if not raw or raw.endswith(":"):
+        return ""
+    if _looks_like_company_description(raw, company):
+        return ""
+
+    language = str(language_code or "fr").strip().lower().split("-", 1)[0]
+    if prefer_articleless:
+        for pattern in _ARTICLE_PREFIX_PATTERNS.get(language, ()):
+            updated = pattern.sub("", raw, count=1).strip()
+            if updated and updated != raw:
+                raw = updated
+                break
+
+    raw = re.sub(r"\s{2,}", " ", raw).strip(" ;,.-")
+    if not raw or _looks_like_company_description(raw, company):
+        return ""
+    if raw[:1].islower():
+        raw = raw[:1].upper() + raw[1:]
+    return _trim_text(raw, 240)
+
+
 def _select_action_summary(
     summary: str,
     *,
     highlights: List[str],
     fallback_description: str,
     company: str,
+    language_code: str = "fr",
 ) -> str:
-    summary_text = clean_narrative_text(summary or "")
-    if summary_text and not _looks_like_company_description(summary_text, company):
+    summary_text = _polish_experience_fragment(
+        summary,
+        company=company,
+        language_code=language_code,
+    )
+    if summary_text:
         return _trim_text(summary_text, 420)
 
     for item in highlights:
-        text = clean_narrative_text(item)
+        text = _polish_experience_fragment(
+            item,
+            company=company,
+            language_code=language_code,
+            prefer_articleless=True,
+        )
         if not text:
-            continue
-        if _looks_like_company_description(text, company):
             continue
         return _trim_text(text, 280)
 
-    fallback_text = clean_narrative_text(fallback_description or "")
-    if fallback_text and not _looks_like_company_description(fallback_text, company):
+    fallback_text = _polish_experience_fragment(
+        fallback_description,
+        company=company,
+        language_code=language_code,
+    )
+    if fallback_text:
         return _trim_text(fallback_text, 420)
 
     return ""
@@ -1418,6 +1532,7 @@ def _reconcile_experience_section(
                     highlights=highlights,
                     fallback_description=expected_description,
                     company=entry.get("company") or "",
+                    language_code=language_code,
                 )
             else:
                 current_summary = entry["summary"]
@@ -1446,8 +1561,13 @@ def _reconcile_experience_section(
                         highlights=highlights,
                         fallback_description=expected_description,
                         company=entry.get("company") or "",
+                        language_code=language_code,
                     )
-                    highlights = extract_experience_highlights(expected_description)
+                    highlights = extract_experience_highlights(
+                        expected_description,
+                        company=entry.get("company") or "",
+                        language_code=language_code,
+                    )
                     reassigned_count += 1
 
             if highlights:
@@ -1464,21 +1584,29 @@ def _reconcile_experience_section(
                             _token_overlap(highlight_blob, other_description),
                         )
                 if other_overlap >= 0.42 and other_overlap > (expected_overlap + 0.12):
-                    highlights = extract_experience_highlights(expected_description)
+                    highlights = extract_experience_highlights(
+                        expected_description,
+                        company=entry.get("company") or "",
+                        language_code=language_code,
+                    )
 
         summary_text = _select_action_summary(
             entry.get("summary") or "",
             highlights=highlights,
             fallback_description=expected_description,
             company=entry.get("company") or "",
+            language_code=language_code,
         )
         summary_norm = _normalize_for_match(summary_text)
         cleaned_highlights: List[str] = []
         for highlight in highlights:
-            text = clean_narrative_text(highlight)
+            text = _polish_experience_fragment(
+                highlight,
+                company=entry.get("company") or "",
+                language_code=language_code,
+                prefer_articleless=True,
+            )
             if not text:
-                continue
-            if _looks_like_company_description(text, entry.get("company") or ""):
                 continue
             if summary_norm and _is_same_narrative(summary_text, text):
                 continue
@@ -2019,12 +2147,17 @@ def _seed_experience_from_profile(
             highlights=[],
             fallback_description=fallback_description,
             company=item.get("company") or "",
+            language_code=language_code,
         )
         highlights = _dedup_preserve(
             [
-                clean_narrative_text(value)
-                for value in extract_experience_highlights(fallback_description)
-                if clean_narrative_text(value)
+                value
+                for value in extract_experience_highlights(
+                    fallback_description,
+                    company=item.get("company") or "",
+                    language_code=language_code,
+                )
+                if str(value or "").strip()
             ]
         )[:4]
         if summary and highlights and _is_same_narrative(summary, highlights[0]):
@@ -2128,7 +2261,12 @@ def rebalance_cv_narrative(
         for value in entry.get("highlights") or []:
             if not isinstance(value, str):
                 continue
-            text = clean_narrative_text(value)
+            text = _polish_experience_fragment(
+                value,
+                company=str(entry.get("company") or ""),
+                language_code=language_code,
+                prefer_articleless=True,
+            )
             if not text:
                 continue
             highlights.append(text)
@@ -2147,31 +2285,48 @@ def rebalance_cv_narrative(
                 highlights=highlights,
                 fallback_description=profile_description,
                 company=str(entry.get("company") or ""),
+                language_code=language_code,
             )
 
         highlight_candidates: List[str] = []
         highlight_candidates.extend(entry_overflow)
         if profile_description:
             highlight_candidates.extend(
-                extract_experience_highlights(profile_description)
+                extract_experience_highlights(
+                    profile_description,
+                    company=str(entry.get("company") or ""),
+                    language_code=language_code,
+                )
             )
         if not highlight_candidates and entry_sentences:
             highlight_candidates.extend(entry_sentences[1:])
 
         for candidate in highlight_candidates:
-            text = clean_narrative_text(candidate)
+            text = _polish_experience_fragment(
+                candidate,
+                company=str(entry.get("company") or ""),
+                language_code=language_code,
+                prefer_articleless=True,
+            )
             if not text:
                 continue
             if entry_summary and _is_same_narrative(entry_summary, text):
-                continue
-            if _looks_like_company_description(text, str(entry.get("company") or "")):
                 continue
             highlights.append(text)
 
         highlights = _dedup_preserve(highlights)
         if len(highlights) < 2 and profile_description:
-            for candidate in extract_experience_highlights(profile_description):
-                text = clean_narrative_text(candidate)
+            for candidate in extract_experience_highlights(
+                profile_description,
+                company=str(entry.get("company") or ""),
+                language_code=language_code,
+            ):
+                text = _polish_experience_fragment(
+                    candidate,
+                    company=str(entry.get("company") or ""),
+                    language_code=language_code,
+                    prefer_articleless=True,
+                )
                 if not text:
                     continue
                 if entry_summary and _is_same_narrative(entry_summary, text):
@@ -2188,6 +2343,13 @@ def rebalance_cv_narrative(
         if highlights:
             synthesized_highlights += max(0, len(highlights) - original_count)
 
+        entry_summary = _select_action_summary(
+            entry_summary,
+            highlights=highlights,
+            fallback_description=profile_description,
+            company=str(entry.get("company") or ""),
+            language_code=language_code,
+        )
         if not entry_summary and highlights:
             entry_summary = _trim_text(highlights[0], 220)
 
@@ -2216,6 +2378,12 @@ def rebalance_cv_narrative(
                 first_highlights = []
             for sentence in summary_overflow:
                 text = clean_narrative_text(sentence)
+                text = _polish_experience_fragment(
+                    text,
+                    company=str(first.get("company") or ""),
+                    language_code=language_code,
+                    prefer_articleless=True,
+                )
                 if not text:
                     continue
                 if first.get("summary") and _is_same_narrative(
@@ -2255,25 +2423,35 @@ def _compute_experience_durations(
             entry["duration"] = duration
     return
 
-def _normalize_experience_date_formats(cv_json: Dict[str, Any]) -> None:
-    """Rewrite start_date/end_date in experience and education to uniform MM/YYYY.
-
-    Year-only dates are rendered as 01/YYYY to keep one display format.
-    Present/current tokens are preserved as-is.
-    Must be called AFTER _compute_experience_durations to avoid corrupting date input.
-    """
+def _normalize_experience_date_formats(
+    cv_json: Dict[str, Any],
+    *,
+    language_code: str = "fr",
+) -> None:
+    """Rewrite visible dates without inventing unsupported month precision."""
     try:
         from ..rules.date_normalize import _normalize_single_date, normalize_present_token
     except Exception:
         return
 
-    def _to_display(raw: str) -> str:
+    lang = str(language_code or "fr").strip().lower().split("-", 1)[0] or "fr"
+    present_tokens = {
+        "fr": "Actuellement",
+        "en": "Present",
+        "de": "Aktuell",
+        "es": "Actualidad",
+        "it": "Attuale",
+        "pt": "Atual",
+    }
+    present_display = present_tokens.get(lang, "Present")
+
+    def _to_display(raw: str, *, display_mode: str) -> str:
         s = raw.strip()
         if not s:
             return s
         normalized_present = normalize_present_token(s)
         if str(normalized_present or "").strip().upper() == "PRESENT":
-            return s
+            return present_display
         # Year-only source → keep as bare YYYY (no invented month placeholder)
         if re.fullmatch(r"\d{4}", s):
             return s
@@ -2283,16 +2461,32 @@ def _normalize_experience_date_formats(cv_json: Dict[str, Any]) -> None:
         if not re.fullmatch(r"\d{4}-\d{2}", str(norm)):
             return s
         # YYYY-MM → MM/YYYY
+        if display_mode == "year":
+            return norm[:4]
         return f"{norm[5:7]}/{norm[:4]}"
 
     for section in ("experience", "education"):
         for entry in cv_json.get(section) or []:
             if not isinstance(entry, dict):
                 continue
+            metadata = _derive_profile_date_support(
+                entry.get("start_date") or "",
+                entry.get("end_date") or "",
+            )
+            precision_values = {
+                str(metadata.get("start_date_precision") or ""),
+                str(metadata.get("end_date_precision") or ""),
+            }
+            precision_values.discard("")
+            precision_values.discard("present")
+            if "year" in precision_values and precision_values & {"month", "day"}:
+                display_mode = "year"
+            else:
+                display_mode = "month"
             for field in ("start_date", "end_date"):
                 raw = str(entry.get(field) or "")
                 if raw:
-                    entry[field] = _to_display(raw)
+                    entry[field] = _to_display(raw, display_mode=display_mode)
 
 
 def _ensure_company_name_in_summary(
@@ -2449,7 +2643,7 @@ def coerce_generated_cv_payload(
     # Compute durations before date normalization (parser needs original date strings).
     _compute_experience_durations(merged, language_code=language_code)
     # Normalize date formats to MM/YYYY after duration is already computed.
-    _normalize_experience_date_formats(merged)
+    _normalize_experience_date_formats(merged, language_code=language_code)
     # Inject company name into visible summary text if absent.
     # Must run before rebalance_cv_narrative which may trim the summary.
     _ensure_company_name_in_summary(merged, company=company, language_code=language_code)
@@ -2548,7 +2742,12 @@ def coerce_generated_cv_payload(
     return merged
 
 
-def extract_experience_highlights(description: str) -> List[str]:
+def extract_experience_highlights(
+    description: str,
+    *,
+    company: str = "",
+    language_code: str = "fr",
+) -> List[str]:
     """Extract bullet-point highlights from experience description.
 
     Args:
@@ -2567,11 +2766,16 @@ def extract_experience_highlights(description: str) -> List[str]:
 
     highlights: List[str] = []
     for part in re.split(r"[\r\n]+|(?<=[\.\!\?])\s+", normalized):
-        cleaned = part.strip(" -*\t")
+        cleaned = _polish_experience_fragment(
+            part.strip(" -*\t"),
+            company=company,
+            language_code=language_code,
+            prefer_articleless=True,
+        )
         if cleaned:
             highlights.append(cleaned)
 
-    return _dedup_preserve(highlights)[:3]
+    return _dedup_preserve(highlights)[:4]
 
 
 def rank_experiences_by_relevance(

@@ -365,6 +365,19 @@ class ExportManager:
             def word_count(text: Any) -> int:
                 return len(re.findall(r"\b\S+\b", str(text or "").strip()))
 
+            def normalize_location(text: Any) -> str:
+                value = str(text or "").strip()
+                if not value:
+                    return ""
+                return re.sub(r"\s+-\s+", ", ", value)
+
+            def is_generic_summary(text: Any) -> bool:
+                normalized = re.sub(r"\s+", " ", str(text or "").strip().lower())
+                return normalized in {
+                    "delivered key contributions in this role.",
+                    "contributions principales realisees sur ce poste.",
+                } or normalized.startswith("delivered key contributions as ")
+
             def looks_like_inline_pseudo_bullets(text: Any) -> bool:
                 return bool(
                     re.search(
@@ -405,6 +418,7 @@ class ExportManager:
                     continue
 
                 entry = dict(exp)
+                entry["location"] = normalize_location(entry.get("location") or "")
                 description_lines: List[str] = []
                 compact_lines: List[str] = []
                 description_raw = entry.get("description")
@@ -436,9 +450,13 @@ class ExportManager:
                 if isinstance(summary, str) and summary.strip():
                     summary_text = summary.strip()
                     parsed_summary = split_inline_pseudo_bullets(summary_text)
+                    if is_generic_summary(summary_text):
+                        parsed_summary = []
                     if parsed_summary and not has_highlights:
                         compact_lines.extend(parsed_summary)
                     elif (
+                        not is_generic_summary(summary_text)
+                        and
                         not looks_like_inline_pseudo_bullets(summary_text)
                         and word_count(summary_text) <= 32
                     ):

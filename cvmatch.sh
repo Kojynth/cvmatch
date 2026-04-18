@@ -542,7 +542,7 @@ setup_auto_gpu_runtime_profile
 # ================================================================
 log_info "[3/5] Mise à jour outils de base..."
 
-"$VENV_PIP" install --upgrade pip setuptools wheel --quiet || {
+"$VENV_PIP" install --upgrade pip "setuptools<82" wheel --quiet || {
     log_warning "Mise à jour pip partiellement échouée, continuation..."
 }
 

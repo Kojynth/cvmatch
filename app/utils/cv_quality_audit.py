@@ -230,9 +230,7 @@ def build_cv_quality_audit(
         label = f"experience_{idx}"
         highlights = _as_text_items(entry.get("highlights") or [])
         entry_summary = str(entry.get("summary") or "").strip()
-        if highlights and not 2 <= len(highlights) <= 4:
-            bullet_count_issues.append(label)
-        elif not highlights and not entry_summary:
+        if not 2 <= len(highlights) <= 4:
             bullet_count_issues.append(label)
 
         for bullet_index, bullet in enumerate(highlights, start=1):
@@ -263,6 +261,9 @@ def build_cv_quality_audit(
     }
     date_format_ok = True
     if "other" in concrete_formats:
+        date_format_ok = False
+    concrete_date_formats = concrete_formats - {"present"}
+    if len(concrete_date_formats) > 1:
         date_format_ok = False
 
     for section_name, text in [("summary", top_summary)]:

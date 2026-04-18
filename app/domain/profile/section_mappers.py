@@ -43,6 +43,32 @@ def _split_date_range(value: Any, *, single_date_is_end: bool = False) -> Tuple[
     return text, ""
 
 
+def _normalize_date_value(value: Any) -> str:
+    text = _clean_text(value)
+    if not text:
+        return ""
+
+    try:
+        from ...rules.date_normalize import _normalize_single_date, normalize_present_token
+    except Exception:
+        return text
+
+    normalized_present = normalize_present_token(text)
+    if str(normalized_present or "").strip().upper() == "PRESENT":
+        return text
+
+    if re.fullmatch(r"\d{4}", text):
+        return text
+
+    normalized = _normalize_single_date(text)
+    normalized_text = _clean_text(normalized)
+    if re.fullmatch(r"\d{4}-\d{2}", normalized_text):
+        return f"{normalized_text[5:7]}/{normalized_text[:4]}"
+    if re.fullmatch(r"\d{4}", normalized_text):
+        return normalized_text
+    return text
+
+
 def map_experiences(raw_items: List[Any], source: str) -> List[Dict[str, str]]:
     items: List[Dict[str, str]] = []
     for item in raw_items:
@@ -79,6 +105,8 @@ def map_experiences(raw_items: List[Any], source: str) -> List[Dict[str, str]]:
                     _pick_first(item, ["dates", "date_range", "period"]),
                     single_date_is_end=False,
                 )
+            start_date = _normalize_date_value(start_date)
+            end_date = _normalize_date_value(end_date)
 
             if not any([title, company, description]):
                 continue
@@ -132,6 +160,8 @@ def map_education(raw_items: List[Any], source: str) -> List[Dict[str, str]]:
                 _pick_first(item, ["dates", "date_range", "period"]),
                 single_date_is_end=True,
             )
+        start_date = _normalize_date_value(start_date)
+        end_date = _normalize_date_value(end_date)
 
         if not any([degree, school, field_of_study]):
             continue

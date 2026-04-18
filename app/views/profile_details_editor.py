@@ -2228,30 +2228,81 @@ class ProfileDetailsEditor(QScrollArea):
             awards_data = self.sections['awards'].get_data()
             references_data = self.sections['references'].get_data()
             interests_data = self.sections['interests'].get_data()
+
+            from ..utils.profile_json import (
+                has_profile_json_content,
+                map_payload_to_profile_json,
+                normalize_profile_json,
+                save_profile_json_cache,
+            )
+
+            profile_json = normalize_profile_json(
+                map_payload_to_profile_json(
+                    {
+                        "personal_info": personal_data,
+                        "experiences": experiences_data,
+                        "education": education_data,
+                        "skills": skills_data,
+                        "soft_skills": soft_skills_data,
+                        "languages": languages_data,
+                        "projects": projects_data,
+                        "certifications": certifications_data,
+                        "publications": publications_data,
+                        "volunteering": volunteering_data,
+                        "awards": awards_data,
+                        "references": references_data,
+                        "interests": interests_data,
+                    },
+                    source="profile",
+                )
+            )
+            normalized_personal = profile_json.get("personal_info") or {}
+            normalized_experiences = profile_json.get("experiences", [])
+            normalized_education = profile_json.get("education", [])
+            normalized_skills = profile_json.get("skills", [])
+            normalized_soft_skills = profile_json.get("soft_skills", [])
+            normalized_languages = profile_json.get("languages", [])
+            normalized_projects = profile_json.get("projects", [])
+            normalized_certifications = profile_json.get("certifications", [])
+            normalized_publications = profile_json.get("publications", [])
+            normalized_volunteering = profile_json.get("volunteering", [])
+            normalized_awards = profile_json.get("awards", [])
+            normalized_references = profile_json.get("references", [])
+            normalized_interests = profile_json.get("interests", [])
             
             # Mettre à jour les champs principaux du profil
-            self.profile.name = personal_data.get('full_name', self.profile.name)
-            self.profile.email = personal_data.get('email', self.profile.email)
-            self.profile.phone = personal_data.get('phone', self.profile.phone)
-            self.profile.linkedin_url = personal_data.get('linkedin_url', self.profile.linkedin_url)
+            self.profile.name = normalized_personal.get('full_name', "")
+            self.profile.email = normalized_personal.get('email', "")
+            self.profile.phone = normalized_personal.get('phone', "")
+            self.profile.linkedin_url = normalized_personal.get('linkedin_url', "")
             
             # Mettre à jour toutes les données extraites structurées
             current_personal = dict(self.profile.extracted_personal_info or {})
-            current_personal.update(personal_data)
+            for field, value in normalized_personal.items():
+                if field == "links":
+                    if value:
+                        current_personal["links"] = value
+                    else:
+                        current_personal.pop("links", None)
+                    continue
+                if value:
+                    current_personal[field] = value
+                else:
+                    current_personal.pop(field, None)
             self.profile.extracted_personal_info = current_personal
             
-            self.profile.extracted_experiences = experiences_data
-            self.profile.extracted_education = education_data
-            self.profile.extracted_skills = skills_data
-            self.profile.extracted_soft_skills = soft_skills_data
-            self.profile.extracted_languages = languages_data
-            self.profile.extracted_projects = projects_data
-            self.profile.extracted_certifications = certifications_data
-            self.profile.extracted_publications = publications_data
-            self.profile.extracted_volunteering = volunteering_data
-            self.profile.extracted_awards = awards_data
-            self.profile.extracted_references = references_data
-            self.profile.extracted_interests = interests_data
+            self.profile.extracted_experiences = normalized_experiences
+            self.profile.extracted_education = normalized_education
+            self.profile.extracted_skills = normalized_skills
+            self.profile.extracted_soft_skills = normalized_soft_skills
+            self.profile.extracted_languages = normalized_languages
+            self.profile.extracted_projects = normalized_projects
+            self.profile.extracted_certifications = normalized_certifications
+            self.profile.extracted_publications = normalized_publications
+            self.profile.extracted_volunteering = normalized_volunteering
+            self.profile.extracted_awards = normalized_awards
+            self.profile.extracted_references = normalized_references
+            self.profile.extracted_interests = normalized_interests
             
             # Sauvegarder en base de données
             with get_session() as session:
@@ -2260,13 +2311,6 @@ class ProfileDetailsEditor(QScrollArea):
                 session.refresh(self.profile)
 
             try:
-                from ..utils.profile_json import (
-                    build_profile_json_from_extracted_profile,
-                    has_profile_json_content,
-                    save_profile_json_cache,
-                )
-
-                profile_json = build_profile_json_from_extracted_profile(self.profile)
                 if has_profile_json_content(profile_json) and self.profile.id:
                     save_profile_json_cache(self.profile.id, profile_json)
             except Exception as exc:
@@ -2297,20 +2341,31 @@ class ProfileDetailsEditor(QScrollArea):
             
             # Calculer le nombre de sections remplies
             sections_filled = sum([
-                1 for data in [experiences_data, education_data, skills_data, soft_skills_data, languages_data,
-                              projects_data, certifications_data, publications_data,
-                              volunteering_data, awards_data, references_data, interests_data]
+                1 for data in [
+                    normalized_experiences,
+                    normalized_education,
+                    normalized_skills,
+                    normalized_soft_skills,
+                    normalized_languages,
+                    normalized_projects,
+                    normalized_certifications,
+                    normalized_publications,
+                    normalized_volunteering,
+                    normalized_awards,
+                    normalized_references,
+                    normalized_interests,
+                ]
                 if data
             ])
             
             show_info(
                 f"Les modifications ont été sauvegardées avec succès !\n\n"
                 f"📊 Profil mis à jour :\n"
-                f"• {len(experiences_data)} expérience(s)\n"
-                f"• {len(education_data)} formation(s)\n"
-                f"• {len(skills_data)} compétence(s)\n"
-                f"• {len(soft_skills_data)} soft skill(s)\n"
-                f"• {len(languages_data)} langue(s)\n"
+                f"• {len(normalized_experiences)} expérience(s)\n"
+                f"• {len(normalized_education)} formation(s)\n"
+                f"• {len(normalized_skills)} compétence(s)\n"
+                f"• {len(normalized_soft_skills)} soft skill(s)\n"
+                f"• {len(normalized_languages)} langue(s)\n"
                 f"• {sections_filled} section(s) remplie(s) au total",
                 title="✅ Sauvegarde réussie",
                 parent=self,
