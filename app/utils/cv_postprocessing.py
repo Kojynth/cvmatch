@@ -470,6 +470,12 @@ def sanitize_cv_json_output(
 
     fallback_category = "Skills" if language_code == "en" else "Competences"
 
+    try:
+        from .cv_skill_evidence import looks_like_noise_skill_term
+    except Exception:
+        def looks_like_noise_skill_term(_term: Any) -> bool:
+            return False
+
     def normalize_text_for_match(value: Any) -> str:
         text = str(value or "").strip().casefold()
         if not text:
@@ -685,6 +691,8 @@ def sanitize_cv_json_output(
                 if not text or text_has_review_markers(text):
                     continue
                 if not is_skill_like_phrase(text):
+                    continue
+                if looks_like_noise_skill_term(text):
                     continue
                 text_norm = normalize_text_for_match(text)
                 text_role_norm = normalize_text_for_role_detection(text)
@@ -2520,6 +2528,8 @@ def _ensure_company_name_in_summary(
     summary = str(cv_json.get("summary") or "")
     if not summary:
         return  # nothing to append to
+    if len(re.findall(r"\b\w+\b", summary, flags=re.UNICODE)) >= 10:
+        return  # avoid appending a mechanical company tagline onto a substantive summary
 
     phrase = (
         f"Application targeting {company}."
@@ -2897,6 +2907,7 @@ def enforce_cv_offer_adaptation(
         from .cv_skill_evidence import (
             classify_skill_bucket,
             collect_supported_skill_terms,
+            looks_like_noise_skill_term,
         )
         from .keyword_alignment import (
             normalize_keyword_for_match,
@@ -2961,6 +2972,8 @@ def enforce_cv_offer_adaptation(
         term = SKILL_LABEL_PREFIX_PATTERN.sub("", term).strip(" :-")
         if not term:
             return ""
+        if looks_like_noise_skill_term(term):
+            return ""
         term_norm = normalize_keyword_for_match(term)
         if not term_norm:
             return ""
@@ -2993,6 +3006,25 @@ def enforce_cv_offer_adaptation(
             if not non_role_tokens and len(tokens) <= 4:
                 return ""
         return term
+
+    def _is_supported_experience_term(raw_term: Any) -> bool:
+        term = clean_text_field(
+            raw_term or "",
+            max_length=120,
+            check_review_markers=False,
+        )
+        if not term:
+            return False
+        if route_term_to_section(term) != "experience":
+            return False
+        if looks_like_noise_skill_term(term):
+            return False
+        term_norm = normalize_keyword_for_match(term)
+        if not term_norm:
+            return False
+        if term_norm in {"mission", "missions", "responsibility", "responsibilities"}:
+            return False
+        return True
 
     # Enforce job title and company in summary
     original_summary = str(cv_json.get("summary") or "").strip()
@@ -3097,7 +3129,13 @@ def enforce_cv_offer_adaptation(
             context_candidates: List[str] = []
             if isinstance(profile_hint, dict):
                 profile_desc = str(profile_hint.get("description") or "").strip()
-                context_candidates.extend(extract_experience_highlights(profile_desc))
+                context_candidates.extend(
+                    extract_experience_highlights(
+                        profile_desc,
+                        company=str(entry.get("company") or ""),
+                        language_code=language_code,
+                    )
+                )
 
             context_candidates.extend(_split_sentences(str(entry.get("summary") or "")))
             highlights = entry.get("highlights")
@@ -3106,53 +3144,50 @@ def enforce_cv_offer_adaptation(
                     if isinstance(item, str) and item.strip():
                         context_candidates.append(item)
 
-            base = ""
+            best_candidate = ""
+            best_score = -1
             for candidate in context_candidates:
-                text = clean_narrative_text(candidate)
+                text = _polish_experience_fragment(
+                    candidate,
+                    company=str(entry.get("company") or ""),
+                    language_code=language_code,
+                    prefer_articleless=True,
+                )
                 if not text:
                     continue
-                if _looks_like_company_description(
-                    text, str(entry.get("company") or "")
-                ):
-                    continue
-                base = text.rstrip(" .")
-                break
+                text_norm = normalize_keyword_for_match(text)
+                score = 0
+                if normalized_term_present(text_norm, keyword_norm):
+                    score += 5
+                if len(text.split()) <= 20:
+                    score += 1
+                if score > best_score:
+                    best_score = score
+                    best_candidate = text.rstrip(" .")
 
-            if base:
-                if normalized_term_present(
-                    normalize_keyword_for_match(base), keyword_norm
-                ):
-                    bullet = f"{base}."
-                else:
-                    tail = (
-                        f"with focus on {keyword_text}"
-                        if is_en
-                        else f"avec un focus sur {keyword_text}"
-                    )
-                    bullet = f"{base} {tail}."
-            else:
-                role_hint = clean_text_field(entry.get("title") or "")
-                if is_en:
-                    bullet = f"Applied {keyword_text} in delivery tasks aligned with {role_hint or 'project requirements'}."
-                else:
-                    bullet = f"Mise en oeuvre de {keyword_text} dans des activites de livraison alignees sur {role_hint or 'les exigences projet'}."
+            if not best_candidate:
+                return ""
+            if not normalized_term_present(
+                normalize_keyword_for_match(best_candidate), keyword_norm
+            ):
+                return ""
 
-            bullet = clean_narrative_text(_trim_text(bullet, 240))
+            bullet = clean_narrative_text(_trim_text(f"{best_candidate}.", 240))
             if not normalized_term_present(
                 normalize_keyword_for_match(bullet), keyword_norm
             ):
-                bullet = clean_narrative_text(
-                    _trim_text(
-                        f"{bullet.rstrip('.')} ({keyword_text}).",
-                        240,
-                    )
-                )
+                return ""
             return bullet
 
         missing_experience_terms = _prepare_terms(
             missing_experience_terms,
             limit=experience_term_limit,
         )
+        missing_experience_terms = [
+            term
+            for term in missing_experience_terms
+            if _is_supported_experience_term(term)
+        ]
 
         added = 0
         for keyword in missing_experience_terms:

@@ -369,7 +369,7 @@ def build_minimum_profile_summary(
     )
     skill_terms = _collect_profile_skill_terms(
         profile_data,
-        max_terms=4,
+        max_terms=3,
         excluded_terms=[
             target_job_title,
             role_hint,
@@ -383,9 +383,9 @@ def build_minimum_profile_summary(
             formatted_terms = [
                 _format_term_for_inline_summary(item) for item in skill_terms if item
             ]
-            return f"{subject} with hands-on practice in {', '.join(formatted_terms)}."
+            return f"{subject} focused on {_join_summary_terms(formatted_terms, language_code='en')}."
         if len(experience_titles) > 1:
-            return f"{subject} with experience across {experience_titles[0]} and {experience_titles[1]}."
+            return f"{subject} with experience spanning {experience_titles[0]} and {experience_titles[1]}."
         return f"{subject} with software delivery experience."
 
     subject = role_hint or "Profil technique"
@@ -393,7 +393,20 @@ def build_minimum_profile_summary(
         formatted_terms = [
             _format_term_for_inline_summary(item) for item in skill_terms if item
         ]
-        return f"{subject} avec une pratique de {', '.join(formatted_terms)}."
+        return f"{subject} orienté {_join_summary_terms(formatted_terms, language_code='fr')}."
     if len(experience_titles) > 1:
-        return f"{subject} avec une experience sur des roles tels que {experience_titles[0]} et {experience_titles[1]}."
+        return f"{subject} avec une experience couvrant {experience_titles[0]} et {experience_titles[1]}."
     return f"{subject} avec une experience sur des projets logiciels."
+
+
+def _join_summary_terms(terms: Iterable[Any], *, language_code: str = "fr") -> str:
+    values = [str(item or "").strip() for item in terms if str(item or "").strip()]
+    if not values:
+        return ""
+    if len(values) == 1:
+        return values[0]
+
+    conjunction = "and" if str(language_code or "").lower().startswith("en") else "et"
+    if len(values) == 2:
+        return f"{values[0]} {conjunction} {values[1]}"
+    return f"{', '.join(values[:-1])} {conjunction} {values[-1]}"
