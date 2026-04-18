@@ -30,6 +30,7 @@ from .keyword_alignment import (
     build_keyword_alignment,
     normalize_keyword_for_match,
 )
+from .cv_text_quality import clean_narrative_text
 from .language_policy import (
     detect_language_from_text_default,
     is_mixed_or_mismatched_language,
@@ -194,6 +195,10 @@ _CORPORATE_DESCRIPTION_HINTS = (
     "company",
     "filiale",
     "subsidiary",
+    "specialisee",
+    "specialized",
+    "digitalisation",
+    "digitalization",
     "leader",
 )
 
@@ -260,6 +265,95 @@ def _looks_like_company_description(text: str, company: str = "") -> bool:
     return False
 
 
+_EXPERIENCE_LEADIN_PATTERNS = {
+    "fr": (
+        re.compile(
+            r"^(?:mes missions(?: couvrent| consistent| ont notamment consist[ée]?\s+[àa])?|"
+            r"responsabilit[ée]s(?: principales)?|missions principales)\s*:?\s*",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"^(?:[^,]{0,80},\s*)?j['’](?:interviens|assure|accompagne|coordonne|pilote|"
+            r"ai(?:\s+participe|\s+contribu[ée])?)\s+(?:sur|[àa]|au sein de|dans|pour)\s*",
+            re.IGNORECASE,
+        ),
+    ),
+    "en": (
+        re.compile(
+            r"^(?:my responsibilities(?: included)?|responsibilities included|key responsibilities|scope)\s*:?\s*",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"^(?:as [^,]{0,60},\s*)?i\s+(?:worked|supported|led|handled|managed|focused|"
+            r"contributed|was responsible)\s+(?:on|for|across|within)\s*",
+            re.IGNORECASE,
+        ),
+    ),
+}
+
+_ARTICLE_PREFIX_PATTERNS = {
+    "fr": (
+        re.compile(r"^(?:la|le|les)\s+", re.IGNORECASE),
+        re.compile(r"^l['’]", re.IGNORECASE),
+    ),
+    "en": (
+        re.compile(r"^the\s+", re.IGNORECASE),
+    ),
+}
+
+
+def _strip_experience_leadins(text: str, *, language_code: str) -> str:
+    output = str(text or "").strip()
+    if not output:
+        return ""
+
+    language = normalize_language_code(language_code)
+    patterns = _EXPERIENCE_LEADIN_PATTERNS.get(language, ()) + _EXPERIENCE_LEADIN_PATTERNS.get("en", ())
+    changed = True
+    while changed and output:
+        changed = False
+        for pattern in patterns:
+            updated = pattern.sub("", output, count=1).strip()
+            if updated != output:
+                output = updated
+                changed = True
+    return output.strip()
+
+
+def _polish_experience_fragment(
+    text: Any,
+    *,
+    company: str,
+    language_code: str,
+    prefer_articleless: bool = False,
+) -> str:
+    raw = clean_narrative_text(text or "")
+    if not raw:
+        return ""
+
+    raw = _strip_experience_leadins(raw, language_code=language_code)
+    raw = re.sub(r"^[\-\*\u2022\u25aa\u279c]+\s*", "", raw).strip(" ;,.-")
+    if not raw or raw.endswith(":"):
+        return ""
+    if _looks_like_company_description(raw, company):
+        return ""
+
+    language = normalize_language_code(language_code)
+    if prefer_articleless:
+        for pattern in _ARTICLE_PREFIX_PATTERNS.get(language, ()):
+            updated = pattern.sub("", raw, count=1).strip()
+            if updated and updated != raw:
+                raw = updated
+                break
+
+    raw = re.sub(r"\s{2,}", " ", raw).strip(" ;,.-")
+    if not raw or _looks_like_company_description(raw, company):
+        return ""
+    if raw[:1].islower():
+        raw = raw[:1].upper() + raw[1:]
+    return _trim_text(raw, 240)
+
+
 def _build_action_summary(
     *,
     title: str,
@@ -270,21 +364,28 @@ def _build_action_summary(
     language_code: str,
 ) -> str:
     for item in highlights:
-        text = str(item or "").strip()
+        text = _polish_experience_fragment(
+            item,
+            company=company,
+            language_code=language_code,
+            prefer_articleless=True,
+        )
         if not text:
             continue
         if _is_cross_language_narrative(text, language_code=language_code):
             continue
-        if _looks_like_company_description(text, company):
-            continue
         return _trim_text(text, 280)
 
-    if (
-        description
-        and not _is_cross_language_narrative(description, language_code=language_code)
-        and not _looks_like_company_description(description, company)
+    polished_description = _polish_experience_fragment(
+        description,
+        company=company,
+        language_code=language_code,
+    )
+    if polished_description and not _is_cross_language_narrative(
+        polished_description,
+        language_code=language_code,
     ):
-        return _trim_text(description, 280)
+        return _trim_text(polished_description, 280)
 
     title_text = str(title or "").strip()
     if title_text and _is_cross_language_label(title_text, language_code=language_code):
@@ -618,7 +719,12 @@ def rank_experiences_by_offer_relevance(
     return [payload[2] for payload in ranked]
 
 
-def extract_experience_highlights(description: str, company: str = "") -> List[str]:
+def extract_experience_highlights(
+    description: str,
+    company: str = "",
+    *,
+    language_code: str = "fr",
+) -> List[str]:
     """Extract bullet-point highlights from experience description.
 
     Args:
@@ -636,14 +742,17 @@ def extract_experience_highlights(description: str, company: str = "") -> List[s
         if not raw:
             continue
         for sentence in re.split(r"(?<=[.!?])\s+", raw):
-            cleaned = sentence.strip(" -*\t")
+            cleaned = _polish_experience_fragment(
+                sentence.strip(" -*\t"),
+                company=company,
+                language_code=language_code,
+                prefer_articleless=True,
+            )
             if not cleaned:
-                continue
-            if _looks_like_company_description(cleaned, company):
                 continue
             highlights.append(cleaned)
 
-    return _dedup_preserve(highlights)[:3]
+    return _dedup_preserve(highlights)[:4]
 
 
 def generate_fallback_cv_json(
@@ -805,7 +914,11 @@ def generate_fallback_cv_json(
         desc = str(item.get("description") or "").strip()
         company_name = str(item.get("company") or "").strip()
         title_text = str(item.get("title") or "").strip()
-        highlights = extract_experience_highlights(desc, company=company_name)
+        highlights = extract_experience_highlights(
+            desc,
+            company=company_name,
+            language_code=language_code,
+        )
         clean_highlights = [
             _trim_text(text, 220)
             for text in highlights

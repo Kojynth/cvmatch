@@ -1121,6 +1121,13 @@ class TemplatePreviewWindow(QMainWindow):
         """Retourne vers l'editeur CV/lettre (Historique)."""
         if self._navigate_to_history_editor():
             return
+        if self._navigate_back_to_source_editor():
+            return
+        previous_mode = getattr(self, "edit_mode", None)
+        self._fallback_inline_edit()
+        if getattr(self, "edit_mode", None) != previous_mode:
+            self.status_label.setText("Mode edition active dans la previsualisation.")
+            return
         QMessageBox.information(
             self,
             "Edition indisponible",
@@ -1176,6 +1183,30 @@ class TemplatePreviewWindow(QMainWindow):
                 logger.warning(f"Refresh preview failed: {exc}")
 
         return opened
+
+    def _navigate_back_to_source_editor(self) -> bool:
+        source_editor = getattr(self, "_source_editor_context", None)
+        if source_editor is None:
+            return False
+
+        try:
+            if hasattr(source_editor, "showNormal"):
+                source_editor.showNormal()
+            elif hasattr(source_editor, "show"):
+                source_editor.show()
+            if hasattr(source_editor, "raise_"):
+                source_editor.raise_()
+            if hasattr(source_editor, "activateWindow"):
+                source_editor.activateWindow()
+        except Exception as exc:
+            logger.warning(f"Retour vers l'editeur source impossible: {exc}")
+            return False
+
+        try:
+            self.close()
+        except Exception:
+            pass
+        return True
 
     def _fallback_inline_edit(self) -> None:
         """Fallback: reste sur l'editeur HTML integre."""

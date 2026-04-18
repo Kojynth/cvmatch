@@ -253,10 +253,18 @@ def cv_json_to_cv_data(
         summary = item.get("summary")
         if isinstance(summary, str) and summary.strip():
             cleaned_summary = _strip_ats_unsafe_bullet_markers(summary)
+            normalized_summary = re.sub(
+                r"\s+",
+                " ",
+                str(cleaned_summary or "").strip().lower(),
+            )
             if cleaned_summary and text_matches_target_language(
                 cleaned_summary,
                 lang or "fr",
-            ):
+            ) and normalized_summary not in {
+                "delivered key contributions in this role.",
+                "contributions principales realisees sur ce poste.",
+            } and not normalized_summary.startswith("delivered key contributions as "):
                 description.append(cleaned_summary)
         for highlight in item.get("highlights", []) or []:
             if isinstance(highlight, str) and highlight.strip():
@@ -274,7 +282,11 @@ def cv_json_to_cv_data(
                 "start_date": item.get("start_date") or "",
                 "end_date": item.get("end_date") or "",
                 "duration": item.get("duration") or "",
-                "location": item.get("location") or "",
+                "location": re.sub(
+                    r"\s+-\s+",
+                    ", ",
+                    str(item.get("location") or ""),
+                ),
                 "description": description,
             }
         )

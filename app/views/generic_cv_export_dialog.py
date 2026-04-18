@@ -429,10 +429,10 @@ class GenericCVExportDialog(QDialog):
         return str(self._lang_combo.currentData() or "fr").strip() or "fr"
 
     @staticmethod
-    def _attach_preview_navigation_context(
-        preview_window: Any,
+    def _resolve_navigation_context(
         preview_owner: Any,
-    ) -> None:
+    ) -> tuple[Any, Any, Any]:
+        source_editor = preview_owner
         history_widget = None
         main_window = None
         candidate = preview_owner
@@ -454,10 +454,23 @@ class GenericCVExportDialog(QDialog):
         if history_widget is None and main_window is not None:
             history_widget = getattr(main_window, "history_widget", None)
 
+        return source_editor, history_widget, main_window
+
+    @staticmethod
+    def _attach_preview_navigation_context(
+        preview_window: Any,
+        preview_owner: Any,
+    ) -> None:
+        source_editor, history_widget, main_window = (
+            GenericCVExportDialog._resolve_navigation_context(preview_owner)
+        )
+
         if history_widget is not None:
             setattr(preview_window, "_history_widget_context", history_widget)
         if main_window is not None:
             setattr(preview_window, "_main_window_context", main_window)
+        if source_editor is not None:
+            setattr(preview_window, "_source_editor_context", source_editor)
 
     def _selected_model_id(self) -> str:
         try:
@@ -482,15 +495,11 @@ class GenericCVExportDialog(QDialog):
         return "generic"
 
     def _refresh_history_views(self) -> None:
-        parent = self.parent()
-        candidates = [parent]
-        if parent is not None:
-            try:
-                candidates.append(parent.window())
-            except Exception:
-                pass
+        _source_editor, history_widget, main_window = self._resolve_navigation_context(
+            self.parent()
+        )
 
-        for candidate in candidates:
+        for candidate in (history_widget, main_window):
             if candidate is None:
                 continue
             refresh_history = getattr(candidate, "refresh_history", None)
@@ -504,6 +513,29 @@ class GenericCVExportDialog(QDialog):
                     )
                 return
 
+    def _resolved_profile_id(self) -> Optional[int]:
+        candidates = [self._profile_id]
+
+        parent = self.parent()
+        if parent is not None:
+            profile = getattr(parent, "profile", None)
+            candidates.append(getattr(profile, "id", None))
+            try:
+                owner_window = parent.window()
+            except Exception:
+                owner_window = None
+            if owner_window is not None:
+                owner_profile = getattr(owner_window, "profile", None)
+                candidates.append(getattr(owner_profile, "id", None))
+
+        for candidate in candidates:
+            try:
+                if candidate:
+                    return int(candidate)
+            except Exception:
+                continue
+        return None
+
     def _persist_generated_cv_in_history(
         self,
         *,
@@ -511,7 +543,8 @@ class GenericCVExportDialog(QDialog):
         preview_data: Dict[str, Any],
         template: str,
     ) -> Optional[int]:
-        if not self._profile_id:
+        profile_id = self._resolved_profile_id()
+        if not profile_id:
             logger.info(
                 "GenericCVExportDialog: history persistence skipped (missing profile id)"
             )
@@ -522,7 +555,7 @@ class GenericCVExportDialog(QDialog):
 
             coordinator = HistoryCoordinator()
             summary = coordinator.create_generic_application(
-                profile_id=self._profile_id,
+                profile_id=profile_id,
                 job_title=self._history_job_title(),
                 company=self._history_company(),
                 template_used=str(template or "modern").strip() or "modern",

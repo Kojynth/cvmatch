@@ -224,10 +224,10 @@ source "$VENV_DIR/bin/activate" || {
     exit 1
 }
 
-# Mise a jour pip/setuptools/wheel (evite erreurs de build)
+# Mise a jour pip/setuptools/wheel (torch 2.11.0+cu130 requiert setuptools<82)
 echo "Mise a jour pip/setuptools/wheel..."
 run_with_spinner "Upgrade pip/setuptools/wheel" 240 \
-    "$VENV_DIR/bin/python" -m pip install --progress-bar off -v --upgrade pip setuptools wheel
+    "$VENV_DIR/bin/python" -m pip install --progress-bar off -v --upgrade pip "setuptools<82" wheel
 
 # Detection GPU pour PyTorch + verification compat arch
 TORCH_CPU_INDEX="https://download.pytorch.org/whl/cpu"
