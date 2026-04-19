@@ -196,6 +196,46 @@ def _word_count(text: Any) -> int:
     return len(_WORD_PATTERN.findall(str(text or "").strip()))
 
 
+_CLIPPED_TRAILING_STOPWORDS = {
+    # French connector words commonly left dangling by LLM truncation.
+    "a", "afin", "au", "aux", "avec", "chez", "dans", "de", "des", "du",
+    "en", "entre", "et", "la", "le", "les", "ou", "par", "pour", "sans",
+    "sur", "un", "une", "vers",
+    # English equivalents.
+    "a", "an", "and", "at", "by", "for", "from", "in", "into", "of",
+    "on", "onto", "or", "the", "to", "with", "without",
+}
+
+_CLIPPED_TRAILING_PUNCT = re.compile(r"[\s\.\,\;\:\-\u2013\u2014]+$")
+
+
+def _bullet_is_clipped(text: Any) -> bool:
+    """Flag a bullet whose tail reads like an LLM truncation.
+
+    True when the bullet ends with ``...`` / ``…`` or whose last token
+    (after stripping trailing punctuation/whitespace) is a bare stopword
+    such as FR ``de``, ``et``, ``sur``, ``afin`` or EN ``and``, ``of``.
+    """
+
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    if raw.endswith("...") or raw.endswith("…"):
+        return True
+    tail = _CLIPPED_TRAILING_PUNCT.sub("", raw)
+    if not tail:
+        return False
+    tokens = tail.split()
+    if not tokens:
+        return False
+    last = tokens[-1].lower()
+    # Strip trailing quotes/apostrophes before lookup.
+    last = last.strip("'’\"`")
+    if not last:
+        return False
+    return last in _CLIPPED_TRAILING_STOPWORDS
+
+
 def _as_text_items(values: Iterable[Any]) -> List[str]:
     output: List[str] = []
     for value in values:
@@ -442,6 +482,7 @@ def build_cv_quality_audit(
     weak_verb_issues: List[str] = []
     low_value_soft_skills: List[str] = []
     formulaic_summary_sections: List[str] = []
+    clipped_sentence_issues: List[str] = []
 
     top_summary = str(payload.get("summary") or "").strip()
     if _word_count(top_summary) > 38:
@@ -473,6 +514,8 @@ def build_cv_quality_audit(
                 verb_tense_issues.append(f"{label}.highlight_{bullet_index}")
             if _bullet_starts_with_weak_verb(bullet, target_language=language):
                 weak_verb_issues.append(f"{label}.highlight_{bullet_index}")
+            if _bullet_is_clipped(bullet):
+                clipped_sentence_issues.append(f"{label}.highlight_{bullet_index}")
 
         if entry_summary and _word_count(entry_summary) > 38:
             summary_length_issues.append(label)
@@ -576,6 +619,11 @@ def build_cv_quality_audit(
             "formulaic_summary",
             min(8.0, 3.0 + (1.5 * len(formulaic_summary_sections))),
         )
+    if clipped_sentence_issues:
+        apply_penalty(
+            "clipped_sentences",
+            min(12.0, 4.0 + (1.5 * len(clipped_sentence_issues))),
+        )
     if personal_pronoun_sections:
         apply_penalty("personal_pronouns", min(10.0, 4.0 + len(personal_pronoun_sections)))
     if cliche_sections:
@@ -589,6 +637,7 @@ def build_cv_quality_audit(
         and not bullet_length_issues
         and not ats_text_issues
         and not verb_tense_issues
+        and not clipped_sentence_issues
     )
 
     audit = {
@@ -606,6 +655,7 @@ def build_cv_quality_audit(
         "weak_verbs_ok": not bool(weak_verb_issues),
         "low_value_soft_skills_ok": not bool(low_value_soft_skills),
         "formulaic_summary_ok": not bool(formulaic_summary_sections),
+        "clipped_ok": not bool(clipped_sentence_issues),
         "bullet_count_issues": bullet_count_issues,
         "bullet_length_issues": bullet_length_issues,
         "summary_length_issues": summary_length_issues,
@@ -615,6 +665,7 @@ def build_cv_quality_audit(
         "weak_verb_issues": weak_verb_issues,
         "low_value_soft_skills": low_value_soft_skills,
         "formulaic_summary_sections": formulaic_summary_sections,
+        "clipped_sentence_issues": clipped_sentence_issues,
         "personal_pronoun_sections": personal_pronoun_sections,
         "cliche_sections": cliche_sections,
         "penalties": penalties,

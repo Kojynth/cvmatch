@@ -949,6 +949,56 @@ def _is_same_narrative(left: str, right: str) -> bool:
     return _token_overlap(left, right) >= 0.9
 
 
+def _dedup_fuzzy_highlights(
+    highlights: Sequence[str],
+    *,
+    prefix_threshold: int = 30,
+    token_overlap_threshold: float = 0.7,
+) -> List[str]:
+    """Drop near-duplicate highlights, keeping the longer/more complete form.
+
+    Two highlights are considered duplicates when they share a normalized
+    prefix of ``prefix_threshold`` chars OR their token overlap exceeds
+    ``token_overlap_threshold``. This catches truncated variants like
+    ``Ingenieur QA ... Concevoir, executer et suivre des ...`` appearing
+    alongside the fully spelled-out bullet.
+    """
+
+    items = [h for h in highlights if isinstance(h, str) and h.strip()]
+    if len(items) < 2:
+        return list(items)
+
+    kept: List[str] = []
+    for candidate in items:
+        cand_norm = _normalize_for_match(candidate)
+        cand_prefix = cand_norm[:prefix_threshold]
+        superseded_index = -1
+        is_redundant = False
+        for idx, existing in enumerate(kept):
+            ex_norm = _normalize_for_match(existing)
+            ex_prefix = ex_norm[:prefix_threshold]
+            same_prefix = bool(
+                len(cand_prefix) >= prefix_threshold
+                and len(ex_prefix) >= prefix_threshold
+                and cand_prefix == ex_prefix
+            )
+            jaccard_match = _token_overlap(candidate, existing) >= token_overlap_threshold
+            if not (same_prefix or jaccard_match):
+                continue
+            if len(candidate.strip()) > len(existing.strip()):
+                superseded_index = idx
+            else:
+                is_redundant = True
+            break
+        if is_redundant:
+            continue
+        if superseded_index >= 0:
+            kept[superseded_index] = candidate
+        else:
+            kept.append(candidate)
+    return kept
+
+
 _CORPORATE_DESCRIPTION_HINTS = (
     " est ",
     " is ",
@@ -1233,12 +1283,58 @@ def _actionize_experience_fragment(text: Any, *, language_code: str = "fr") -> s
     return raw
 
 
+_COMPANY_DESCRIPTOR_PHRASES = (
+    "filiale de",
+    "filiale du",
+    "filiale numerique",
+    "filiale digitale",
+    "filiale specialisee",
+    "specialisee dans",
+    "specialise dans",
+    "specialisee en",
+    "specialise en",
+    "entreprise specialisee",
+    "societe specialisee",
+    "subsidiary of",
+    "branch of",
+    "est un leader",
+    "is a leader",
+    "leader mondial",
+    "groupe mondial",
+    "est la filiale",
+    "is the subsidiary",
+)
+
+
 def _looks_like_company_description(text: str, company: str = "") -> bool:
     normalized = _normalize_for_match(text)
-    if not normalized or len(normalized) < 50:
+    if not normalized:
         return False
 
     company_norm = _normalize_for_match(company)
+    raw = str(text or "").strip()
+
+    company_colon_prefix = False
+    if company and raw:
+        lowered = raw.lower()
+        cname = company.strip().lower()
+        if cname and (lowered.startswith(f"{cname}:") or lowered.startswith(f"{cname} :")):
+            company_colon_prefix = True
+
+    for phrase in _COMPANY_DESCRIPTOR_PHRASES:
+        if phrase in normalized:
+            if company_colon_prefix:
+                return True
+            action_hits_quick = sum(
+                1 for marker in _ACTION_EXPERIENCE_HINTS if marker in normalized
+            )
+            if action_hits_quick == 0:
+                return True
+            break
+
+    if len(normalized) < 50:
+        return False
+
     corporate_hits = sum(
         1 for marker in _CORPORATE_DESCRIPTION_HINTS if marker in normalized
     )
@@ -1812,7 +1908,8 @@ def _reconcile_experience_section(
             cleaned_highlights.append(text)
 
         entry["summary"] = _trim_text(summary_text, 420)
-        entry["highlights"] = _dedup_preserve(cleaned_highlights)[:4]
+        deduped_highlights = _dedup_fuzzy_highlights(_dedup_preserve(cleaned_highlights))
+        entry["highlights"] = deduped_highlights[:4]
         duration = _compute_duration_label(
             entry.get("start_date") or "",
             entry.get("end_date") or "",
@@ -2868,6 +2965,90 @@ def _rewrite_past_role_tense(
             highlights[index] = replacement + raw[len(head):]
 
 
+_CLIPPED_TRAILING_STOPWORDS_POSTPROCESS = {
+    "a", "afin", "au", "aux", "avec", "chez", "dans", "de", "des", "du",
+    "en", "entre", "et", "la", "le", "les", "ou", "par", "pour", "sans",
+    "sur", "un", "une", "vers",
+    "an", "and", "at", "by", "for", "from", "in", "into", "of",
+    "on", "onto", "or", "the", "to", "with", "without",
+}
+
+_CLIPPED_CLAUSE_BREAKS = re.compile(r"[,;:]")
+
+
+def _repair_clipped_bullet(text: str) -> str:
+    """Peel off trailing ellipsis and orphan stopwords to salvage a clean clause.
+
+    Drops the bullet entirely (returns ``""``) when the residual is shorter
+    than 5 tokens. Runs after verb-tense rewriting so the verb head is already
+    in its final form.
+    """
+
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+
+    cleaned = re.sub(r"[\s]*(?:\.\.\.|\u2026)+\s*$", "", raw).rstrip(" ,;:-\u2013\u2014")
+    if not cleaned:
+        return ""
+
+    # Peel trailing stopwords until the tail looks terminal. Bounded loop so
+    # a bullet that is nothing but stopwords eventually drops out.
+    for _ in range(8):
+        tokens = cleaned.split()
+        if not tokens:
+            break
+        last_lower = tokens[-1].lower().strip("'’\"`")
+        if last_lower not in _CLIPPED_TRAILING_STOPWORDS_POSTPROCESS:
+            break
+        cleaned = cleaned[: -len(tokens[-1])].rstrip(" ,;:-\u2013\u2014")
+
+    if not cleaned or len(cleaned.split()) < 5:
+        return ""
+
+    if cleaned[-1] not in ".!?":
+        cleaned = cleaned + "."
+    return cleaned
+
+
+def _bullet_looks_clipped(text: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    if raw.endswith("...") or raw.endswith("\u2026"):
+        return True
+    tail = raw.rstrip(" .,;:-\u2013\u2014")
+    tokens = tail.split()
+    if not tokens:
+        return False
+    last_lower = tokens[-1].lower().strip("'’\"`")
+    return last_lower in _CLIPPED_TRAILING_STOPWORDS_POSTPROCESS
+
+
+def _repair_clipped_bullets(cv_json: Dict[str, Any]) -> None:
+    """Trim or drop clipped bullets across all experience entries."""
+
+    if not isinstance(cv_json, dict):
+        return
+    for entry in cv_json.get("experience") or []:
+        if not isinstance(entry, dict):
+            continue
+        highlights = entry.get("highlights")
+        if not isinstance(highlights, list):
+            continue
+        repaired: List[str] = []
+        for bullet in highlights:
+            if not isinstance(bullet, str):
+                continue
+            if not _bullet_looks_clipped(bullet):
+                repaired.append(bullet)
+                continue
+            fixed = _repair_clipped_bullet(bullet)
+            if fixed:
+                repaired.append(fixed)
+        entry["highlights"] = repaired
+
+
 def _ensure_company_name_in_summary(
     cv_json: Dict[str, Any],
     company: str,
@@ -3027,6 +3208,8 @@ def coerce_generated_cv_payload(
     _normalize_experience_date_formats(merged, language_code=language_code)
     # Rewrite present-tense verb heads to past forms for non-current roles.
     _rewrite_past_role_tense(merged, language_code=language_code)
+    # Trim or drop clipped bullets (ellipsis endings or trailing stopwords).
+    _repair_clipped_bullets(merged)
     # Inject company name into visible summary text if absent.
     # Must run before rebalance_cv_narrative which may trim the summary.
     _ensure_company_name_in_summary(merged, company=company, language_code=language_code)

@@ -1215,6 +1215,14 @@ class TemplatePreviewWindow(QMainWindow):
                 refreshed = None
             if isinstance(refreshed, dict):
                 self.set_cv_data(refreshed)
+
+            if getattr(self, "edit_mode", "") == "html":
+                try:
+                    self.load_template_preview()
+                except Exception as preview_exc:
+                    logger.warning(
+                        f"Rafraichissement du preview apres sauvegarde HTML impossible: {preview_exc}"
+                    )
             return True
         except Exception as exc:
             logger.warning(f"Sauvegarde des edits preview avant retour impossible: {exc}")

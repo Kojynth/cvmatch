@@ -84,6 +84,51 @@ _SUMMARY_INLINE_CONNECTOR_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_SUMMARY_FRAGMENT_STOPWORDS = {
+    # English function words / pronouns that slip through as lone tokens.
+    "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
+    "he", "her", "here", "his", "if", "in", "is", "it", "its", "less",
+    "me", "more", "most", "my", "nor", "not", "of", "on", "or", "our",
+    "she", "so", "than", "the", "their", "them", "there", "they", "this",
+    "to", "too", "us", "we", "with", "you", "your",
+    # French function words.
+    "au", "aux", "avec", "ce", "ces", "cet", "cette", "dans", "de", "des",
+    "du", "en", "est", "et", "la", "le", "les", "leur", "leurs", "ma",
+    "mes", "mon", "nos", "notre", "ou", "par", "pour", "sa", "sans", "se",
+    "ses", "son", "sur", "ta", "tes", "ton", "un", "une", "votre", "vos",
+    # Generic English words that rarely stand alone as a real skill label.
+    "power", "people", "role", "roles", "skill", "skills", "team", "teams",
+    "value", "values", "work", "works",
+}
+
+
+def _term_looks_like_fragment_value(text: Any) -> bool:
+    """Return True for items that aren't presentable as standalone skill labels.
+
+    Catches single-token pronouns or bare words like ``our`` or ``power`` that
+    slip through keyword extraction and make the targeted summary look like a
+    list of tokens rather than skills. Multi-token phrases pass through.
+    """
+
+    value = str(text or "").strip()
+    if not value:
+        return True
+    if len(value) < 3:
+        return True
+    norm = _normalize_marker(value)
+    if not norm:
+        return True
+    tokens = [t for t in norm.split() if t]
+    if not tokens:
+        return True
+    if len(tokens) == 1:
+        single = tokens[0]
+        if len(single) < 3:
+            return True
+        if single in _SUMMARY_FRAGMENT_STOPWORDS:
+            return True
+    return False
+
 
 _SUMMARY_ACTION_REJECTORS = {
     "fr": {
@@ -188,6 +233,8 @@ def select_summary_focus_terms(
             continue
         if len(text) > 72:
             continue
+        if _term_looks_like_fragment_value(text):
+            continue
         norm = _normalize_marker(text)
         if not norm or norm in seen:
             continue
@@ -246,6 +293,8 @@ def collect_targeted_offer_terms(
         text = _clean_candidate_term(raw)
         if not text or len(text) > 72:
             continue
+        if _term_looks_like_fragment_value(text):
+            continue
         norm = _normalize_marker(text)
         if not norm or norm in seen or norm in excluded:
             continue
@@ -273,7 +322,10 @@ def build_targeted_summary_focus_sentence(
     max_terms: int = 3,
 ) -> str:
     focus_terms = select_summary_focus_terms(terms, max_terms=max_terms)
-    if not focus_terms:
+    # Require at least two clean terms: a single leftover token produces
+    # a fragment-looking phrase like "Atouts pertinents pour X : python."
+    # which reads as a keyword, not a sentence.
+    if len(focus_terms) < 2:
         return ""
     joined = ", ".join(_format_term_for_inline_summary(item) for item in focus_terms)
     company_name = str(company or "").strip()
