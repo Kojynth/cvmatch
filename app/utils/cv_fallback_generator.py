@@ -577,26 +577,24 @@ def _build_generic_profile_summary(
 
     if is_en:
         if lead_title and focus_phrase:
-            summary = f"{lead_title} with hands-on experience in {focus_phrase}."
+            summary = f"{lead_title} focused on {focus_phrase}."
         elif lead_title:
-            summary = (
-                f"{lead_title} with experience across technical and operational environments."
-            )
+            summary = f"{lead_title} active on technical and operational scopes."
         elif focus_phrase:
-            summary = f"Professional background with experience in {focus_phrase}."
+            summary = f"Candidate focused on {focus_phrase}."
         else:
-            summary = "Professional background across technical and operational environments."
+            summary = "Candidate active on technical and operational scopes."
     else:
         if lead_title and focus_phrase:
-            summary = f"{lead_title} avec une expérience en {focus_phrase}."
+            summary = f"{lead_title} orienté {focus_phrase}."
         elif lead_title:
             summary = (
-                f"{lead_title} avec une expérience dans des environnements techniques et opérationnels."
+                f"{lead_title} actif sur des environnements techniques et opérationnels."
             )
         elif focus_phrase:
-            summary = f"Parcours avec une expérience en {focus_phrase}."
+            summary = f"Candidat orienté {focus_phrase}."
         else:
-            summary = "Parcours au sein d'environnements techniques et opérationnels."
+            summary = "Candidat actif sur des environnements techniques et opérationnels."
 
     return _trim_text(summary, 260)
 

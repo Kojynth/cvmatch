@@ -2688,6 +2688,186 @@ def _normalize_experience_date_formats(
                     entry[field] = _to_display(raw, display_mode=display_mode)
 
 
+_VERB_HEAD_PATTERN = re.compile(r"^[A-Za-zÀ-ÿ']+")
+
+_FR_PAST_PARTICIPLE_MAP: Dict[str, str] = {
+    "accompagne": "accompagné",
+    "accompagner": "accompagné",
+    "ameliore": "amélioré",
+    "améliore": "amélioré",
+    "ameliorer": "amélioré",
+    "améliorer": "amélioré",
+    "analyse": "analysé",
+    "analyser": "analysé",
+    "assure": "assuré",
+    "assurer": "assuré",
+    "automatise": "automatisé",
+    "automatiser": "automatisé",
+    "collabore": "collaboré",
+    "collaborer": "collaboré",
+    "concoit": "conçu",
+    "conçoit": "conçu",
+    "concevoir": "conçu",
+    "consolide": "consolidé",
+    "consolider": "consolidé",
+    "contribue": "contribué",
+    "contribuer": "contribué",
+    "coordonne": "coordonné",
+    "coordonner": "coordonné",
+    "cree": "créé",
+    "crée": "créé",
+    "creer": "créé",
+    "créer": "créé",
+    "definit": "défini",
+    "définit": "défini",
+    "definir": "défini",
+    "définir": "défini",
+    "deploie": "déployé",
+    "déploie": "déployé",
+    "deployer": "déployé",
+    "déployer": "déployé",
+    "developpe": "développé",
+    "développe": "développé",
+    "developper": "développé",
+    "développer": "développé",
+    "documente": "documenté",
+    "documenter": "documenté",
+    "execute": "exécuté",
+    "exécute": "exécuté",
+    "executer": "exécuté",
+    "exécuter": "exécuté",
+    "fiabilise": "fiabilisé",
+    "fiabiliser": "fiabilisé",
+    "gere": "géré",
+    "gère": "géré",
+    "gerer": "géré",
+    "gérer": "géré",
+    "identifie": "identifié",
+    "identifier": "identifié",
+    "implemente": "implémenté",
+    "implémente": "implémenté",
+    "implementer": "implémenté",
+    "implémenter": "implémenté",
+    "mene": "mené",
+    "mène": "mené",
+    "mener": "mené",
+    "optimise": "optimisé",
+    "optimiser": "optimisé",
+    "pilote": "piloté",
+    "piloter": "piloté",
+    "prepare": "préparé",
+    "prépare": "préparé",
+    "preparer": "préparé",
+    "préparer": "préparé",
+    "qualifie": "qualifié",
+    "qualifier": "qualifié",
+    "realise": "réalisé",
+    "réalise": "réalisé",
+    "realiser": "réalisé",
+    "réaliser": "réalisé",
+    "redige": "rédigé",
+    "rédige": "rédigé",
+    "rediger": "rédigé",
+    "rédiger": "rédigé",
+    "renforce": "renforcé",
+    "renforcer": "renforcé",
+    "revoit": "revu",
+    "revoir": "revu",
+    "structure": "structuré",
+    "structurer": "structuré",
+    "suit": "suivi",
+    "suivre": "suivi",
+    "teste": "testé",
+    "tester": "testé",
+    "valide": "validé",
+    "valider": "validé",
+}
+
+_EN_PAST_MAP: Dict[str, str] = {
+    "analyze": "analyzed",
+    "automate": "automated",
+    "build": "built",
+    "coordinate": "coordinated",
+    "create": "created",
+    "define": "defined",
+    "deliver": "delivered",
+    "design": "designed",
+    "develop": "developed",
+    "document": "documented",
+    "drive": "drove",
+    "execute": "executed",
+    "implement": "implemented",
+    "improve": "improved",
+    "lead": "led",
+    "manage": "managed",
+    "optimize": "optimized",
+    "prepare": "prepared",
+    "qualify": "qualified",
+    "reduce": "reduced",
+    "review": "reviewed",
+    "streamline": "streamlined",
+    "structure": "structured",
+    "support": "supported",
+    "test": "tested",
+    "track": "tracked",
+    "validate": "validated",
+}
+
+
+def _strip_verb_accents(text: str) -> str:
+    decomposed = unicodedata.normalize("NFD", str(text or ""))
+    return "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
+
+
+def _rewrite_past_role_tense(
+    cv_json: Dict[str, Any],
+    *,
+    language_code: str,
+) -> None:
+    """Rewrite present-tense verb heads to past forms for non-current experiences.
+
+    Only the first verb token of each highlight is touched; the rest of the
+    sentence is preserved verbatim. Capitalisation of the original head is
+    carried over to the replacement.
+    """
+    if not isinstance(cv_json, dict):
+        return
+    lang = "en" if str(language_code or "").strip().lower().startswith("en") else "fr"
+    mapping = _EN_PAST_MAP if lang == "en" else _FR_PAST_PARTICIPLE_MAP
+
+    for entry in cv_json.get("experience") or []:
+        if not isinstance(entry, dict):
+            continue
+        support = _derive_profile_date_support(
+            entry.get("start_date") or "",
+            entry.get("end_date") or "",
+        )
+        if bool(support.get("is_current")):
+            continue
+        highlights = entry.get("highlights")
+        if not isinstance(highlights, list):
+            continue
+        for index, bullet in enumerate(highlights):
+            if not isinstance(bullet, str):
+                continue
+            raw = bullet.strip()
+            if not raw:
+                continue
+            match = _VERB_HEAD_PATTERN.match(raw)
+            if not match:
+                continue
+            head = match.group(0)
+            head_lower = head.lower()
+            replacement = mapping.get(head_lower)
+            if replacement is None and lang == "fr":
+                replacement = mapping.get(_strip_verb_accents(head_lower))
+            if replacement is None:
+                continue
+            if head[0].isupper():
+                replacement = replacement[0].upper() + replacement[1:]
+            highlights[index] = replacement + raw[len(head):]
+
+
 def _ensure_company_name_in_summary(
     cv_json: Dict[str, Any],
     company: str,
@@ -2845,6 +3025,8 @@ def coerce_generated_cv_payload(
     _compute_experience_durations(merged, language_code=language_code)
     # Normalize date formats to MM/YYYY after duration is already computed.
     _normalize_experience_date_formats(merged, language_code=language_code)
+    # Rewrite present-tense verb heads to past forms for non-current roles.
+    _rewrite_past_role_tense(merged, language_code=language_code)
     # Inject company name into visible summary text if absent.
     # Must run before rebalance_cv_narrative which may trim the summary.
     _ensure_company_name_in_summary(merged, company=company, language_code=language_code)

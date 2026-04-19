@@ -85,6 +85,13 @@ _WEAK_VERB_HEADS = {
     }),
 }
 
+_FORMULAIC_SUMMARY_OPENERS = (
+    re.compile(r"^\s*profil\s+professionnel\b", re.IGNORECASE),
+    re.compile(r"^\s*parcours\s+professionnel\b", re.IGNORECASE),
+    re.compile(r"^\s*professional\s+background\b", re.IGNORECASE),
+    re.compile(r"\bwith\s+hands[-\s]?on\s+experience\s+in\b", re.IGNORECASE),
+)
+
 _LOW_VALUE_SOFT_SKILL_KEYS_AUDIT = frozenset({
     "adaptabilite",
     "adaptability",
@@ -270,6 +277,16 @@ def _entry_is_current(entry: Dict[str, Any]) -> bool:
     return end_text in _PRESENT_TOKENS
 
 
+def _summary_has_formulaic_opener(text: Any) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    for pattern in _FORMULAIC_SUMMARY_OPENERS:
+        if pattern.search(raw):
+            return True
+    return False
+
+
 def _strip_accents(text: str) -> str:
     return "".join(
         ch
@@ -424,10 +441,13 @@ def build_cv_quality_audit(
     verb_tense_issues: List[str] = []
     weak_verb_issues: List[str] = []
     low_value_soft_skills: List[str] = []
+    formulaic_summary_sections: List[str] = []
 
     top_summary = str(payload.get("summary") or "").strip()
     if _word_count(top_summary) > 38:
         summary_length_issues.append("summary")
+    if _summary_has_formulaic_opener(top_summary):
+        formulaic_summary_sections.append("summary")
 
     for idx, entry in enumerate(payload.get("experience") or [], start=1):
         if not isinstance(entry, dict):
@@ -436,7 +456,10 @@ def build_cv_quality_audit(
         highlights = _as_text_items(entry.get("highlights") or [])
         entry_summary = str(entry.get("summary") or "").strip()
         is_current = _entry_is_current(entry)
-        if not 2 <= len(highlights) <= 4:
+        if highlights:
+            if not 2 <= len(highlights) <= 4:
+                bullet_count_issues.append(label)
+        elif not entry_summary:
             bullet_count_issues.append(label)
 
         for bullet_index, bullet in enumerate(highlights, start=1):
@@ -453,6 +476,8 @@ def build_cv_quality_audit(
 
         if entry_summary and _word_count(entry_summary) > 38:
             summary_length_issues.append(label)
+        if entry_summary and _summary_has_formulaic_opener(entry_summary):
+            formulaic_summary_sections.append(label)
 
         if _has_reliable_duration_dates(entry) and not str(entry.get("duration") or "").strip():
             duration_missing.append(label)
@@ -473,12 +498,7 @@ def build_cv_quality_audit(
     concrete_formats = {
         fmt for fmt in (_classify_date_format(value) for value in date_values) if fmt
     }
-    date_format_ok = True
-    if "other" in concrete_formats:
-        date_format_ok = False
-    concrete_date_formats = concrete_formats - {"present"}
-    if len(concrete_date_formats) > 1:
-        date_format_ok = False
+    date_format_ok = "other" not in concrete_formats
 
     for section_name, text in [("summary", top_summary)]:
         if text and _INLINE_PSEUDO_BULLET_PATTERN.search(text):
@@ -551,6 +571,11 @@ def build_cv_quality_audit(
             "low_value_soft_skills",
             min(6.0, 2.0 + (0.8 * len(low_value_soft_skills))),
         )
+    if formulaic_summary_sections:
+        apply_penalty(
+            "formulaic_summary",
+            min(8.0, 3.0 + (1.5 * len(formulaic_summary_sections))),
+        )
     if personal_pronoun_sections:
         apply_penalty("personal_pronouns", min(10.0, 4.0 + len(personal_pronoun_sections)))
     if cliche_sections:
@@ -580,6 +605,7 @@ def build_cv_quality_audit(
         "verb_tense_ok": not bool(verb_tense_issues),
         "weak_verbs_ok": not bool(weak_verb_issues),
         "low_value_soft_skills_ok": not bool(low_value_soft_skills),
+        "formulaic_summary_ok": not bool(formulaic_summary_sections),
         "bullet_count_issues": bullet_count_issues,
         "bullet_length_issues": bullet_length_issues,
         "summary_length_issues": summary_length_issues,
@@ -588,6 +614,7 @@ def build_cv_quality_audit(
         "verb_tense_issues": verb_tense_issues,
         "weak_verb_issues": weak_verb_issues,
         "low_value_soft_skills": low_value_soft_skills,
+        "formulaic_summary_sections": formulaic_summary_sections,
         "personal_pronoun_sections": personal_pronoun_sections,
         "cliche_sections": cliche_sections,
         "penalties": penalties,
