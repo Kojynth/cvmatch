@@ -2650,7 +2650,7 @@ def rebalance_cv_narrative(
             entry_summary = _trim_text(highlights[0], 220)
 
         entry["summary"] = _trim_text(entry_summary, 280)
-        entry["highlights"] = highlights[:4]
+        entry["highlights"] = _dedup_fuzzy_highlights(highlights)[:4]
 
         if isinstance(matched_profile, dict):
             for field in ("title", "company", "start_date", "end_date", "location"):
@@ -3046,7 +3046,7 @@ def _repair_clipped_bullets(cv_json: Dict[str, Any]) -> None:
             fixed = _repair_clipped_bullet(bullet)
             if fixed:
                 repaired.append(fixed)
-        entry["highlights"] = repaired
+        entry["highlights"] = _dedup_fuzzy_highlights(repaired)
 
 
 def _ensure_company_name_in_summary(

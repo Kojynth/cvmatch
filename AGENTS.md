@@ -118,6 +118,22 @@ and must stay usable on heterogeneous Windows/Linux machines.
 - Stage memory policy changes must preserve explicit host overrides and compare
   normalized numeric values.
 
+## Development Leniency
+- Prefer lenient, additive behaviour over restrictive defaults. When fixing or
+  extending logic, keep accepting inputs that already worked and only narrow
+  the contract when a concrete bug requires it.
+- New filters, thresholds, or allowlists must ship with a regression test that
+  pins legitimate inputs that must still pass. Commit 697ffd5 is the reference
+  incident: a "tightening" on short tokens and single-term summaries silently
+  removed valid enrichment and let duplicate bullets slip through. Tightenings
+  without a proof of the legitimate inputs they preserve are not accepted.
+- When two behaviours are possible, pick the one that keeps the existing
+  generated CV as similar as possible to the previous version for the same
+  profile + offer pair. Surprise for the user is a bigger cost than a narrower
+  edge-case fix.
+- Never remove or disable an existing code path to avoid debugging it. If a
+  branch is truly obsolete, delete it in a dedicated change with justification.
+
 ## Migration Rules
 - Prefer additive migrations, wrappers, and re-exports over big-bang moves.
 - Do not remove legacy or compatibility shims until the replacement path is in

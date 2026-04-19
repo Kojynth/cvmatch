@@ -72,3 +72,10 @@
 - Pytest temp artifacts now live under `runtime/pytest_tmp/`.
 - Prefer wrappers and shims over large moves.
 - No destructive git commands. No secrets or user data in Git.
+- Be lenient when developing. Prefer additive, permissive fixes over new
+  filters, stricter thresholds, or narrower allowlists. Every tightening
+  ships with a regression test that pins legitimate inputs that must still
+  pass (see commit 697ffd5 for the reference incident: short-token filter
+  and single-term threshold silently killed valid summary enrichment and
+  duplicate-bullet dedup). If a bug can be fixed by repairing the existing
+  branch instead of rejecting the input upstream, prefer the repair.

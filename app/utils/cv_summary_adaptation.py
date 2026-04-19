@@ -113,7 +113,7 @@ def _term_looks_like_fragment_value(text: Any) -> bool:
     value = str(text or "").strip()
     if not value:
         return True
-    if len(value) < 3:
+    if len(value) < 2:
         return True
     norm = _normalize_marker(value)
     if not norm:
@@ -123,7 +123,7 @@ def _term_looks_like_fragment_value(text: Any) -> bool:
         return True
     if len(tokens) == 1:
         single = tokens[0]
-        if len(single) < 3:
+        if len(single) < 2:
             return True
         if single in _SUMMARY_FRAGMENT_STOPWORDS:
             return True
@@ -322,10 +322,7 @@ def build_targeted_summary_focus_sentence(
     max_terms: int = 3,
 ) -> str:
     focus_terms = select_summary_focus_terms(terms, max_terms=max_terms)
-    # Require at least two clean terms: a single leftover token produces
-    # a fragment-looking phrase like "Atouts pertinents pour X : python."
-    # which reads as a keyword, not a sentence.
-    if len(focus_terms) < 2:
+    if not focus_terms:
         return ""
     joined = ", ".join(_format_term_for_inline_summary(item) for item in focus_terms)
     company_name = str(company or "").strip()
