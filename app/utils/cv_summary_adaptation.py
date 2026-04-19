@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from typing import Any, Dict, Iterable, List
@@ -82,6 +83,37 @@ _SUMMARY_INLINE_CONNECTOR_PATTERN = re.compile(
     r"^\s+(?:d['’]|de|des|du|la|le|les|et|a|au|aux|with|for|and|of)\b",
     re.IGNORECASE,
 )
+
+
+_SUMMARY_ACTION_REJECTORS = {
+    "fr": {
+        "rediger",
+        "suivre",
+        "proposer",
+        "automatiser",
+        "consolider",
+        "fiabiliser",
+        "assurer",
+        "realiser",
+        "gerer",
+        "coordonner",
+        "concevoir",
+        "executer",
+    },
+    "en": {
+        "write",
+        "track",
+        "support",
+        "deliver",
+        "develop",
+        "manage",
+        "build",
+        "design",
+        "lead",
+        "coordinate",
+        "automate",
+    },
+}
 
 
 def _normalize_marker(text: Any) -> str:
@@ -183,6 +215,80 @@ def build_summary_focus_sentence(
     return f"Atouts pertinents : {joined}."
 
 
+def collect_targeted_offer_terms(
+    offer_terms: Iterable[Any],
+    *,
+    profile_json: Dict[str, Any] | None = None,
+    max_terms: int = 3,
+    excluded_terms: Iterable[Any] = (),
+) -> List[str]:
+    """Select offer terms that are reasonably grounded in the profile.
+
+    This is used to make targeted summaries feel more tailored to the job offer
+    without asserting unsupported hands-on experience.
+    """
+    try:
+        profile_probe = _normalize_marker(
+            json.dumps(profile_json or {}, ensure_ascii=False, default=str)
+        )
+    except Exception:
+        profile_probe = _normalize_marker(profile_json or "")
+
+    excluded = {
+        _normalize_marker(item)
+        for item in (excluded_terms or [])
+        if _normalize_marker(item)
+    }
+    selected: List[str] = []
+    seen: set[str] = set()
+
+    for raw in offer_terms or []:
+        text = _clean_candidate_term(raw)
+        if not text or len(text) > 72:
+            continue
+        norm = _normalize_marker(text)
+        if not norm or norm in seen or norm in excluded:
+            continue
+        tokens = [token for token in norm.split() if token]
+        if not tokens or len(tokens) > 6:
+            continue
+        if profile_probe:
+            matches = sum(1 for token in tokens if token in profile_probe)
+            required = 1 if len(tokens) <= 2 else max(2, int(len(tokens) * 0.6 + 0.5))
+            if matches < required:
+                continue
+        seen.add(norm)
+        selected.append(text)
+        if len(selected) >= max(1, int(max_terms or 1)):
+            break
+
+    return selected
+
+
+def build_targeted_summary_focus_sentence(
+    terms: Iterable[Any],
+    *,
+    company: str = "",
+    language_code: str = "fr",
+    max_terms: int = 3,
+) -> str:
+    focus_terms = select_summary_focus_terms(terms, max_terms=max_terms)
+    if not focus_terms:
+        return ""
+    joined = ", ".join(_format_term_for_inline_summary(item) for item in focus_terms)
+    company_name = str(company or "").strip()
+    is_en = str(language_code or "").lower().startswith("en")
+    if company_name:
+        if is_en:
+            return f"Relevant strengths for {company_name} include {joined}."
+        return f"Atouts pertinents pour {company_name} : {joined}."
+    return build_summary_focus_sentence(
+        focus_terms,
+        language_code=language_code,
+        max_terms=max_terms,
+    )
+
+
 def _clean_candidate_term(text: Any) -> str:
     value = re.sub(r"\s+", " ", str(text or "").strip())
     if not value:
@@ -276,6 +382,8 @@ def _is_skill_summary_candidate(
 
     tokens = [token for token in normalized.split() if token]
     if not tokens or len(tokens) > 5:
+        return False
+    if tokens[0] in _SUMMARY_ACTION_REJECTORS["fr"] or tokens[0] in _SUMMARY_ACTION_REJECTORS["en"]:
         return False
     if any(token in _SKILL_NOISE_TOKENS for token in tokens):
         return False
@@ -383,10 +491,16 @@ def build_minimum_profile_summary(
             formatted_terms = [
                 _format_term_for_inline_summary(item) for item in skill_terms if item
             ]
-            return f"{subject} focused on {_join_summary_terms(formatted_terms, language_code='en')}."
+            return f"{subject} with experience in {_join_summary_terms(formatted_terms, language_code='en')}."
         if len(experience_titles) > 1:
             return f"{subject} with experience spanning {experience_titles[0]} and {experience_titles[1]}."
         return f"{subject} with software delivery experience."
+
+    if skill_terms:
+        formatted_terms = [
+            _format_term_for_inline_summary(item) for item in skill_terms if item
+        ]
+        return f"{role_hint or 'Profil technique'} avec une experience en {_join_summary_terms(formatted_terms, language_code='fr')}."
 
     subject = role_hint or "Profil technique"
     if skill_terms:

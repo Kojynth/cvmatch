@@ -571,6 +571,7 @@ class GenericCVExportWorker(QThread):
                 self._language_code,
             ):
                 translated_summary = ""
+            is_current = self._entry_is_current(entry)
 
             candidates.append(
                 {
@@ -580,6 +581,8 @@ class GenericCVExportWorker(QThread):
                     "start_date": str(entry.get("start_date") or "").strip(),
                     "end_date": str(entry.get("end_date") or "").strip(),
                     "location": str(entry.get("location") or "").strip(),
+                    "is_current": is_current,
+                    "target_tense": "present" if is_current else "past",
                     "current_summary": translated_summary,
                     "current_highlights": translated_highlights,
                     "source_title": str(matched_profile.get("title") or "").strip(),
@@ -655,6 +658,7 @@ class GenericCVExportWorker(QThread):
         except Exception:
             return False
 
+        is_current = self._entry_is_current(entry)
         summary = str(entry.get("summary") or "").strip()
         highlights = [
             str(value).strip()
@@ -675,6 +679,7 @@ class GenericCVExportWorker(QThread):
             summary,
             company=company_name,
             is_summary=True,
+            is_current=is_current,
         ):
             return True
         if any(
@@ -682,6 +687,7 @@ class GenericCVExportWorker(QThread):
                 value,
                 company=company_name,
                 is_summary=False,
+                is_current=is_current,
             )
             for value in translated_highlights
         ):
@@ -704,6 +710,7 @@ class GenericCVExportWorker(QThread):
         *,
         company: str,
         is_summary: bool,
+        is_current: bool,
     ) -> bool:
         raw = str(text or "").strip()
         if not raw:
@@ -773,6 +780,124 @@ class GenericCVExportWorker(QThread):
         ):
             return True
 
+        if self._text_has_tense_mismatch(raw, is_current=is_current):
+            return True
+
+        return False
+
+    def _entry_is_current(self, entry: Dict[str, Any]) -> bool:
+        try:
+            from ..utils.profile_json import derive_date_support_fields
+        except Exception:
+            derive_date_support_fields = None
+
+        if derive_date_support_fields is not None:
+            try:
+                support = derive_date_support_fields(
+                    entry.get("start_date") or "",
+                    entry.get("end_date") or "",
+                )
+                return bool(support.get("is_current"))
+            except Exception:
+                pass
+
+        try:
+            from ..rules.date_normalize import normalize_present_token
+        except Exception:
+            normalize_present_token = None
+
+        end_value = str(entry.get("end_date") or "").strip()
+        if normalize_present_token is not None and end_value:
+            normalized = str(normalize_present_token(end_value) or "").strip().upper()
+            return normalized == "PRESENT"
+        return False
+
+    def _text_has_tense_mismatch(self, text: str, *, is_current: bool) -> bool:
+        raw = str(text or "").strip()
+        if not raw:
+            return False
+
+        language = "en" if str(self._language_code or "").strip().lower().startswith("en") else "fr"
+        first_token_match = re.match(r"[A-Za-zÀ-ÿ']+", raw)
+        if not first_token_match:
+            return False
+        first_token = first_token_match.group(0).lower()
+
+        if language == "fr":
+            if not is_current and re.fullmatch(r"[a-zà-ÿ]+(?:er|ir|re)", first_token):
+                return True
+            present_heads = {
+                "accompagne",
+                "ameliore",
+                "analyse",
+                "assure",
+                "automatise",
+                "collabore",
+                "concoit",
+                "consolide",
+                "contribue",
+                "coordonne",
+                "cree",
+                "definit",
+                "deploie",
+                "developpe",
+                "documente",
+                "execute",
+                "fiabilise",
+                "gere",
+                "identifie",
+                "implemente",
+                "mene",
+                "optimise",
+                "pilote",
+                "prepare",
+                "qualifie",
+                "realise",
+                "redige",
+                "renforce",
+                "revoit",
+                "structure",
+                "suit",
+                "teste",
+                "valide",
+            }
+            if not is_current and first_token in present_heads:
+                return True
+        else:
+            base_heads = {
+                "analyze",
+                "automate",
+                "build",
+                "coordinate",
+                "create",
+                "define",
+                "deliver",
+                "design",
+                "develop",
+                "document",
+                "drive",
+                "execute",
+                "implement",
+                "improve",
+                "lead",
+                "manage",
+                "optimize",
+                "prepare",
+                "qualify",
+                "reduce",
+                "review",
+                "streamline",
+                "structure",
+                "support",
+                "test",
+                "track",
+                "validate",
+            }
+            if not is_current and first_token in base_heads:
+                return True
+            if is_current and first_token.endswith("ed"):
+                return True
+
         return False
 
     @staticmethod
@@ -836,6 +961,9 @@ EXPERIENCES_TO_REWRITE:
 OUTPUT RULES:
 - Return JSON only with the shape: {{"items": [{{"index": 0, "summary": "...", "highlights": ["...", "..."]}}]}}
 - Keep the same index values.
+- Respect TARGET_TENSE for each item:
+  * if TARGET_TENSE is "present", use present tense;
+  * if TARGET_TENSE is "past", use past tense.
 - summary: exactly 1 compact sentence, factual, recruiter-facing, not generic.
 - highlights: 2 to 4 short ATS-safe lines when SOURCE_DESCRIPTION supports them.
 - Translate SOURCE_DESCRIPTION fully into LANGUAGE when needed.
@@ -846,8 +974,9 @@ OUTPUT RULES:
 - Each highlight must follow: action verb + concrete task + grounded effect or operational outcome when the source supports it.
 - When SOURCE_DESCRIPTION implies an outcome but gives no exact metric, you may express a qualitative impact in LANGUAGE (for example: clearer reporting, smoother releases, reduced manual work, stronger test coverage) without inventing numbers.
 - Reject noun-fragment bullets such as "Validation fonctionnelle..." or "Conception, execution et suivi..."; rewrite them into verb-led recruiter bullets.
+- For former roles, do not keep infinitive-only bullets or present-tense openings such as "Concevoir...", "Pilote...", "Build...", or "Lead...".
 - Use strong action verbs and one idea per highlight.
-- Start each highlight with a clear action verb or infinitive in LANGUAGE.
+- Start each highlight with a clear action verb in LANGUAGE.
 - If CURRENT_SUMMARY or CURRENT_HIGHLIGHTS are already strong and in LANGUAGE, you may keep them.
 """.strip()
         return {"system": system_prompt, "user": user_prompt}
