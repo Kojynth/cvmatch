@@ -1025,6 +1025,48 @@ class ExportManager:
             ):
                 return str(text or "").strip()
 
+        import unicodedata as _unicodedata
+
+        def _normalize_tokens(text: Any) -> frozenset:
+            raw = str(text or "").strip().lower()
+            if not raw:
+                return frozenset()
+            stripped = "".join(
+                ch
+                for ch in _unicodedata.normalize("NFD", raw)
+                if _unicodedata.category(ch) != "Mn"
+            )
+            return frozenset(re.findall(r"\w{3,}", stripped, flags=re.UNICODE))
+
+        primary_items = list((formatted_data or {}).get("experience_primary") or [])
+        primary_signatures: List[frozenset] = []
+        for primary in primary_items:
+            if not isinstance(primary, dict):
+                continue
+            tokens: set = set()
+            summary_text = primary.get("summary")
+            if isinstance(summary_text, str):
+                tokens |= _normalize_tokens(summary_text)
+            highlights = primary.get("highlights")
+            if isinstance(highlights, list):
+                for bullet in highlights:
+                    if isinstance(bullet, str):
+                        tokens |= _normalize_tokens(bullet)
+            if tokens:
+                primary_signatures.append(frozenset(tokens))
+
+        def _overlaps_primary(candidate: str) -> bool:
+            tokens = _normalize_tokens(candidate)
+            if len(tokens) < 3:
+                return False
+            for signature in primary_signatures:
+                if not signature:
+                    continue
+                intersection = len(tokens & signature)
+                if intersection >= max(3, int(len(tokens) * 0.7)):
+                    return True
+            return False
+
         def _date_text(exp: Dict[str, Any]) -> str:
             start = str(exp.get("start_date") or "").strip()
             end = str(exp.get("end_date") or "").strip()
@@ -1084,6 +1126,8 @@ class ExportManager:
                 if len(re.findall(r"\b\S+\b", cleaned, flags=re.UNICODE)) < 3:
                     continue
                 clean_detail = cleaned.rstrip(".")
+                if _overlaps_primary(clean_detail):
+                    continue
                 if clean_detail not in details_text:
                     details_text.append(clean_detail)
                 if len(details_text) >= 3:

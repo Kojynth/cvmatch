@@ -8,6 +8,7 @@ missing durations, and overlong pseudo-bullets.
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any, Dict, Iterable, List
 
 try:
@@ -65,6 +66,52 @@ _INLINE_PSEUDO_BULLET_PATTERN = re.compile(
 )
 
 _WORD_PATTERN = re.compile(r"\b\S+\b", re.UNICODE)
+_ACTION_HEAD_PATTERN = re.compile(r"^[A-Za-zÀ-ÿ']+")
+
+_WEAK_VERB_HEADS = {
+    "fr": frozenset({
+        "aide",
+        "aider",
+        "participe",
+        "participer",
+        "soutiens",
+        "soutenir",
+    }),
+    "en": frozenset({
+        "assisted",
+        "helped",
+        "participated",
+        "worked",
+    }),
+}
+
+_LOW_VALUE_SOFT_SKILL_KEYS_AUDIT = frozenset({
+    "adaptabilite",
+    "adaptability",
+    "autonomie",
+    "autonomy",
+    "curieux",
+    "curieuse",
+    "curiosity",
+    "dynamique",
+    "dynamic",
+    "efficacite",
+    "efficiency",
+    "esprit d equipe",
+    "motivation",
+    "polyvalent",
+    "polyvalente",
+    "rigueur",
+    "rigoureux",
+    "rigoureuse",
+    "serieux",
+    "serieuse",
+    "team player",
+    "teamwork",
+    "travail en equipe",
+    "travailler en equipe",
+    "versatile",
+})
 _MODE_OR_LOCATION_SUFFIXES = {
     "remote",
     "hybrid",
@@ -203,6 +250,161 @@ def _collect_text_sections(cv_json: Dict[str, Any]) -> List[str]:
     return sections
 
 
+def _entry_is_current(entry: Dict[str, Any]) -> bool:
+    try:
+        from ..utils.profile_json import derive_date_support_fields
+    except Exception:
+        derive_date_support_fields = None
+
+    if derive_date_support_fields is not None:
+        try:
+            support = derive_date_support_fields(
+                entry.get("start_date") or "",
+                entry.get("end_date") or "",
+            )
+            return bool(support.get("is_current"))
+        except Exception:
+            pass
+
+    end_text = str(entry.get("end_date") or "").strip().lower()
+    return end_text in _PRESENT_TOKENS
+
+
+def _strip_accents(text: str) -> str:
+    return "".join(
+        ch
+        for ch in unicodedata.normalize("NFD", str(text or ""))
+        if unicodedata.category(ch) != "Mn"
+    )
+
+
+def _bullet_starts_with_weak_verb(text: Any, target_language: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    match = _ACTION_HEAD_PATTERN.match(raw)
+    if not match:
+        return False
+    first_token = _strip_accents(match.group(0).lower())
+    lang = "en" if str(target_language or "").strip().lower().startswith("en") else "fr"
+    return first_token in _WEAK_VERB_HEADS[lang]
+
+
+def _iter_skill_labels(skills_section: Any) -> Iterable[str]:
+    if isinstance(skills_section, list):
+        for entry in skills_section:
+            if isinstance(entry, str) and entry.strip():
+                yield entry.strip()
+            elif isinstance(entry, dict):
+                for item in entry.get("items") or []:
+                    if isinstance(item, str) and item.strip():
+                        yield item.strip()
+    elif isinstance(skills_section, dict):
+        for items in skills_section.values():
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, str) and item.strip():
+                        yield item.strip()
+
+
+def _is_low_value_soft_skill(label: Any) -> bool:
+    normalized = _strip_accents(str(label or "").strip().lower())
+    normalized = normalized.replace("'", " ").replace("-", " ")
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    if not normalized:
+        return False
+    return normalized in _LOW_VALUE_SOFT_SKILL_KEYS_AUDIT
+
+
+def _bullet_has_tense_or_style_issue(text: Any, *, is_current: bool, target_language: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+
+    lang = "en" if str(target_language or "").strip().lower().startswith("en") else "fr"
+    match = _ACTION_HEAD_PATTERN.match(raw)
+    if not match:
+        return True
+    first_token = match.group(0).lower()
+
+    if lang == "fr":
+        present_heads = {
+            "accompagne",
+            "ameliore",
+            "analyse",
+            "assure",
+            "automatise",
+            "collabore",
+            "concoit",
+            "consolide",
+            "contribue",
+            "coordonne",
+            "cree",
+            "definit",
+            "deploie",
+            "developpe",
+            "documente",
+            "execute",
+            "fiabilise",
+            "gere",
+            "identifie",
+            "implemente",
+            "mene",
+            "optimise",
+            "pilote",
+            "prepare",
+            "qualifie",
+            "realise",
+            "redige",
+            "renforce",
+            "revoit",
+            "structure",
+            "suit",
+            "teste",
+            "valide",
+        }
+        if not is_current and re.fullmatch(r"[a-zà-ÿ]+(?:er|ir|re)", first_token):
+            return True
+        if not is_current and first_token in present_heads:
+            return True
+    else:
+        base_heads = {
+            "analyze",
+            "automate",
+            "build",
+            "coordinate",
+            "create",
+            "define",
+            "deliver",
+            "design",
+            "develop",
+            "document",
+            "drive",
+            "execute",
+            "implement",
+            "improve",
+            "lead",
+            "manage",
+            "optimize",
+            "prepare",
+            "qualify",
+            "reduce",
+            "review",
+            "streamline",
+            "structure",
+            "support",
+            "test",
+            "track",
+            "validate",
+        }
+        if not is_current and first_token in base_heads:
+            return True
+        if is_current and first_token.endswith("ed"):
+            return True
+
+    return False
+
+
 def build_cv_quality_audit(
     cv_json: Dict[str, Any],
     *,
@@ -219,6 +421,9 @@ def build_cv_quality_audit(
     ats_text_issues: List[str] = []
     personal_pronoun_sections: List[str] = []
     cliche_sections: List[str] = []
+    verb_tense_issues: List[str] = []
+    weak_verb_issues: List[str] = []
+    low_value_soft_skills: List[str] = []
 
     top_summary = str(payload.get("summary") or "").strip()
     if _word_count(top_summary) > 38:
@@ -230,12 +435,21 @@ def build_cv_quality_audit(
         label = f"experience_{idx}"
         highlights = _as_text_items(entry.get("highlights") or [])
         entry_summary = str(entry.get("summary") or "").strip()
+        is_current = _entry_is_current(entry)
         if not 2 <= len(highlights) <= 4:
             bullet_count_issues.append(label)
 
         for bullet_index, bullet in enumerate(highlights, start=1):
             if _word_count(bullet) > 40:
                 bullet_length_issues.append(f"{label}.highlight_{bullet_index}")
+            if _bullet_has_tense_or_style_issue(
+                bullet,
+                is_current=is_current,
+                target_language=language,
+            ):
+                verb_tense_issues.append(f"{label}.highlight_{bullet_index}")
+            if _bullet_starts_with_weak_verb(bullet, target_language=language):
+                weak_verb_issues.append(f"{label}.highlight_{bullet_index}")
 
         if entry_summary and _word_count(entry_summary) > 38:
             summary_length_issues.append(label)
@@ -275,6 +489,10 @@ def build_cv_quality_audit(
         text = str(entry.get("summary") or "").strip()
         if text and _INLINE_PSEUDO_BULLET_PATTERN.search(text):
             ats_text_issues.append(f"experience_{idx}")
+
+    for skill_label in _iter_skill_labels(payload.get("skills")):
+        if _is_low_value_soft_skill(skill_label):
+            low_value_soft_skills.append(skill_label)
 
     sections = _collect_text_sections(payload)
     language_supported = language.startswith(("fr", "en"))
@@ -318,6 +536,21 @@ def build_cv_quality_audit(
         )
     if ats_text_issues:
         apply_penalty("ats_text", min(14.0, 8.0 + (2.0 * len(ats_text_issues))))
+    if verb_tense_issues:
+        apply_penalty(
+            "verb_tense",
+            min(12.0, 4.0 + (1.5 * len(verb_tense_issues))),
+        )
+    if weak_verb_issues:
+        apply_penalty(
+            "weak_verbs",
+            min(8.0, 2.0 + (1.0 * len(weak_verb_issues))),
+        )
+    if low_value_soft_skills:
+        apply_penalty(
+            "low_value_soft_skills",
+            min(6.0, 2.0 + (0.8 * len(low_value_soft_skills))),
+        )
     if personal_pronoun_sections:
         apply_penalty("personal_pronouns", min(10.0, 4.0 + len(personal_pronoun_sections)))
     if cliche_sections:
@@ -330,6 +563,7 @@ def build_cv_quality_audit(
         and not bullet_count_issues
         and not bullet_length_issues
         and not ats_text_issues
+        and not verb_tense_issues
     )
 
     audit = {
@@ -343,11 +577,17 @@ def build_cv_quality_audit(
         "duration_ok": not bool(duration_missing),
         "bullets_ok": not bool(bullet_count_issues or bullet_length_issues),
         "ats_text_ok": not bool(ats_text_issues),
+        "verb_tense_ok": not bool(verb_tense_issues),
+        "weak_verbs_ok": not bool(weak_verb_issues),
+        "low_value_soft_skills_ok": not bool(low_value_soft_skills),
         "bullet_count_issues": bullet_count_issues,
         "bullet_length_issues": bullet_length_issues,
         "summary_length_issues": summary_length_issues,
         "duration_missing": duration_missing,
         "ats_text_issues": ats_text_issues,
+        "verb_tense_issues": verb_tense_issues,
+        "weak_verb_issues": weak_verb_issues,
+        "low_value_soft_skills": low_value_soft_skills,
         "personal_pronoun_sections": personal_pronoun_sections,
         "cliche_sections": cliche_sections,
         "penalties": penalties,
@@ -355,13 +595,14 @@ def build_cv_quality_audit(
 
     if not sufficient:
         logger.info(
-            "CV quality audit insufficient: score=%s date_ok=%s duration_missing=%s bullet_count=%s bullet_length=%s ats=%s",
+            "CV quality audit insufficient: score=%s date_ok=%s duration_missing=%s bullet_count=%s bullet_length=%s ats=%s verb_tense=%s",
             audit["score"],
             audit["date_format_ok"],
             len(duration_missing),
             len(bullet_count_issues),
             len(bullet_length_issues),
             len(ats_text_issues),
+            len(verb_tense_issues),
         )
 
     return audit
