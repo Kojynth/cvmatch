@@ -384,15 +384,35 @@ def _collect_candidate_keywords(
         if value is None:
             return
         if isinstance(value, str):
-            trimmed = value.strip()
-            if 1 < len(trimmed) <= 80:
-                terms.append(trimmed)
+            raw = value.strip()
+            if not raw:
+                return
+            fragments = re.split(r"[\n;]+", raw)
+            if len(fragments) <= 1:
+                fragments = [raw]
+            for fragment in fragments:
+                trimmed = fragment.strip(" -•\t")
+                if 1 < len(trimmed) <= 80:
+                    terms.append(trimmed)
             return
         if isinstance(value, list):
             for item in value:
                 add_term(item)
         elif isinstance(value, dict):
-            for key in ("name", "title", "skill", "technology", "tool"):
+            for key in (
+                "name",
+                "title",
+                "skill",
+                "technology",
+                "tool",
+                "technologies",
+                "tech_stack",
+                "description",
+                "summary",
+                "highlights",
+                "degree",
+                "field_of_study",
+            ):
                 add_term(value.get(key))
 
     skills = getattr(profile, "extracted_skills", None) or []
@@ -413,6 +433,8 @@ def _collect_candidate_keywords(
         if isinstance(entry, dict):
             add_term(entry.get("name"))
             add_term(entry.get("technologies"))
+            add_term(entry.get("tech_stack"))
+            add_term(entry.get("description"))
         else:
             add_term(entry)
 
@@ -420,6 +442,15 @@ def _collect_candidate_keywords(
     for entry in certifications:
         if isinstance(entry, dict):
             add_term(entry.get("name"))
+            add_term(entry.get("description"))
+        else:
+            add_term(entry)
+
+    education = getattr(profile, "extracted_education", None) or []
+    for entry in education:
+        if isinstance(entry, dict):
+            add_term(entry.get("degree"))
+            add_term(entry.get("field_of_study"))
         else:
             add_term(entry)
 
@@ -427,6 +458,10 @@ def _collect_candidate_keywords(
     for entry in experiences:
         if isinstance(entry, dict):
             add_term(entry.get("title"))
+            add_term(entry.get("summary"))
+            add_term(entry.get("highlights"))
+            add_term(entry.get("description"))
+            add_term(entry.get("technologies"))
         else:
             add_term(entry)
 
@@ -3799,28 +3834,25 @@ OUTPUT RULES:
     def _collect_offer_keywords_only(
         self, critic_json: Optional[Dict[str, Any]] = None
     ) -> List[str]:
+        from ..utils.offer_keywords_utils import (
+            DEFAULT_ANALYSIS_KEY_FIELDS,
+            DEFAULT_OFFER_KEY_FIELDS,
+            collect_offer_keywords_from_source,
+        )
+
         keywords: List[str] = []
         offer_keywords = self._get_offer_keywords_json()
         if isinstance(offer_keywords, dict):
-            for key in (
-                "keywords",
-                "skills",
-                "tools",
-                "soft_skills",
-                "responsibilities",
-                "education",
-                "certifications",
-            ):
-                value = offer_keywords.get(key)
-                if isinstance(value, list):
-                    keywords.extend(str(item) for item in value)
-                elif isinstance(value, str):
-                    keywords.extend(
-                        part.strip() for part in value.split(",") if part.strip()
-                    )
-            job_title = offer_keywords.get("job_title") or ""
-            if job_title:
-                keywords.extend(part for part in job_title.split() if part)
+            keywords.extend(
+                collect_offer_keywords_from_source(
+                    offer_keywords,
+                    keys=DEFAULT_OFFER_KEY_FIELDS,
+                    include_keyword_families=True,
+                    include_family_keys=True,
+                    include_job_title=True,
+                    max_items=80,
+                )
+            )
         else:
             analysis = (
                 self.offer_data.get("analysis")
@@ -3828,23 +3860,16 @@ OUTPUT RULES:
                 else None
             )
             if isinstance(analysis, dict):
-                for key in (
-                    "keywords",
-                    "skills",
-                    "tech_keywords",
-                    "soft_keywords",
-                    "tools",
-                    "responsibilities",
-                    "education",
-                    "certifications",
-                ):
-                    value = analysis.get(key)
-                    if isinstance(value, list):
-                        keywords.extend(str(item) for item in value)
-                    elif isinstance(value, str):
-                        keywords.extend(
-                            part.strip() for part in value.split(",") if part.strip()
-                        )
+                keywords.extend(
+                    collect_offer_keywords_from_source(
+                        analysis,
+                        keys=DEFAULT_ANALYSIS_KEY_FIELDS,
+                        include_keyword_families=True,
+                        include_family_keys=True,
+                        include_job_title=False,
+                        max_items=80,
+                    )
+                )
 
         if critic_json and isinstance(critic_json, dict):
             missing = critic_json.get("missing_keywords")
@@ -4641,29 +4666,41 @@ OUTPUT RULES:
         )
 
     def _collect_offer_keywords(self) -> List[str]:
+        from ..utils.offer_keywords_utils import (
+            DEFAULT_ANALYSIS_KEY_FIELDS,
+            DEFAULT_OFFER_KEY_FIELDS,
+            collect_offer_keywords_from_source,
+        )
+
         keywords: List[str] = []
         analysis = (
             self.offer_data.get("analysis")
             if isinstance(self.offer_data, dict)
             else None
         )
+        offer_keywords = self._get_offer_keywords_json()
+        if isinstance(offer_keywords, dict):
+            keywords.extend(
+                collect_offer_keywords_from_source(
+                    offer_keywords,
+                    keys=DEFAULT_OFFER_KEY_FIELDS,
+                    include_keyword_families=True,
+                    include_family_keys=True,
+                    include_job_title=True,
+                    max_items=80,
+                )
+            )
         if isinstance(analysis, dict):
-            for key in (
-                "tech_keywords",
-                "soft_keywords",
-                "soft_skills",
-                "keywords",
-                "skills",
-                "skills_required",
-                "tools",
-                "responsibilities",
-                "certifications",
-            ):
-                value = analysis.get(key)
-                if isinstance(value, list):
-                    keywords.extend(str(item) for item in value)
-                elif isinstance(value, str):
-                    keywords.extend(part.strip() for part in value.split(","))
+            keywords.extend(
+                collect_offer_keywords_from_source(
+                    analysis,
+                    keys=DEFAULT_ANALYSIS_KEY_FIELDS,
+                    include_keyword_families=True,
+                    include_family_keys=True,
+                    include_job_title=False,
+                    max_items=80,
+                )
+            )
 
         job_title = (
             self.offer_data.get("job_title")

@@ -244,6 +244,8 @@ def _build_date_feedback(start_date: Any, end_date: Any) -> str:
     end = str(end_date or "").strip()
 
     notes: List[str] = []
+    if start and not end:
+        notes.append("Ajoutez une date de fin ou indiquez explicitement Present/En cours pour clarifier la periode.")
     if _has_partial_year_only_date(start) or _has_partial_year_only_date(end):
         notes.append("Format conseillé: MM/YYYY. YYYY reste accepté si le mois est inconnu.")
     if _has_date_order_issue(start, end):
@@ -267,4 +269,3 @@ def build_experience_editor_feedback(
             entry.get("end_date"),
         ),
     }
-

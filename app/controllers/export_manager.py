@@ -8,6 +8,7 @@ Gestionnaire pour l'export des CV en différents formats.
 import os
 import re
 import tempfile
+import unicodedata
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 from jinja2 import Environment, FileSystemLoader
@@ -320,6 +321,38 @@ class ExportManager:
                 def _clean_skill_candidate(value, profile_json=None):
                     return str(value or "").strip()
 
+            def _normalize_text_key(value: Any) -> str:
+                text = str(value or "").strip().casefold()
+                text = unicodedata.normalize("NFKD", text)
+                text = "".join(ch for ch in text if not unicodedata.combining(ch))
+                text = re.sub(r"[^\w]+", " ", text, flags=re.UNICODE)
+                return re.sub(r"\s+", " ", text).strip()
+
+            _LOW_VALUE_SOFT_SKILL_KEYS = {
+                "adaptabilite",
+                "adaptability",
+                "autonomie",
+                "autonomy",
+                "communication",
+                "curieux",
+                "curieuse",
+                "curiosity",
+                "efficacite",
+                "efficiency",
+                "esprit d equipe",
+                "motivation",
+                "motive",
+                "motived",
+                "pedagogue",
+                "rigoureux",
+                "rigoureuse",
+                "rigueur",
+                "savoir vendre ses idees",
+                "team player",
+                "teamwork",
+                "travailler en equipe",
+            }
+
             def _normalize_category_label(label: Any) -> str:
                 text = str(label or "").strip()
                 lowered = text.casefold()
@@ -331,14 +364,29 @@ class ExportManager:
                 }
                 return replacements.get(lowered, text or str(default_category or "Skills"))
 
+            def _is_soft_category_label(label: Any) -> bool:
+                lowered = _normalize_text_key(label)
+                return lowered in {"qualites", "qualites personnelles", "soft skills", "soft skill"}
+
+            def _is_low_value_soft_skill(name: Any, *, category_label: Any) -> bool:
+                if not _is_soft_category_label(category_label):
+                    return False
+                normalized = _normalize_text_key(name)
+                if not normalized:
+                    return True
+                return normalized in _LOW_VALUE_SOFT_SKILL_KEYS
+
             # Si c'est une liste simple, la convertir en structure categorisee
             if skills and len(skills) > 0 and isinstance(skills[0], str):
                 cleaned_simple_skills = []
+                seen_simple = set()
                 for skill in skills:
                     if not isinstance(skill, str) or not skill.strip():
                         continue
                     cleaned = _clean_skill_candidate(skill, None)
-                    if cleaned:
+                    key = _normalize_text_key(cleaned)
+                    if cleaned and key and key not in seen_simple:
+                        seen_simple.add(key)
                         cleaned_simple_skills.append(cleaned)
                 return [
                     {
@@ -351,8 +399,10 @@ class ExportManager:
                 ] if cleaned_simple_skills else []
 
             normalized = []
+            seen_global_items = set()
             for block in skills:
                 if isinstance(block, dict):
+                    category_label = _normalize_category_label(block.get("category") or default_category)
                     if isinstance(block.get("skills_list"), list):
                         filtered_skills_list = []
                         for item in block.get("skills_list") or []:
@@ -363,12 +413,19 @@ class ExportManager:
                                 name = str(item)
                                 level = None
                             cleaned_name = _clean_skill_candidate(name, None)
-                            if cleaned_name:
+                            item_key = _normalize_text_key(cleaned_name)
+                            if (
+                                cleaned_name
+                                and item_key
+                                and item_key not in seen_global_items
+                                and not _is_low_value_soft_skill(cleaned_name, category_label=category_label)
+                            ):
+                                seen_global_items.add(item_key)
                                 filtered_skills_list.append({"name": cleaned_name, "level": level})
                         if filtered_skills_list:
                             normalized.append(
                                 {
-                                    "category": _normalize_category_label(block.get("category") or default_category),
+                                    "category": category_label,
                                     "skills_list": filtered_skills_list,
                                 }
                             )
@@ -384,20 +441,29 @@ class ExportManager:
                             name = str(item)
                             level = None
                         name = _clean_skill_candidate(name, None)
-                        if name:
+                        item_key = _normalize_text_key(name)
+                        if (
+                            name
+                            and item_key
+                            and item_key not in seen_global_items
+                            and not _is_low_value_soft_skill(name, category_label=category_label)
+                        ):
+                            seen_global_items.add(item_key)
                             skills_list.append({"name": name, "level": level})
 
                     if skills_list:
                         normalized.append(
                             {
-                                "category": _normalize_category_label(block.get("category") or default_category),
+                                "category": category_label,
                                 "skills_list": skills_list,
                             }
                         )
                 elif isinstance(block, str):
                     name = _clean_skill_candidate(block, None)
-                    if not name:
+                    item_key = _normalize_text_key(name)
+                    if not name or not item_key or item_key in seen_global_items:
                         continue
+                    seen_global_items.add(item_key)
                     if not normalized:
                         normalized.append(
                             {"category": _normalize_category_label(default_category), "skills_list": []}
@@ -406,7 +472,45 @@ class ExportManager:
                         {"name": name, "level": None}
                     )
 
-            return normalized or skills
+            merged: list = []
+            category_index: dict = {}
+            for block in normalized:
+                category = _normalize_category_label(block.get("category") or default_category)
+                block_items = [
+                    item
+                    for item in (block.get("skills_list") or [])
+                    if isinstance(item, dict) and str(item.get("name") or "").strip()
+                ]
+                if not block_items:
+                    continue
+                category_key = _normalize_text_key(category) or category.casefold()
+                if category_key not in category_index:
+                    category_index[category_key] = len(merged)
+                    merged.append({"category": category, "skills_list": block_items})
+                    continue
+                idx = category_index[category_key]
+                existing_keys = {
+                    _normalize_text_key(item.get("name"))
+                    for item in merged[idx].get("skills_list") or []
+                    if isinstance(item, dict)
+                }
+                for item in block_items:
+                    item_key = _normalize_text_key(item.get("name"))
+                    if item_key and item_key not in existing_keys:
+                        merged[idx]["skills_list"].append(item)
+                        existing_keys.add(item_key)
+
+            if len(merged) > 1:
+                merged = [
+                    block
+                    for block in merged
+                    if not (
+                        _is_soft_category_label(block.get("category"))
+                        and len(block.get("skills_list") or []) < 2
+                    )
+                ] or merged
+
+            return merged or skills
         except Exception as e:
             logger.error(f"Erreur format_skills: {e}")
             return []
@@ -955,6 +1059,15 @@ class ExportManager:
                 detail_candidates.extend(
                     item for item in highlights if isinstance(item, str) and item.strip()
                 )
+            technologies = exp.get("technologies")
+            if isinstance(technologies, list):
+                tech_values = [
+                    str(item).strip()
+                    for item in technologies
+                    if isinstance(item, str) and item.strip()
+                ]
+                if tech_values:
+                    detail_candidates.append(", ".join(tech_values[:4]))
 
             for candidate in detail_candidates:
                 if not text_matches_target_language(candidate, target_language):
@@ -973,7 +1086,7 @@ class ExportManager:
                 clean_detail = cleaned.rstrip(".")
                 if clean_detail not in details_text:
                     details_text.append(clean_detail)
-                if len(details_text) >= 2:
+                if len(details_text) >= 3:
                     break
 
             head = title or company or ("Role" if is_en else "Role")

@@ -68,18 +68,53 @@ ONE_PAGE_PRINT_CSS = """
   html,
   body {
     width: 210mm;
-    height: 297mm;
+    min-height: 297mm;
     margin: 0;
     padding: 0;
     overflow: hidden;
     background: #ffffff;
   }
+  body {
+    position: relative;
+  }
   .cv-container,
   .letter-container {
-    margin: 0 auto;
-    transform: scale(var(--print-scale));
-    transform-origin: top left;
+    position: relative;
+    left: 50%;
+    margin: 0 !important;
     width: calc(100% / var(--print-scale));
+    max-width: calc(100% / var(--print-scale));
+    transform: translateX(-50%) scale(var(--print-scale));
+    transform-origin: top center;
+  }
+}
+"""
+
+ATS_SAFE_PRINT_CSS = """
+@media print {
+  * {
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+  html,
+  body {
+    background: #ffffff !important;
+  }
+  .cv-container,
+  .letter-container {
+    background: #ffffff !important;
+    border-radius: 0 !important;
+    overflow: visible !important;
+  }
+  .cv-header,
+  .letter-header,
+  .contact-item {
+    background: transparent !important;
+  }
+  .contact-item {
+    border: none !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
   }
 }
 """
@@ -1664,6 +1699,7 @@ class TemplatePreviewWindow(QMainWindow):
                 css_content = _build_fallback_css(template_name)
                 logger.warning(f"Fichier CSS non trouvé: {css_file} - fallback appliqué")
 
+            css_content = f"{css_content}\n{ATS_SAFE_PRINT_CSS}"
             if self.force_single_page:
                 css_content = f"{css_content}\n{ONE_PAGE_PRINT_CSS}"
 
@@ -1700,6 +1736,7 @@ class TemplatePreviewWindow(QMainWindow):
                 css_content = _build_letter_fallback_css()
                 logger.warning(f"CSS lettre manquant: {css_file} - fallback applique")
 
+            css_content = f"{css_content}\n{ATS_SAFE_PRINT_CSS}"
             if self.force_single_page:
                 css_content = f"{css_content}\n{ONE_PAGE_PRINT_CSS}"
 

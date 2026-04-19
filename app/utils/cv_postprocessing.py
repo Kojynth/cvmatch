@@ -3106,6 +3106,8 @@ def enforce_cv_offer_adaptation(
         )
         from .cv_skill_ranking import rank_skill_blocks_by_relevance
         from .cv_summary_adaptation import (
+            build_targeted_summary_focus_sentence,
+            collect_targeted_offer_terms,
             build_summary_focus_sentence,
             is_minimum_summary_template,
             strip_deterministic_summary_appendices,
@@ -3230,15 +3232,42 @@ def enforce_cv_offer_adaptation(
         limit=summary_term_limit,
     )
     focus_sentence = ""
-    if not summary and missing_summary_terms and not summary_is_minimum:
+    summary_focus_limit = (
+        min(4, int(summary_term_limit or 3))
+        if isinstance(summary_term_limit, int) and summary_term_limit > 0
+        else 3
+    )
+    candidate_summary_terms = missing_summary_terms or aligned_terms
+    targeted_summary_terms = collect_targeted_offer_terms(
+        candidate_summary_terms,
+        profile_json=profile_json if isinstance(profile_json, dict) else None,
+        max_terms=summary_focus_limit,
+        excluded_terms=[job_title, company],
+    )
+    summary_missing_target_signal = not any(
+        normalized_term_present(summary_norm, normalize_keyword_for_match(term))
+        for term in targeted_summary_terms
+        if normalize_keyword_for_match(term)
+    )
+    if (
+        targeted_summary_terms
+        and (
+            not summary
+            or summary_is_minimum
+            or summary_missing_target_signal
+        )
+    ):
+        focus_sentence = build_targeted_summary_focus_sentence(
+            targeted_summary_terms,
+            company=company,
+            language_code=language_code,
+            max_terms=summary_focus_limit,
+        )
+    elif not summary and missing_summary_terms and not summary_is_minimum:
         focus_sentence = build_summary_focus_sentence(
             missing_summary_terms,
             language_code=language_code,
-            max_terms=(
-                min(4, int(summary_term_limit or 3))
-                if isinstance(summary_term_limit, int) and summary_term_limit > 0
-                else 3
-            ),
+            max_terms=summary_focus_limit,
         )
     if focus_sentence:
         summary_additions.append(focus_sentence)
