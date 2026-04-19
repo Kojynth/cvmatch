@@ -80,6 +80,16 @@ _GENERIC_NOISE_TERMS = {
     "technologies",
     "thales",
     "verification",
+    # Low-value generic tool / buzzword skills that add no signal on a CV.
+    "dev front",
+    "pack office",
+    "pack microsoft",
+    "teams",
+    "tosa",
+    "zoom",
+    "zoom et teams",
+    "ms teams",
+    "microsoft teams",
 }
 
 _SOFT_SKILL_HINTS = {
@@ -123,6 +133,70 @@ _AMBIGUOUS_SINGLE_WORD_SKILL_TERMS = {
     "verification",
 }
 
+_FR_INFINITIVE_VERB_HEADS = {
+    "accompagner",
+    "acquerir",
+    "adapter",
+    "ameliorer",
+    "analyser",
+    "animer",
+    "apprendre",
+    "assister",
+    "assurer",
+    "automatiser",
+    "batir",
+    "collaborer",
+    "concevoir",
+    "conduire",
+    "configurer",
+    "construire",
+    "contribuer",
+    "coordonner",
+    "creer",
+    "deployer",
+    "definir",
+    "developper",
+    "diriger",
+    "documenter",
+    "elaborer",
+    "encadrer",
+    "enrichir",
+    "executer",
+    "faciliter",
+    "former",
+    "garantir",
+    "gerer",
+    "identifier",
+    "implementer",
+    "initier",
+    "livrer",
+    "maintenir",
+    "mettre",
+    "monitorer",
+    "optimiser",
+    "organiser",
+    "participer",
+    "piloter",
+    "planifier",
+    "produire",
+    "proposer",
+    "realiser",
+    "redigier",
+    "rediger",
+    "reduire",
+    "resoudre",
+    "reviewer",
+    "securiser",
+    "simuler",
+    "structurer",
+    "superviser",
+    "suivre",
+    "tester",
+    "traduire",
+    "transformer",
+    "valider",
+}
+
 
 def _dedup_preserve(items: Iterable[Any]) -> List[str]:
     output: List[str] = []
@@ -151,6 +225,11 @@ def looks_like_noise_skill_term(term: Any) -> bool:
     if not tokens:
         return True
     if len(tokens) == 1 and tokens[0] in _GENERIC_NOISE_TERMS:
+        return True
+    # Responsibility-shaped phrases (usually verb clauses) are not skills.
+    if len(tokens) > 5:
+        return True
+    if len(tokens) >= 2 and tokens[0] in _FR_INFINITIVE_VERB_HEADS:
         return True
     return False
 
@@ -282,11 +361,30 @@ def skill_term_supported_by_profile(term: Any, profile_json: Dict[str, Any]) -> 
 def should_keep_skill_term(
     term: Any,
     profile_json: Dict[str, Any] | None = None,
+    *,
+    require_profile_evidence: bool = False,
 ) -> bool:
+    """Decide if ``term`` qualifies as a retainable skill label.
+
+    When ``require_profile_evidence`` is True, the dictionary-based hits
+    (``route_term_to_section`` and ``_AMBIGUOUS_SINGLE_WORD_SKILL_TERMS``)
+    no longer short-circuit to True — the term must be demonstrably grounded
+    in the user's profile before it is kept. This guards against offer-only
+    terms (tools named in the job post but absent from the profile) being
+    injected as claimed skills on a generic CV.
+    """
+
     if looks_like_noise_skill_term(term):
         return False
+
+    has_profile = isinstance(profile_json, dict) and bool(profile_json)
+
     if route_term_to_section(term) == "skills":
-        return True
+        if not require_profile_evidence:
+            return True
+        if has_profile:
+            return skill_term_supported_by_profile(term, profile_json)
+        return False
 
     tokens = _normalized_skill_tokens(term)
     if len(tokens) != 1:
@@ -294,9 +392,13 @@ def should_keep_skill_term(
 
     token = tokens[0]
     if token in _AMBIGUOUS_SINGLE_WORD_SKILL_TERMS:
-        return True
+        if not require_profile_evidence:
+            return True
+        if has_profile:
+            return skill_term_supported_by_profile(term, profile_json)
+        return False
 
-    if isinstance(profile_json, dict) and profile_json:
+    if has_profile:
         return skill_term_supported_by_profile(term, profile_json)
 
     return False
@@ -305,10 +407,16 @@ def should_keep_skill_term(
 def collect_supported_skill_terms(
     terms: Iterable[Any],
     profile_json: Dict[str, Any],
+    *,
+    require_profile_evidence: bool = False,
 ) -> Dict[str, List[str]]:
     buckets: Dict[str, List[str]] = {"technical": [], "soft": []}
     for raw in _dedup_preserve(terms):
-        if not should_keep_skill_term(raw, profile_json):
+        if not should_keep_skill_term(
+            raw,
+            profile_json,
+            require_profile_evidence=require_profile_evidence,
+        ):
             continue
         if not skill_term_supported_by_profile(raw, profile_json):
             continue
