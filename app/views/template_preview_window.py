@@ -2255,6 +2255,13 @@ class TemplatePreviewWindow(QMainWindow):
 
     def _should_bypass_raw_html_for_photo(self, raw_html: Any) -> bool:
         """Decide whether preview should regenerate HTML to restore missing photo."""
+        # User-edited HTML always wins. If the user explicitly saved HTML via
+        # the history "Sauvegarder" button, we must render their text as-is
+        # — even if the embedded photo is missing — instead of silently
+        # rebuilding from structured data and losing their edits.
+        if bool(self.cv_data.get("raw_html_is_user_edited")):
+            return False
+
         photo_b64 = str(self.cv_data.get("photo_base64") or "").strip()
         if not photo_b64:
             return False

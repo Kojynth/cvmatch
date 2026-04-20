@@ -675,6 +675,10 @@ class HistoryPanel(QWidget):
 
         if summary.final_cv_html:
             data["raw_html"] = summary.final_cv_html
+            # Signal that this raw_html came from a user edit (Sauvegarder
+            # in the history dialog). The preview must not discard it via
+            # the photo-bypass path.
+            data["raw_html_is_user_edited"] = True
         elif cv_html and not summary.cv_json_final:
             data["raw_html"] = cv_html
 

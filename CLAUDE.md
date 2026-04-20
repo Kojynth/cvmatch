@@ -60,6 +60,16 @@
   - controlled inferred impact and grounded reframing are allowed when implicit
     in the profile, but do not introduce invented facts, technologies,
     projects, certifications, or exact metrics
+  - **Sourcing principle**: every produced sentence, bullet, or skill label
+    must be sourced from **either the profile JSON or the job offer data**.
+    Product goal = *reformulate profile skills in the offer's vocabulary*.
+    Offer-sourced positioning (cross-domain keywords, company framing) is
+    legitimate. Ex-nihilo content (neither in profile nor offer) is forbidden.
+    When designing a filter, ask: would it reject a legitimate offer-sourced
+    reformulation? If yes → too tight.
+  - permissive on sourced content, strict on fragment bullets / clipped
+    phrases / prefix duplicates — the user can refine a coherent hallucination
+    in the editor, but a truncated sentence is garbage that must not ship
   - `CVMATCH_CV_EVIDENCE_MODE=strict_factual|inferred_impact` controls this
     boundary; default runtime behavior is `inferred_impact`
 - Generic standalone CV export:

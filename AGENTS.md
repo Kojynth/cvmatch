@@ -31,6 +31,14 @@ and must stay usable on heterogeneous Windows/Linux machines.
   is incomplete; preserve or restore it in source form before refactoring it.
 
 ## Invariants
+- **Sourcing principle (MANDATORY)**: every generated sentence, bullet, skill
+  label, or positioning phrase must be sourced from **either the profile JSON
+  or the job offer data**. The product's goal is explicitly to *reformulate
+  profile skills in the vocabulary of the offer* — not to verbatim-copy the
+  profile, not to invent content. Cross-domain offer keywords are legitimate
+  when surfaced in positioning text (e.g. "Atouts pertinents pour
+  {Company}"). Ex-nihilo content (facts, tools, metrics absent from BOTH
+  sources) is forbidden.
 - Do not introduce invented facts. Do not create new experiences,
   certifications, employers, dates, achievements, or exact metrics that are not
   grounded in the source profile.
@@ -40,6 +48,11 @@ and must stay usable on heterogeneous Windows/Linux machines.
   highlight already-evidenced tools/contexts, but it must not introduce new
   employers, roles, projects, technologies, degrees, certifications, or exact
   unsupported metrics.
+- When designing or tightening a filter/guard (grounding gate, low-signal
+  detector, supported-skill predicate), ask: *would this reject a legitimate
+  offer-sourced reformulation of profile content?* If yes, the filter is too
+  tight. Permissive on sourced content; strict on fragment bullets, clipped
+  phrases, and ex-nihilo content.
 - Keep deterministic minimum-schema recovery active for invalid or empty LLM
   outputs.
 - Preserve round-trip integrity across:
