@@ -3281,6 +3281,17 @@ OUTPUT RULES:
                 self._resolve_cv_evidence_mode()
             )
 
+            try:
+                offer_terms_for_reconcile = (
+                    self._collect_offer_keywords_only(critic_json) or []
+                )
+            except Exception as offer_exc:
+                logger.debug(
+                    "Unable to collect offer keywords for reconcile: %s",
+                    offer_exc,
+                )
+                offer_terms_for_reconcile = []
+
             def safe_fallback_generator(
                 pj: Dict[str, Any], reason: str
             ) -> Dict[str, Any]:
@@ -3334,6 +3345,7 @@ OUTPUT RULES:
                     if allow_offer_enrichment
                     else None
                 ),
+                offer_terms=offer_terms_for_reconcile,
             )
         except Exception as exc:
             logger.warning("_postprocess_final_candidate_wrapper failed: %s", exc)

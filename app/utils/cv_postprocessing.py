@@ -954,14 +954,22 @@ def _dedup_fuzzy_highlights(
     *,
     prefix_threshold: int = 30,
     token_overlap_threshold: float = 0.7,
+    startswith_min_len: int = 15,
 ) -> List[str]:
     """Drop near-duplicate highlights, keeping the longer/more complete form.
 
-    Two highlights are considered duplicates when they share a normalized
-    prefix of ``prefix_threshold`` chars OR their token overlap exceeds
-    ``token_overlap_threshold``. This catches truncated variants like
-    ``Ingenieur QA ... Concevoir, executer et suivre des ...`` appearing
-    alongside the fully spelled-out bullet.
+    Two highlights are considered duplicates when ANY of the following holds:
+    - they share a normalized prefix of ``prefix_threshold`` chars;
+    - their token overlap (Jaccard) exceeds ``token_overlap_threshold``;
+    - one's normalized form is a full starts-with prefix of the other, and
+      the shorter side is at least ``startswith_min_len`` normalized chars
+      long (catches truncated variants that survived ``_repair_clipped_bullets``
+      and are now short enough to slip under ``prefix_threshold``).
+
+    Example of the third case:
+        "Concevoir, executer et suivre des" (27 chars normalized)
+        vs "Concevoir, executer et suivre des plans de test sur ..."
+    The short form is a strict prefix of the long form. Keep the long form.
     """
 
     items = [h for h in highlights if isinstance(h, str) and h.strip()]
@@ -983,7 +991,17 @@ def _dedup_fuzzy_highlights(
                 and cand_prefix == ex_prefix
             )
             jaccard_match = _token_overlap(candidate, existing) >= token_overlap_threshold
-            if not (same_prefix or jaccard_match):
+            shorter, longer = (
+                (cand_norm, ex_norm)
+                if len(cand_norm) <= len(ex_norm)
+                else (ex_norm, cand_norm)
+            )
+            startswith_match = bool(
+                shorter
+                and len(shorter) >= startswith_min_len
+                and longer.startswith(shorter)
+            )
+            if not (same_prefix or jaccard_match or startswith_match):
                 continue
             if len(candidate.strip()) > len(existing.strip()):
                 superseded_index = idx
@@ -2324,6 +2342,7 @@ def _rebuild_skills_section_from_profile(
     profile_json: Dict[str, Any],
     *,
     language_code: str = "fr",
+    offer_terms: Optional[Sequence[str]] = None,
 ) -> None:
     if not isinstance(cv_json, dict) or not isinstance(profile_json, dict):
         return
@@ -2347,6 +2366,7 @@ def _rebuild_skills_section_from_profile(
     recovered = build_skill_blocks_from_profile(
         profile_json,
         language_code=language_code,
+        offer_terms=list(offer_terms) if offer_terms else (),
     )
     if not recovered:
         return
@@ -2363,6 +2383,7 @@ def reconcile_cv_sections_with_profile(
     profile_json: Dict[str, Any],
     *,
     language_code: str = "fr",
+    offer_terms: Optional[Sequence[str]] = None,
 ) -> None:
     if not isinstance(cv_json, dict) or not isinstance(profile_json, dict):
         return
@@ -2375,6 +2396,7 @@ def reconcile_cv_sections_with_profile(
         cv_json,
         profile_json,
         language_code=language_code,
+        offer_terms=offer_terms,
     )
     _reconcile_education_section(cv_json, profile_json)
     _reconcile_languages_section(cv_json, profile_json)
@@ -2445,7 +2467,7 @@ def _seed_experience_from_profile(
             company=item.get("company") or "",
             language_code=language_code,
         )
-        highlights = _dedup_preserve(
+        highlights = _dedup_fuzzy_highlights(
             [
                 value
                 for value in extract_experience_highlights(
@@ -2456,7 +2478,7 @@ def _seed_experience_from_profile(
                 if str(value or "").strip()
             ]
         )[:4]
-        if summary and highlights and _is_same_narrative(summary, highlights[0]):
+        if summary and len(highlights) > 1 and _is_same_narrative(summary, highlights[0]):
             highlights = highlights[1:]
 
         seeded.append(
@@ -2687,7 +2709,7 @@ def rebalance_cv_narrative(
                 ):
                     continue
                 first_highlights.append(text)
-            first["highlights"] = _dedup_preserve(first_highlights)[:4]
+            first["highlights"] = _dedup_fuzzy_highlights(first_highlights)[:4]
 
     if summary_overflow:
         logger.info(
@@ -3110,6 +3132,7 @@ def coerce_generated_cv_payload(
     offer_adaptation_fn: Optional[
         Callable[[Dict[str, Any], Optional[Dict[str, Any]]], None]
     ] = None,
+    offer_terms: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     """Merge partial/invalid generated payload onto a valid skeleton.
 
@@ -3220,6 +3243,7 @@ def coerce_generated_cv_payload(
         merged,
         profile_json,
         language_code=language_code,
+        offer_terms=offer_terms,
     )
 
     # Apply keyword alignment if provided
@@ -3255,6 +3279,7 @@ def coerce_generated_cv_payload(
         merged,
         profile_json,
         language_code=language_code,
+        offer_terms=offer_terms,
     )
 
     # Second offer-adaptation pass: rebalance/reconcile may overwrite
@@ -3273,6 +3298,7 @@ def coerce_generated_cv_payload(
                 merged,
                 profile_json,
                 language_code=language_code,
+                offer_terms=offer_terms,
             )
             rebalance_cv_narrative(
                 merged,
@@ -3284,6 +3310,7 @@ def coerce_generated_cv_payload(
                 merged,
                 profile_json,
                 language_code=language_code,
+                offer_terms=offer_terms,
             )
 
     if callable(classify_cv_payload_source):
@@ -3802,7 +3829,7 @@ def enforce_cv_offer_adaptation(
                 item for item in highlights if isinstance(item, str) and item.strip()
             ]
             # Keep injected bullet even when target entry already has 4 highlights.
-            target_entry["highlights"] = _dedup_preserve(
+            target_entry["highlights"] = _dedup_fuzzy_highlights(
                 [new_bullet] + cleaned_highlights
             )[:4]
             added += 1

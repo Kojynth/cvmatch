@@ -269,17 +269,21 @@ def collect_targeted_offer_terms(
     max_terms: int = 3,
     excluded_terms: Iterable[Any] = (),
 ) -> List[str]:
-    """Select offer terms that are reasonably grounded in the profile.
+    """Select offer terms to surface in the targeted summary sentence.
 
-    This is used to make targeted summaries feel more tailored to the job offer
-    without asserting unsupported hands-on experience.
+    The output feeds the "Atouts pertinents pour {Company} : ..." sentence,
+    which positions what the OFFER values, not what the candidate already
+    masters. Profile grounding is therefore intentionally not enforced here:
+    cross-domain applications (e.g. QA → LLM company) would otherwise lose
+    every offer keyword and produce no sentence at all.
+
+    The remaining filters (length cap, fragment/stopword filter, dedup) keep
+    out noise like "our", "the", "power".
+
+    The ``profile_json`` argument is kept for backward compatibility and for
+    future soft-ranking; it is currently unused.
     """
-    try:
-        profile_probe = _normalize_marker(
-            json.dumps(profile_json or {}, ensure_ascii=False, default=str)
-        )
-    except Exception:
-        profile_probe = _normalize_marker(profile_json or "")
+    del profile_json  # reserved for future soft-ranking; not used today.
 
     excluded = {
         _normalize_marker(item)
@@ -301,11 +305,6 @@ def collect_targeted_offer_terms(
         tokens = [token for token in norm.split() if token]
         if not tokens or len(tokens) > 6:
             continue
-        if profile_probe:
-            matches = sum(1 for token in tokens if token in profile_probe)
-            required = 1 if len(tokens) <= 2 else max(2, int(len(tokens) * 0.6 + 0.5))
-            if matches < required:
-                continue
         seen.add(norm)
         selected.append(text)
         if len(selected) >= max(1, int(max_terms or 1)):
