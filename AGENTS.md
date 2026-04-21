@@ -101,6 +101,47 @@ and must stay usable on heterogeneous Windows/Linux machines.
   junk tokens and one legitimate skill — because the selector used
   length/stopword filters only (no skill-shape check, no profile ranking,
   no deduplication against an existing positioning sentence).
+- **Photo invariant (MANDATORY)**: the profile photo must appear in the
+  rendered CV regardless of template choice, user HTML edits, or history
+  reopen — photo presence is a product invariant. When a user edits the
+  raw HTML in the template editor, do NOT discard the edits to regenerate
+  from template; instead **inject** the `<img>` tag non-destructively into
+  the saved HTML. Reference implementation: `ensure_photo_in_raw_html` in
+  `app/utils/cv_html_photo_inject.py`, wired into
+  `app/views/template_preview_window.py::generate_dynamic_html`.
+  Regression tests live in `tests/test_photo_invariant.py`. Reference
+  incident: Mistral AI 2026-04-21 shipped a CV with no photo because
+  `raw_html_is_user_edited=True` disabled the bypass that was the only
+  re-injection path. Fix: inject, don't bypass.
+- **Positioning keywords prefer multi-word phrases (MANDATORY)**: the
+  positioning sentence must surface multi-word skill phrases (`REST API`,
+  `test automation`, `model inference`) over bare single tokens. Single
+  tokens are only legitimate as acronyms (SQL, REST, API, ML) or proper
+  nouns (Docker, Python, Kubernetes). Bare verbs (`believe`, `build`,
+  `work`), pronouns (`us`, `we`, `you`), and generic task nouns (`tasks`,
+  `things`, `items`) are HARD-rejected by `_POSITIONING_HARD_BLOCKLIST`
+  in `app/utils/cv_summary_adaptation.py`. Multi-word compounds get a
+  `+2` score bonus in `_skillish_score`, plus `+1` when any phrase
+  token overlaps profile lemmas. Regression tests live in
+  `tests/test_positioning_keywords_r2.py`. Reference incident: Mistral
+  AI 2026-04-21 emitted `"Atouts pertinents pour Mistral Ai: api,
+  believe, tasks."` — three bare tokens, none a skill — because the
+  blocklist lacked common verbs/task-nouns and the scorer weighted
+  multi-word compounds at only `+1`.
+- **Clip-repair-at-source (MANDATORY)**: every code path that polishes or
+  re-extracts a bullet from the profile must route through
+  `_polish_experience_fragment` in `app/utils/cv_postprocessing.py`, and
+  that function must strip trailing `…` / `...` / dangling connectors on
+  entry (before any further processing). The pipeline orchestrator's
+  alignment-retry loop must also run a final
+  `_repair_clipped_bullets` + `_dedup_fuzzy_highlights` pass before
+  returning success, so no clipped-twin survives retries. Regression
+  tests live in `tests/test_bullet_dedup_regression_r1.py`. Reference
+  incident: Mistral AI 2026-04-21 re-shipped a clipped bullet
+  `"Ingénieur QA en alternance - Concevoir, exécuter et suivre des…"`
+  next to its full-length twin because `_polish_experience_fragment`
+  didn't strip the ellipsis on entry, so clipped fragments re-entered
+  merge paths where fuzzy dedup couldn't match them.
 
 ## Safety And Privacy
 - Use safe logging wrappers and redaction helpers for any profile, offer,

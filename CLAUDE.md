@@ -20,6 +20,20 @@
     verbs, prepositions, adverbs, and generic field nouns (see
     `collect_targeted_offer_terms` + `_skillish_score` in
     `cv_summary_adaptation.py`)
+  - photo presence in rendered CV (user HTML edits preserved by
+    non-destructive injection via `ensure_photo_in_raw_html` in
+    `app/utils/cv_html_photo_inject.py`, NOT by bypass-regenerate —
+    photo is a product invariant, independent of user edits)
+  - positioning-sentence phrase preference: multi-word phrases over bare
+    tokens; blocklist rejects bare verbs (`believe`, `build`, `work`),
+    pronouns (`us`, `we`, `you`), and generic task nouns (`tasks`,
+    `things`, `items`); multi-word scoring bonus is `+2` in
+    `_skillish_score`
+  - clip-repair-at-source: `_polish_experience_fragment` strips trailing
+    `…` / `...` / dangling connectors on entry; orchestrator
+    alignment-retry loop includes a final
+    `_repair_clipped_bullets` + `_dedup_fuzzy_highlights` pass before
+    returning success
 - High-risk files:
   - `app/workers/llm_worker.py`
   - `app/workers/qwen_manager.py`

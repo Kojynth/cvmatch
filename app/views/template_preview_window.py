@@ -2341,6 +2341,23 @@ class TemplatePreviewWindow(QMainWindow):
         try:
             raw_html = self.cv_data.get("raw_html")
             if raw_html:
+                # Photo invariant: inject missing photo non-destructively into
+                # user-edited HTML before deciding to bypass. Preserves user
+                # edits AND enforces the product-level photo guarantee.
+                try:
+                    from ..utils.cv_html_photo_inject import ensure_photo_in_raw_html
+                    updated = ensure_photo_in_raw_html(
+                        raw_html, self.cv_data.get("photo_base64")
+                    )
+                    if updated != raw_html:
+                        logger.info(
+                            "CV preview: profile photo injected into raw_html (photo invariant)."
+                        )
+                        raw_html = updated
+                        self.cv_data["raw_html"] = updated
+                except Exception as inj_exc:
+                    logger.warning(f"CV preview: photo injection skipped ({inj_exc}).")
+
                 if self._should_bypass_raw_html_for_photo(raw_html):
                     logger.info(
                         "CV preview: raw_html bypassed to restore profile photo from structured data."

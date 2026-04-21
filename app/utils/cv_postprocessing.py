@@ -1418,6 +1418,25 @@ def _polish_experience_fragment(
     if not raw:
         return ""
 
+    # Clipped-tail repair at source (R1 regression, see AGENTS.md invariant
+    # "Duplicate-bullet repair"). Every fragment-polish path flows here;
+    # stripping trailing U+2026/'...' and dangling stopwords up-front lets
+    # fuzzy dedup recognize the clipped twin as a prefix of the full bullet.
+    stripped_tail = re.sub(r"\s*(?:\.\.\.|\u2026)+\s*$", "", raw)
+    if stripped_tail != raw:
+        cleaned = stripped_tail.rstrip(" ,;:-\u2013\u2014")
+        for _ in range(8):
+            tokens = cleaned.split()
+            if not tokens:
+                break
+            last_lower = tokens[-1].lower().strip("'\u2019\"`")
+            if last_lower not in _CLIPPED_TRAILING_STOPWORDS_POSTPROCESS:
+                break
+            cleaned = cleaned[: -len(tokens[-1])].rstrip(" ,;:-\u2013\u2014")
+        raw = cleaned
+        if not raw:
+            return ""
+
     raw = _strip_experience_leadins(raw, language_code=language_code)
     raw = re.sub(r"^[\-\*\u2022\u25AA\u279C]+\s*", "", raw).strip(" ;,.-")
     if not raw or raw.endswith(":"):

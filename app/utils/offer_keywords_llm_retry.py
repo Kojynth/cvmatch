@@ -60,6 +60,9 @@ RETRY TARGET:
 OUTPUT RULES:
 - Return JSON only.
 - Keep lists concise and deduplicated.
+- Prefer MULTI-WORD phrases ("test automation", "code review", "API design")
+  over bare single tokens. Only emit a bare token when it is an acronym
+  (SQL, REST, API, ML, AI) or a proper noun (Docker, Python, Kubernetes).
 - skills = hard skills/tech stack.
 - tools = software/framework/platform names.
 - responsibilities = short action phrases.

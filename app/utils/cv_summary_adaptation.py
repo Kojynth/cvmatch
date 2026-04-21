@@ -183,6 +183,19 @@ _POSITIONING_HARD_BLOCKLIST = frozenset({
     "designed", "integrate", "integrated", "integrating",
     "developed", "developing", "implemented", "implementing",
     "conçu", "concu", "integre", "integrer",
+    # R2 — Mistral AI 2026-04-21 incident: bare verbs and generic
+    # task-shaped nouns slipped through. Single-token only — multi-word
+    # forms like "REST API" / "API design" / "team collaboration" still
+    # pass (see _is_positioning_blocked: len(tokens) == 1 branch).
+    "believe", "think", "understand", "know", "help", "work", "make",
+    "build", "create", "use", "provide", "ensure", "support", "manage",
+    "lead", "drive", "deliver", "enable", "take", "give", "get",
+    "croire", "penser", "comprendre", "aider", "travailler", "faire",
+    "creer", "utiliser", "fournir", "assurer", "gerer", "livrer",
+    "tasks", "things", "stuff", "items", "jobs", "task",
+    "tâches", "taches", "choses", "éléments", "elements",
+    "api",  # bare "api" too generic; "REST API" / "API design" (2-tok) pass
+    "us", "we", "them", "you", "us", "me", "him", "her",
 })
 
 _POSITIONING_SCORE_VERB_SUFFIXES = ("ed", "ing", "ify", "ize", "ise")
@@ -271,8 +284,20 @@ def _skillish_score(
             score += 3
             break
 
+    # R2 — user explicitly prefers phrase groups over bare tokens
+    # ("ça serait mieux d'avoir des ensembles de mots"). Multi-word compounds
+    # carry context a single token can't convey, so weight them higher.
     if len(tokens) >= 2:
-        score += 1
+        score += 2
+        # Extra bonus when any phrase token overlaps the profile vocabulary —
+        # rewards Tier-1 "Generation" matches even when the full phrase isn't
+        # a literal profile lemma.
+        if any(
+            token in profile_lemmas
+            for token in tokens
+            if len(token) >= 3
+        ):
+            score += 1
     if re.fullmatch(r"[A-Z0-9]{2,6}", term.strip() or ""):
         score += 1
     if re.search(r"[A-Z][a-z]+[A-Z]", term or ""):

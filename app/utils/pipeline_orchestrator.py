@@ -870,6 +870,34 @@ class FinalCVPhase:
                 )
 
             state.critic_json = critic_json_for_final
+
+            # Post-retry cleanup (R1 invariant, AGENTS.md "Duplicate-bullet repair"):
+            # run a final clip-repair + dedup pass across every experience
+            # entry, so any clipped twin that re-entered during a retry is
+            # merged with its full sibling before we hand off to render.
+            try:
+                from .cv_postprocessing import (
+                    _repair_clipped_bullets,
+                    _dedup_fuzzy_highlights,
+                )
+
+                if isinstance(state.cv_json_final, dict):
+                    _repair_clipped_bullets(state.cv_json_final)
+                    for section in ("experience", "experiences"):
+                        entries = state.cv_json_final.get(section)
+                        if not isinstance(entries, list):
+                            continue
+                        for entry in entries:
+                            if not isinstance(entry, dict):
+                                continue
+                            highlights = entry.get("highlights")
+                            if isinstance(highlights, list) and len(highlights) > 1:
+                                entry["highlights"] = _dedup_fuzzy_highlights(highlights)
+            except Exception as cleanup_exc:
+                logger.warning(
+                    "Final clip-repair/dedup cleanup skipped: %s", cleanup_exc
+                )
+
             logger.info("Final CVJSON generation done")
 
             return PhaseResult(
