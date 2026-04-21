@@ -651,6 +651,14 @@ class ExperienceItem(QFrame):
         self.editor_feedback_label.hide()
         layout.addWidget(self.editor_feedback_label)
 
+        self.company_feedback_label = QLabel()
+        self.company_feedback_label.setWordWrap(True)
+        self.company_feedback_label.setStyleSheet(
+            f"color: {StyleManager.COLORS['warning']}; font-size: 11px; padding-left: 2px;"
+        )
+        self.company_feedback_label.hide()
+        layout.addWidget(self.company_feedback_label)
+
         self.setLayout(layout)
         self._refresh_feedback()
 
@@ -684,6 +692,7 @@ class ExperienceItem(QFrame):
 
         date_feedback = str(feedback.get("date_feedback") or "").strip()
         editorial_feedback = str(feedback.get("editorial_feedback") or "").strip()
+        company_feedback = str(feedback.get("company_feedback") or "").strip()
 
         if self.date_feedback_label is not None:
             self.date_feedback_label.setText(date_feedback)
@@ -691,6 +700,9 @@ class ExperienceItem(QFrame):
         if self.editor_feedback_label is not None:
             self.editor_feedback_label.setText(editorial_feedback)
             self.editor_feedback_label.setVisible(bool(editorial_feedback))
+        if getattr(self, "company_feedback_label", None) is not None:
+            self.company_feedback_label.setText(company_feedback)
+            self.company_feedback_label.setVisible(bool(company_feedback))
 
     def get_data(self) -> Dict[str, Any]:
         """Retourne les données de l'expérience."""
@@ -841,13 +853,13 @@ class EducationItem(QFrame):
 
         self.fields['school'] = QLineEdit(self.education_data.get('school', ''))
         self.fields['school'].setPlaceholderText("École / Université...")
-        self.fields['school'].textChanged.connect(lambda: self.data_changed.emit())
+        self.fields['school'].textChanged.connect(self._on_field_changed)
         header_layout.addWidget(QLabel("École:"))
         header_layout.addWidget(self.fields['school'], 2)
 
         self.fields['degree'] = QLineEdit(self.education_data.get('degree', ''))
         self.fields['degree'].setPlaceholderText("Diplôme...")
-        self.fields['degree'].textChanged.connect(lambda: self.data_changed.emit())
+        self.fields['degree'].textChanged.connect(self._on_field_changed)
         header_layout.addWidget(QLabel("Diplôme:"))
         header_layout.addWidget(self.fields['degree'], 2)
 
@@ -873,7 +885,7 @@ class EducationItem(QFrame):
         details_layout = QHBoxLayout()
         self.fields['field_of_study'] = QLineEdit(self.education_data.get('field_of_study', ''))
         self.fields['field_of_study'].setPlaceholderText("Domaine d'études...")
-        self.fields['field_of_study'].textChanged.connect(lambda: self.data_changed.emit())
+        self.fields['field_of_study'].textChanged.connect(self._on_field_changed)
         details_layout.addWidget(QLabel("Domaine:"))
         details_layout.addWidget(self.fields['field_of_study'], 2)
 
@@ -901,7 +913,49 @@ class EducationItem(QFrame):
         details_layout.addStretch()
         layout.addLayout(details_layout)
 
+        self.grammar_feedback_label = QLabel()
+        self.grammar_feedback_label.setWordWrap(True)
+        self.grammar_feedback_label.setStyleSheet(
+            f"color: {StyleManager.COLORS['warning']}; font-size: 11px; padding-left: 2px;"
+        )
+        self.grammar_feedback_label.hide()
+        layout.addWidget(self.grammar_feedback_label)
+
         self.setLayout(layout)
+        self._refresh_feedback()
+
+    def _on_field_changed(self, *args):
+        self._refresh_feedback()
+        self.data_changed.emit()
+
+    def _refresh_feedback(self) -> None:
+        try:
+            from ..domain.profile.education_feedback import build_education_editor_feedback
+        except Exception:
+            build_education_editor_feedback = None
+
+        label = getattr(self, "grammar_feedback_label", None)
+        if build_education_editor_feedback is None or label is None:
+            if label is not None:
+                label.hide()
+            return
+
+        feedback = build_education_editor_feedback(
+            {
+                "school": self.fields["school"].text(),
+                "degree": self.fields["degree"].text(),
+                "field_of_study": self.fields["field_of_study"].text(),
+            },
+            language_code="fr",
+        )
+
+        parts = [
+            str(feedback.get(key) or "").strip()
+            for key in ("school_feedback", "degree_feedback", "field_feedback")
+        ]
+        merged = " ".join(p for p in parts if p)
+        label.setText(merged)
+        label.setVisible(bool(merged))
 
     def get_data(self) -> Dict[str, Any]:
         """Retourne les données de la formation."""

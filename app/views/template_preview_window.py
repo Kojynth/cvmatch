@@ -68,24 +68,19 @@ ONE_PAGE_PRINT_CSS = """
   html,
   body {
     width: 210mm;
-    min-height: 297mm;
+    height: 297mm;
     margin: 0;
     padding: 0;
     overflow: hidden;
     background: #ffffff;
   }
-  body {
-    position: relative;
-  }
   .cv-container,
   .letter-container {
-    position: relative;
-    left: 50%;
-    margin: 0 !important;
+    margin: 0 auto !important;
     width: calc(100% / var(--print-scale));
     max-width: calc(100% / var(--print-scale));
-    transform: translateX(-50%) scale(var(--print-scale));
-    transform-origin: top center;
+    transform: scale(var(--print-scale));
+    transform-origin: top left;
   }
 }
 """

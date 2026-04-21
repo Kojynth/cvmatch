@@ -12,6 +12,14 @@
   - history/export consistency
   - deterministic generation fallback
   - PII-safe logging
+  - one-page CV output (CSS hard clip `height: 297mm` + `overflow: hidden`
+    in `ONE_PAGE_PRINT_CSS` AND `_enforce_single_page_budget` content
+    backstop in `cv_postprocessing.py`)
+  - positioning-sentence word-sourcing hierarchy:
+    **Generation > Offer-skill > Profile-verbatim**, with hard-reject of
+    verbs, prepositions, adverbs, and generic field nouns (see
+    `collect_targeted_offer_terms` + `_skillish_score` in
+    `cv_summary_adaptation.py`)
 - High-risk files:
   - `app/workers/llm_worker.py`
   - `app/workers/qwen_manager.py`

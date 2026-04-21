@@ -60,6 +60,44 @@ _CLICHE_PATTERNS = {
     ),
 }
 
+# Multi-word buzzword phrases. Matches only vague composites (e.g. verb + generic
+# modifier), not legitimate action verbs. A bullet like "Testé 12 parcours
+# critiques" does NOT match because the qualifying modifier is absent.
+_CLICHE_PHRASE_PATTERNS = {
+    "fr": (
+        re.compile(
+            r"\borienter(?:\s+les)?\s+d[ée]cisions\s+commerciales?\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\bam[ée]liorer(?:\s+le)?\s+suivi\s+de\s+l['’]engagement\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:sur\s+des\s+)?cas\s+concrets?\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\brobustesse[,\s]+(?:sa\s+)?coh[ée]rence\b",
+            re.IGNORECASE,
+        ),
+    ),
+    "en": (
+        re.compile(
+            r"\bdrive\s+business\s+decisions\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:on\s+)?real[-\s]?world\s+use\s+cases?\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\brobustness\s+and\s+coherence\b",
+            re.IGNORECASE,
+        ),
+    ),
+}
+
 _INLINE_PSEUDO_BULLET_PATTERN = re.compile(
     r"(?:[:;]\s*[-•])|(?:\s-\s+\w.{15,}\s*;\s*-\s+\w)",
     re.IGNORECASE,
@@ -563,11 +601,15 @@ def build_cv_quality_audit(
         lang_key = "en" if language.startswith("en") else "fr"
         pronoun_pattern = _PERSONAL_PRONOUN_PATTERNS.get(lang_key)
         cliche_pattern = _CLICHE_PATTERNS.get(lang_key)
+        cliche_phrase_patterns = _CLICHE_PHRASE_PATTERNS.get(lang_key, ())
         for idx, text in enumerate(sections, start=1):
             section_name = f"text_section_{idx}"
             if pronoun_pattern and pronoun_pattern.search(text):
                 personal_pronoun_sections.append(section_name)
             if cliche_pattern and cliche_pattern.search(text):
+                cliche_sections.append(section_name)
+                continue
+            if any(pattern.search(text) for pattern in cliche_phrase_patterns):
                 cliche_sections.append(section_name)
 
     score = 100.0

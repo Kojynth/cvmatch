@@ -253,19 +253,70 @@ def _build_date_feedback(start_date: Any, end_date: Any) -> str:
     return "Dates: " + " ".join(notes) if notes else ""
 
 
+_PAST_ROLE_END_TOKENS = {"", "present", "présent", "en cours", "aujourd'hui", "current"}
+
+
+def _is_past_role(end_date: Any) -> bool:
+    token = str(end_date or "").strip().lower()
+    if not token:
+        return False
+    return token not in _PAST_ROLE_END_TOKENS
+
+
+def _build_company_feedback(company: Any, *, language_code: str) -> str:
+    try:
+        from .content_quality_validators import detect_grammar_issues
+    except Exception:
+        return ""
+
+    issues = detect_grammar_issues(company, language_code=language_code)
+    if not issues:
+        return ""
+    hints = "; ".join(
+        f"« {i['found']} » → {i['suggestion']}" for i in issues[:2]
+    )
+    return f"⚠️ Orthographe: {hints}."
+
+
+def _build_quality_feedback(description: Any, *, is_past_role: bool, language_code: str) -> str:
+    try:
+        from .content_quality_validators import build_quality_warnings, format_warnings
+    except Exception:
+        return ""
+
+    warnings = build_quality_warnings(
+        description,
+        is_past_role=is_past_role,
+        language_code=language_code,
+    )
+    return format_warnings(warnings)
+
+
 def build_experience_editor_feedback(
     experience_data: Dict[str, Any] | None,
     *,
     language_code: str = "fr",
 ) -> Dict[str, str]:
     entry = experience_data if isinstance(experience_data, dict) else {}
+    description = str(entry.get("description") or "")
+    is_past_role = _is_past_role(entry.get("end_date"))
+
+    editorial = _build_editorial_feedback(description, language_code=language_code)
+    quality = _build_quality_feedback(
+        description,
+        is_past_role=is_past_role,
+        language_code=language_code,
+    )
+    merged_editorial = " ".join(part for part in (editorial, quality) if part)
+
     return {
-        "editorial_feedback": _build_editorial_feedback(
-            str(entry.get("description") or ""),
-            language_code=language_code,
-        ),
+        "editorial_feedback": merged_editorial,
         "date_feedback": _build_date_feedback(
             entry.get("start_date"),
             entry.get("end_date"),
+        ),
+        "company_feedback": _build_company_feedback(
+            entry.get("company"),
+            language_code=language_code,
         ),
     }
