@@ -109,7 +109,16 @@ def collect_offer_keywords_from_source(
     if include_job_title:
         job_title = str(source.get("job_title") or "").strip()
         if job_title:
-            keywords.extend(part for part in job_title.split() if part.strip())
+            # Preserve the phrase atom FIRST (R2 invariant, AGENTS.md
+            # "Positioning keywords prefer phrases"): "Software Engineer, QA"
+            # is a skill-shaped multi-word compound; splitting it into bare
+            # tokens like "QA", "Engineer" destroys the atom. Tokens are
+            # appended after as fallback candidates.
+            keywords.append(job_title)
+            for part in job_title.split():
+                cleaned = part.strip(" ,;:-")
+                if len(cleaned) >= 3:
+                    keywords.append(cleaned)
 
     return dedup_preserve(keywords, max_items=max_items)
 

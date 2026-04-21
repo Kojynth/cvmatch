@@ -245,6 +245,56 @@ def detect_punctuation_mix(text: Any) -> List[str]:
     return []
 
 
+_QUANTIFIER_PATTERNS = re.compile(
+    r"(?:"
+    # Numbers attached to common impact units
+    r"\d+(?:[\s,.]\d+)*\s*"
+    r"(?:%|pourcents?|percent|k|m|b|€|\$|£|j|jours?|mois|ans?|years?|"
+    r"semaines?|weeks?|heures?|hours?|h|minutes?|min|secondes?|seconds?|s|"
+    r"personnes?|people|users?|utilisateurs?|clients?|customers?|"
+    r"équipes?|equipes?|teams?|projets?|projects?|bugs?|tickets?|"
+    r"commits?|mb|gb|tb|kb|ms|fps|kpi|poc|mvp)\b"
+    r"|"
+    # Numeric multipliers (×3, 3x, 3 fois)
+    r"\d+\s*(?:x|×|fois|times)\b"
+    r"|"
+    # Bare number ≥ 2 digits (big enough to be a meaningful metric)
+    r"\b\d{2,}\b"
+    r"|"
+    # Small numbers tied to a following noun (5 clients, 3 outils, 12 équipes)
+    r"\b\d+\s+(?:[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\-]{2,})"
+    r")",
+    re.IGNORECASE | re.UNICODE,
+)
+
+
+def detect_quantified_metrics_absent(
+    text: Any,
+    *,
+    min_word_count: int = 8,
+    language_code: str = "fr",
+) -> bool:
+    """Flag bullets that read narrative/qualitative without any number.
+
+    Positive-signal hint: suggest adding team size, %, users impacted, volume.
+    Permissive: short bullets (< ``min_word_count``) are skipped so
+    single-action lines ("Mise en place Jenkins") don't get noisy warnings.
+
+    Returns True when the bullet is long enough to benefit from a number
+    AND contains none. language_code accepted for API symmetry; detection
+    logic is language-agnostic (regex covers FR + EN units).
+    """
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    words = re.findall(r"\b\S+\b", raw, flags=re.UNICODE)
+    if len(words) < int(min_word_count or 0):
+        return False
+    if _QUANTIFIER_PATTERNS.search(raw):
+        return False
+    return True
+
+
 def detect_grammar_issues(text: Any, *, language_code: str = "fr") -> List[Dict[str, str]]:
     """Return list of {'found', 'suggestion'} dicts for known bad patterns.
 
@@ -280,10 +330,12 @@ def build_quality_warnings(
     include_cliches: bool = True,
     include_tense: bool = True,
     include_punct: bool = True,
+    include_quantified: bool = True,
 ) -> List[str]:
     """Aggregate permissive warnings for a single text field."""
 
     warnings: List[str] = []
+    lang = _normalize_language_code(language_code)
 
     if include_cliches:
         cliches = detect_cliche_phrases(text, language_code=language_code)
@@ -316,6 +368,20 @@ def build_quality_warnings(
                 f"« {g['found']} » → {g['suggestion']}" for g in grammar[:2]
             )
             warnings.append(f"Orthographe: {hints}.")
+
+    if include_quantified:
+        if detect_quantified_metrics_absent(text, language_code=language_code):
+            if lang == "en":
+                warnings.append(
+                    "Quantitative metrics missing — consider adding a number "
+                    "(team size, % improvement, users impacted, volume)."
+                )
+            else:
+                warnings.append(
+                    "Mesures quantitatives absentes — pensez à ajouter un "
+                    "chiffre (taille d'équipe, % d'amélioration, utilisateurs "
+                    "impactés, volume)."
+                )
 
     return warnings
 
