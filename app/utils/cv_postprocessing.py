@@ -767,7 +767,9 @@ def sanitize_cv_json_output(
                 text = clean_text_field(item, dedupe_narrative=True)
                 if text:
                     highlights.append(text)
-        cleaned_entry["highlights"] = _dedup_preserve(highlights)
+        cleaned_entry["highlights"] = _dedup_fuzzy_highlights(
+            _dedup_preserve(highlights)
+        )
         if any(cleaned_entry.values()) or cleaned_entry["highlights"]:
             cleaned_experience.append(cleaned_entry)
     cv_json["experience"] = cleaned_experience
@@ -2938,6 +2940,37 @@ def _strip_verb_accents(text: str) -> str:
     return "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
 
 
+_CLAUSE_SPLIT_PATTERN = re.compile(
+    r"(\s*(?:,|;|\bet\b|\band\b|\bpuis\b|\bthen\b)\s+)",
+    re.IGNORECASE,
+)
+
+
+def _rewrite_clause_head(clause: str, mapping: Dict[str, str], lang: str) -> str:
+    """Normalize the leading verb of a clause to its past form, preserving case.
+
+    Returns the clause unchanged if its head isn't in the mapping (permissive
+    default — unknown verbs are left as authored).
+    """
+    raw = clause.lstrip()
+    if not raw:
+        return clause
+    leading_ws = clause[: len(clause) - len(raw)]
+    match = _VERB_HEAD_PATTERN.match(raw)
+    if not match:
+        return clause
+    head = match.group(0)
+    head_lower = head.lower()
+    replacement = mapping.get(head_lower)
+    if replacement is None and lang == "fr":
+        replacement = mapping.get(_strip_verb_accents(head_lower))
+    if replacement is None:
+        return clause
+    if head[0].isupper():
+        replacement = replacement[0].upper() + replacement[1:]
+    return leading_ws + replacement + raw[len(head):]
+
+
 def _rewrite_past_role_tense(
     cv_json: Dict[str, Any],
     *,
@@ -2945,9 +2978,10 @@ def _rewrite_past_role_tense(
 ) -> None:
     """Rewrite present-tense verb heads to past forms for non-current experiences.
 
-    Only the first verb token of each highlight is touched; the rest of the
-    sentence is preserved verbatim. Capitalisation of the original head is
-    carried over to the replacement.
+    Scans EVERY clause head in each highlight (split by ``,``, ``;``, ``et``,
+    ``and``, ``puis``, ``then``) and normalises it when a mapping exists. Unknown
+    heads are left untouched. Capitalisation of the original head is carried
+    over to the replacement.
     """
     if not isinstance(cv_json, dict):
         return
@@ -2972,19 +3006,25 @@ def _rewrite_past_role_tense(
             raw = bullet.strip()
             if not raw:
                 continue
-            match = _VERB_HEAD_PATTERN.match(raw)
-            if not match:
+            parts = _CLAUSE_SPLIT_PATTERN.split(raw)
+            if len(parts) == 1:
+                rewritten = _rewrite_clause_head(parts[0], mapping, lang)
+                if rewritten != parts[0]:
+                    highlights[index] = rewritten + bullet[len(bullet.rstrip()):]
                 continue
-            head = match.group(0)
-            head_lower = head.lower()
-            replacement = mapping.get(head_lower)
-            if replacement is None and lang == "fr":
-                replacement = mapping.get(_strip_verb_accents(head_lower))
-            if replacement is None:
-                continue
-            if head[0].isupper():
-                replacement = replacement[0].upper() + replacement[1:]
-            highlights[index] = replacement + raw[len(head):]
+            # Odd indices are separators (kept verbatim), even indices are
+            # clauses whose head verbs we try to normalise.
+            rewritten_parts: List[str] = []
+            for piece_idx, piece in enumerate(parts):
+                if piece_idx % 2 == 0:
+                    rewritten_parts.append(_rewrite_clause_head(piece, mapping, lang))
+                else:
+                    rewritten_parts.append(piece)
+            joined = "".join(rewritten_parts)
+            if joined != raw:
+                # Preserve any trailing whitespace/punctuation stripped above.
+                trailing = bullet[len(bullet.rstrip()):]
+                highlights[index] = joined + trailing
 
 
 _CLIPPED_TRAILING_STOPWORDS_POSTPROCESS = {
@@ -3045,6 +3085,50 @@ def _bullet_looks_clipped(text: str) -> bool:
         return False
     last_lower = tokens[-1].lower().strip("'’\"`")
     return last_lower in _CLIPPED_TRAILING_STOPWORDS_POSTPROCESS
+
+
+# Dash variants that legitimately introduce a new clause inside a bullet.
+# Colon ``:`` is intentionally excluded — French convention keeps the word
+# after a colon lowercase (apposition / descriptor), and touching it risks
+# mangling proper nouns (e.g. ``Careside: filiale numérique de La Poste``).
+_INNER_DASH_SEPARATOR_PATTERN = re.compile(r"(\s[\u2013\u2014\-]\s+)([a-zà-ÿ])")
+
+
+def _normalize_bullet_punctuation(bullet: str) -> str:
+    """Capitalise the first letter after an inner dash-separator clause.
+
+    Converts ``"Careside - ingénieur qa"`` → ``"Careside - Ingénieur qa"``.
+    Leaves colons alone (FR apposition convention). Leaves already-capital
+    letters alone. Returns the bullet unchanged if no inner dash is found.
+    """
+    if not isinstance(bullet, str) or not bullet.strip():
+        return bullet
+
+    def _upper(match: "re.Match[str]") -> str:
+        return match.group(1) + match.group(2).upper()
+
+    return _INNER_DASH_SEPARATOR_PATTERN.sub(_upper, bullet)
+
+
+def _normalize_bullet_punctuation_all(cv_json: Dict[str, Any]) -> None:
+    """Apply :func:`_normalize_bullet_punctuation` across experience/education
+    highlights as a final pass.
+    """
+    if not isinstance(cv_json, dict):
+        return
+    for section_key in ("experience", "education"):
+        section = cv_json.get(section_key)
+        if not isinstance(section, list):
+            continue
+        for entry in section:
+            if not isinstance(entry, dict):
+                continue
+            highlights = entry.get("highlights")
+            if not isinstance(highlights, list):
+                continue
+            for idx, bullet in enumerate(highlights):
+                if isinstance(bullet, str):
+                    highlights[idx] = _normalize_bullet_punctuation(bullet)
 
 
 def _repair_clipped_bullets(cv_json: Dict[str, Any]) -> None:
@@ -3233,6 +3317,8 @@ def coerce_generated_cv_payload(
     _rewrite_past_role_tense(merged, language_code=language_code)
     # Trim or drop clipped bullets (ellipsis endings or trailing stopwords).
     _repair_clipped_bullets(merged)
+    # Final style pass: capitalise first letter after inner dash separators.
+    _normalize_bullet_punctuation_all(merged)
     # Inject company name into visible summary text if absent.
     # Must run before rebalance_cv_narrative which may trim the summary.
     _ensure_company_name_in_summary(merged, company=company, language_code=language_code)
@@ -3332,7 +3418,76 @@ def coerce_generated_cv_payload(
         except Exception as exc:
             logger.warning("Final CV candidate source diagnostic failed: %s", exc)
 
+    _enforce_single_page_budget(merged)
     return merged
+
+
+# Soft cap for total bullet count across all experience entries. At typical
+# A4 density (~10.5pt, normal margins, 4-6 roles, summary + skills + education),
+# 22 bullets is a safe upper bound before WeasyPrint would overflow the page.
+# The CSS scale fallback (``--print-scale`` in ``ONE_PAGE_PRINT_CSS``) covers
+# minor overshoots; this budget prevents large overshoots that would get clipped.
+_ONE_PAGE_TOTAL_BULLET_BUDGET = 22
+_ONE_PAGE_MAX_BULLETS_PER_ROLE = 4
+
+
+def _enforce_single_page_budget(cv_json: Dict[str, Any]) -> None:
+    """Trim experience highlights so the rendered CV still fits one A4 page.
+
+    Safety net complementing the CSS hard clip (``height: 297mm`` +
+    ``overflow: hidden``) in ``ONE_PAGE_PRINT_CSS``: drops the LAST bullet of
+    the LONGEST role iteratively until total bullet count is within budget.
+    Each role keeps at least one bullet (preserves signal per experience).
+    Also caps each role at ``_ONE_PAGE_MAX_BULLETS_PER_ROLE``.
+    """
+
+    if not isinstance(cv_json, dict):
+        return
+    experiences = cv_json.get("experience")
+    if not isinstance(experiences, list):
+        return
+
+    entries: List[Dict[str, Any]] = [
+        item for item in experiences if isinstance(item, dict)
+    ]
+    if not entries:
+        return
+
+    # Per-role cap first (cheap; catches upstream paths that bypassed [:4]).
+    for entry in entries:
+        highlights = entry.get("highlights")
+        if isinstance(highlights, list) and len(highlights) > _ONE_PAGE_MAX_BULLETS_PER_ROLE:
+            entry["highlights"] = highlights[:_ONE_PAGE_MAX_BULLETS_PER_ROLE]
+
+    def _total_bullets() -> int:
+        return sum(
+            len(e.get("highlights") or [])
+            for e in entries
+            if isinstance(e.get("highlights"), list)
+        )
+
+    trimmed = 0
+    while _total_bullets() > _ONE_PAGE_TOTAL_BULLET_BUDGET:
+        longest_idx = -1
+        longest_len = 1  # keep at least one bullet per role
+        for idx, entry in enumerate(entries):
+            highlights = entry.get("highlights")
+            if not isinstance(highlights, list):
+                continue
+            if len(highlights) > longest_len:
+                longest_len = len(highlights)
+                longest_idx = idx
+        if longest_idx < 0:
+            break  # no role has > 1 bullet; cannot trim further safely
+        entries[longest_idx]["highlights"] = entries[longest_idx]["highlights"][:-1]
+        trimmed += 1
+
+    if trimmed:
+        logger.info(
+            "One-page budget enforced: dropped %s last-bullets to stay within %s total.",
+            trimmed,
+            _ONE_PAGE_TOTAL_BULLET_BUDGET,
+        )
 
 
 def extract_experience_highlights(
@@ -3503,6 +3658,7 @@ def enforce_cv_offer_adaptation(
             build_summary_focus_sentence,
             is_minimum_summary_template,
             strip_deterministic_summary_appendices,
+            strip_positioning_sentences,
         )
     except Exception:
         return cv_json
@@ -3641,6 +3797,14 @@ def enforce_cv_offer_adaptation(
         for term in targeted_summary_terms
         if normalize_keyword_for_match(term)
     )
+    if summary and targeted_summary_terms:
+        summary = strip_positioning_sentences(summary, language_code)
+        summary_norm = _normalize_for_match(summary) if summary else ""
+        summary_missing_target_signal = not any(
+            normalized_term_present(summary_norm, normalize_keyword_for_match(term))
+            for term in targeted_summary_terms
+            if normalize_keyword_for_match(term)
+        )
     if (
         targeted_summary_terms
         and (
@@ -4201,5 +4365,8 @@ def enforce_cv_offer_adaptation(
         cv_json["certifications"] = cv_json["certifications"][
             :initial_certification_count
         ]
+
+    # Re-enforce the one-page bullet budget after offer-driven enrichment.
+    _enforce_single_page_budget(cv_json)
 
     return cv_json

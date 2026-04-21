@@ -60,6 +60,47 @@ and must stay usable on heterogeneous Windows/Linux machines.
 - Preserve history preview/export parity, especially profile photo behaviour.
 - `personal_info.links` stays the source of truth and maps to `contact.links`.
 - Use canonical profile keys first and legacy aliases only as explicit fallback.
+- **One-page output (MANDATORY)**: the generated CV must always render to
+  exactly one A4 page. This is a core product feature (reformat any profile,
+  regardless of length, to one page). `ONE_PAGE_PRINT_CSS` in
+  `app/views/template_preview_window.py` enforces the hard clip
+  (`height: 297mm` + `overflow: hidden`); `_enforce_single_page_budget` in
+  `app/utils/cv_postprocessing.py` is the content-budget backstop. Do NOT
+  relax `height` to `min-height`, do NOT remove `overflow: hidden`, and do
+  NOT disable the bullet-budget pass. Any PR touching that CSS, the export
+  templates, or the postprocess trimming logic must ship with a regression
+  test that pins both the CSS invariant and the per-role / total-bullet
+  budget. Reference incident: commit `223b30f` (2026-04-19) silently
+  relaxed `height` to `min-height`, broke single-page rendering, and
+  shipped because no test locked the CSS. Regression tests live in
+  `tests/test_one_page_invariant.py`.
+- **Positioning-sentence word-sourcing hierarchy (MANDATORY)**: when a
+  generator selects a small set of keywords to surface in a positioning
+  sentence (today: "Atouts pertinents pour {Company}: …"; same rule applies
+  to any future positioning phrase), words MUST be chosen in this tiered
+  order:
+  1. **Generation** — offer keyword that ALSO matches a profile skill
+     (profile concept rendered in offer vocabulary; this IS the product
+     goal).
+  2. **Offer** — skill-shaped offer keyword absent from the profile
+     (cross-domain positioning), provided it passes the skill-ish filter
+     (multi-word compound, acronym, CamelCase, lexicon match, or technical
+     suffix — NOT a verb, preposition, adverb, article, or generic field
+     noun like "technology"/"solution"/"approach").
+  3. **Profile** — top profile skill verbatim (fallback when offer yields
+     fewer qualifying candidates than `max_terms`).
+  Hard-reject tokens: verbs (`designed`, `integrate`), prepositions
+  (`into`, `with`), adverbs (`seamlessly`, `easily`), articles, generic
+  field nouns, marketing fluff. Prefer emitting NO sentence over one with
+  junk tokens. Reference implementation: `collect_targeted_offer_terms` +
+  `_skillish_score` in `app/utils/cv_summary_adaptation.py`. Regression
+  tests live in `tests/test_positioning_hierarchy.py`. Reference incident:
+  Mistral AI run 2026-04-20 emitted
+  `"Atouts pertinents pour Mistral AI : technology, designed, integrate.
+  Atouts pertinents pour Mistral AI : seamlessly, into, cloud."` — five
+  junk tokens and one legitimate skill — because the selector used
+  length/stopword filters only (no skill-shape check, no profile ranking,
+  no deduplication against an existing positioning sentence).
 
 ## Safety And Privacy
 - Use safe logging wrappers and redaction helpers for any profile, offer,

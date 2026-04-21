@@ -170,6 +170,157 @@ def _normalize_marker(text: Any) -> str:
     return re.sub(r"\s+", " ", folded).strip()
 
 
+_POSITIONING_HARD_BLOCKLIST = frozenset({
+    "into", "onto", "with", "from", "about", "through", "within", "over",
+    "under", "across", "upon", "toward", "towards", "around",
+    "the", "a", "an", "les", "la", "le", "des", "du", "de", "and", "or", "but",
+    "et", "ou", "mais", "donc", "car",
+    "seamlessly", "easily", "simply", "really", "very", "just", "well",
+    "innovative", "cutting edge", "leading", "best", "top", "world class",
+    "technology", "solution", "approach", "field", "industry", "domain",
+    "experience", "knowledge", "background", "skills", "abilities", "power",
+    "our", "your", "their", "nos", "vos", "leurs",
+    "designed", "integrate", "integrated", "integrating",
+    "developed", "developing", "implemented", "implementing",
+    "conçu", "concu", "integre", "integrer",
+})
+
+_POSITIONING_SCORE_VERB_SUFFIXES = ("ed", "ing", "ify", "ize", "ise")
+_POSITIONING_SCORE_ADVERB_SUFFIX = "ly"
+_POSITIONING_SCORE_TECH_SUFFIXES = ("ops", "db", "sql", "js", "ai", "ml", "py")
+
+
+def _is_positioning_blocked(norm: str) -> bool:
+    """Hard reject: obvious junk that must never land in a positioning sentence."""
+    if not norm:
+        return True
+    tokens = norm.split()
+    if len(tokens) == 1:
+        tok = tokens[0]
+        if tok in _POSITIONING_HARD_BLOCKLIST:
+            return True
+        if len(tok) > 4 and tok.endswith(_POSITIONING_SCORE_ADVERB_SUFFIX):
+            return True
+    if norm in _POSITIONING_HARD_BLOCKLIST:
+        return True
+    return False
+
+
+def _profile_skill_vocabulary(profile_json: Dict[str, Any] | None) -> set[str]:
+    """Aggregate normalized skill-like lemmas from a profile JSON.
+
+    Used as the Tier-1 positive signal in skillishness scoring: an offer
+    keyword that aligns with a profile lemma is a reformulation candidate,
+    which is the product's stated goal.
+    """
+    lemmas: set[str] = set()
+    if not isinstance(profile_json, dict):
+        return lemmas
+
+    def _collect(value: Any) -> None:
+        if isinstance(value, str):
+            norm = _normalize_marker(value)
+            if norm and len(norm) >= 2:
+                lemmas.add(norm)
+                for token in norm.split():
+                    if len(token) >= 3:
+                        lemmas.add(token)
+        elif isinstance(value, dict):
+            for sub in value.values():
+                _collect(sub)
+        elif isinstance(value, (list, tuple)):
+            for sub in value:
+                _collect(sub)
+
+    for key in ("skills", "soft_skills", "technologies", "tools"):
+        _collect(profile_json.get(key))
+
+    for key in ("experience", "experiences", "projects", "certifications"):
+        items = profile_json.get(key)
+        if not isinstance(items, list):
+            continue
+        for entry in items:
+            if not isinstance(entry, dict):
+                continue
+            for field in ("title", "role", "name", "technologies", "tools", "skills", "stack"):
+                _collect(entry.get(field))
+    return lemmas
+
+
+def _skillish_score(
+    term: str,
+    norm: str,
+    *,
+    profile_lemmas: set[str],
+) -> int:
+    """Soft signal ranking a candidate by how skill-shaped it is.
+
+    Small magnitudes (profile alignment +3, shape bonuses +1 each, verb/adverb
+    penalties -1 each) so the scoring informs ranking without dominating.
+    Hard blocking is handled separately by _is_positioning_blocked.
+    """
+    if not norm:
+        return 0
+    tokens = norm.split()
+    score = 0
+
+    for lemma in profile_lemmas:
+        if not lemma:
+            continue
+        if lemma == norm or (len(lemma) >= 3 and (lemma in norm or norm in lemma)):
+            score += 3
+            break
+
+    if len(tokens) >= 2:
+        score += 1
+    if re.fullmatch(r"[A-Z0-9]{2,6}", term.strip() or ""):
+        score += 1
+    if re.search(r"[A-Z][a-z]+[A-Z]", term or ""):
+        score += 1
+    if any(tok.endswith(_POSITIONING_SCORE_TECH_SUFFIXES) for tok in tokens):
+        score += 1
+
+    if len(tokens) == 1:
+        tok = tokens[0]
+        if len(tok) > 3 and tok.endswith(_POSITIONING_SCORE_VERB_SUFFIXES):
+            score -= 1
+        if len(tok) > 4 and tok.endswith(_POSITIONING_SCORE_ADVERB_SUFFIX):
+            score -= 1
+
+    return score
+
+
+def _iter_profile_skill_fallback(profile_json: Dict[str, Any] | None) -> List[str]:
+    """Ordered profile skill labels for Tier-3 fallback when offer yields too few candidates.
+
+    Accepts three shapes seen in the codebase:
+      - ``profile["skills"] = ["Python", "Django"]`` (bare strings)
+      - ``profile["skills"] = [{"name": "Python"}, …]`` (labelled dicts)
+      - ``profile["skills"] = [{"category": "Backend", "items": ["Python"]}, …]``
+        (CV-JSON grouped categories — the common runtime shape)
+    """
+    out: List[str] = []
+    if not isinstance(profile_json, dict):
+        return out
+    for key in ("skills", "technologies", "tools"):
+        items = profile_json.get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if isinstance(item, str) and item.strip():
+                out.append(item.strip())
+            elif isinstance(item, dict):
+                label = item.get("name") or item.get("label") or item.get("title")
+                if isinstance(label, str) and label.strip():
+                    out.append(label.strip())
+                nested = item.get("items")
+                if isinstance(nested, list):
+                    for sub in nested:
+                        if isinstance(sub, str) and sub.strip():
+                            out.append(sub.strip())
+    return out
+
+
 _DETERMINISTIC_APPENDIX_PREFIXES = tuple(
     _normalize_marker(value)
     for value in (
@@ -271,29 +422,32 @@ def collect_targeted_offer_terms(
 ) -> List[str]:
     """Select offer terms to surface in the targeted summary sentence.
 
-    The output feeds the "Atouts pertinents pour {Company} : ..." sentence,
-    which positions what the OFFER values, not what the candidate already
-    masters. Profile grounding is therefore intentionally not enforced here:
-    cross-domain applications (e.g. QA → LLM company) would otherwise lose
-    every offer keyword and produce no sentence at all.
+    Hierarchy (Generation → Offer → Profile):
+      1. Offer keyword matching a profile lemma (reformulation — product goal).
+      2. Skill-shaped offer keyword not in profile (cross-domain positioning).
+      3. Profile skill verbatim (fallback when offer yields too few candidates).
 
-    The remaining filters (length cap, fragment/stopword filter, dedup) keep
-    out noise like "our", "the", "power".
+    Hard blocklist rejects verbs, prepositions, adverbs, and generic field
+    nouns ("technology", "solution", "into", "designed", "seamlessly"…) that
+    could never read as a skill. Scoring is soft — profile alignment is the
+    dominant positive signal; structural bonuses (multi-word compound,
+    acronym, tech suffix) and verb/adverb penalties are small (+/-1) so they
+    inform ranking without dominating.
 
-    The ``profile_json`` argument is kept for backward compatibility and for
-    future soft-ranking; it is currently unused.
+    Prefer emitting no sentence over a sentence with junk tokens.
     """
-    del profile_json  # reserved for future soft-ranking; not used today.
-
     excluded = {
         _normalize_marker(item)
         for item in (excluded_terms or [])
         if _normalize_marker(item)
     }
-    selected: List[str] = []
+    target_count = max(1, int(max_terms or 1))
+    profile_lemmas = _profile_skill_vocabulary(profile_json)
+
+    scored: List[tuple[int, int, str, str]] = []
     seen: set[str] = set()
 
-    for raw in offer_terms or []:
+    for order, raw in enumerate(offer_terms or []):
         text = _clean_candidate_term(raw)
         if not text or len(text) > 72:
             continue
@@ -305,10 +459,32 @@ def collect_targeted_offer_terms(
         tokens = [token for token in norm.split() if token]
         if not tokens or len(tokens) > 6:
             continue
+        if _is_positioning_blocked(norm):
+            continue
         seen.add(norm)
-        selected.append(text)
-        if len(selected) >= max(1, int(max_terms or 1)):
-            break
+        score = _skillish_score(text, norm, profile_lemmas=profile_lemmas)
+        scored.append((score, order, text, norm))
+
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    selected: List[str] = [text for _s, _o, text, _n in scored[:target_count]]
+
+    if len(selected) < target_count:
+        selected_norms = {_normalize_marker(text) for text in selected}
+        for fallback in _iter_profile_skill_fallback(profile_json):
+            if len(selected) >= target_count:
+                break
+            text = _clean_candidate_term(fallback)
+            if not text or len(text) > 72:
+                continue
+            norm = _normalize_marker(text)
+            if not norm or norm in selected_norms or norm in excluded:
+                continue
+            if _is_positioning_blocked(norm):
+                continue
+            if _term_looks_like_fragment_value(text):
+                continue
+            selected.append(text)
+            selected_norms.add(norm)
 
     return selected
 
@@ -335,6 +511,30 @@ def build_targeted_summary_focus_sentence(
         language_code=language_code,
         max_terms=max_terms,
     )
+
+
+_POSITIONING_SENTENCE_PATTERNS = {
+    "fr": re.compile(
+        r"\s*Atouts\s+pertinents(?:\s+pour\s+[^.:]{1,80})?\s*[:\-]\s*[^.]*\.",
+        re.IGNORECASE,
+    ),
+    "en": re.compile(
+        r"\s*Relevant\s+strengths(?:\s+for\s+[^.:]{1,80})?\s+include\s+[^.]*\.",
+        re.IGNORECASE,
+    ),
+}
+
+
+def strip_positioning_sentences(summary: Any, language_code: str = "fr") -> str:
+    text = str(summary or "")
+    if not text:
+        return ""
+    lang_key = "en" if str(language_code or "").lower().startswith("en") else "fr"
+    pattern = _POSITIONING_SENTENCE_PATTERNS.get(lang_key)
+    if pattern is None:
+        return text.strip()
+    stripped = pattern.sub("", text)
+    return re.sub(r"\s+", " ", stripped).strip()
 
 
 def _clean_candidate_term(text: Any) -> str:
