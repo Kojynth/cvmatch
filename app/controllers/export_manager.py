@@ -1330,13 +1330,36 @@ class ExportManager:
         is_en = str((formatted_data or {}).get("language") or "").lower().startswith("en")
         safe_schemes = {"http", "https", "mailto", "tel"}
 
+        def _explicit_scheme(value: str) -> str:
+            match = re.match(r"^([a-z][a-z0-9+.\-]*):", str(value or "").strip(), re.IGNORECASE)
+            if not match:
+                return ""
+            return str(match.group(1) or "").lower()
+
+        def _normalize_href(value: Any) -> str:
+            text = str(value or "").strip()
+            if not text:
+                return ""
+            scheme = _explicit_scheme(text)
+            if scheme:
+                if scheme not in safe_schemes:
+                    return ""
+                return text
+            return f"https://{text.lstrip('/')}"
+
+        def _display_link_value(url: str, href: str) -> str:
+            scheme = _explicit_scheme(href)
+            if scheme in {"mailto", "tel"}:
+                return href.split(":", 1)[1].strip()
+            return url
+
         def _append(kind: str, label: str, value: Any, href: str = "") -> None:
             text = str(value or "").strip()
             if not text:
                 return
             resolved_href = str(href or "").strip()
-            if resolved_href and re.match(r"^[a-z][a-z0-9+.\-]*://", resolved_href, re.IGNORECASE):
-                scheme = resolved_href.split(":", 1)[0].lower()
+            scheme = _explicit_scheme(resolved_href)
+            if scheme:
                 if scheme not in safe_schemes:
                     return
             if kind != "location" and not resolved_href:
@@ -1366,7 +1389,7 @@ class ExportManager:
 
         linkedin = str((formatted_data or {}).get("linkedin_url") or "").strip()
         if linkedin:
-            href = linkedin if re.match(r"^[a-z][a-z0-9+.\-]*://", linkedin, re.IGNORECASE) else f"https://{linkedin}"
+            href = _normalize_href(linkedin)
             _append("linkedin", "LinkedIn", linkedin, href)
 
         for link in (formatted_data or {}).get("links") or []:
@@ -1376,11 +1399,20 @@ class ExportManager:
             url = str(link.get("url") or "").strip()
             if not url:
                 continue
-            href = url if re.match(r"^[a-z][a-z0-9+.\-]*://", url, re.IGNORECASE) else f"https://{url}"
+            href = _normalize_href(url)
+            if not href:
+                continue
             if not label or re.match(r"^(?:lien|link)\s*\d*$", label, re.IGNORECASE):
-                parsed = re.sub(r"^https?://", "", href, flags=re.IGNORECASE)
-                label = parsed.split("/")[0].replace("www.", "").split(".")[0].capitalize()
-            _append(label.lower(), label, url, href)
+                scheme = _explicit_scheme(href)
+                if scheme == "mailto":
+                    label = "Email"
+                elif scheme == "tel":
+                    label = "Phone" if is_en else "Telephone"
+                else:
+                    parsed = re.sub(r"^https?://", "", href, flags=re.IGNORECASE)
+                    label = parsed.split("/")[0].replace("www.", "").split(".")[0].capitalize()
+            display_value = _display_link_value(url, href)
+            _append(label.lower(), label, display_value, href)
 
         location = str((formatted_data or {}).get("location") or "").strip()
         if location:

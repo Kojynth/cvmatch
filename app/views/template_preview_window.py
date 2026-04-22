@@ -322,7 +322,7 @@ CV_AUTO_FIT_SCRIPT = """
     if (!Number.isFinite(scale) || scale <= 0) {
       scale = 1;
     }
-    scale = Math.max(scale, 0.94);
+    scale = Math.max(scale, 0.01);
     root.style.setProperty("--print-scale", scale.toFixed(3));
     return {
       tier: root.dataset.pageFit || "ultra",
