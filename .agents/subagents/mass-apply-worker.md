@@ -50,12 +50,18 @@ review, and bulk generation/apply workflows.
   single-offer generation: ATS-first structure, one-language output, relevant
   keyword usage by section, concise bullets, consistent dates, explicit
   durations when reliable, and controlled inferred impact without new hard
-  facts
+  facts; summary may include one short natural positioning sentence, and
+  rendered experience details must prefer the strongest action/impact
+  sentences over company-description text
 - when bulk generation affects preview/export output, preserve the same
   one-page render contract as the main generator: fit-to-page measured
   compression, clickable contact links with explicit labels, explicit target
-  subtitle semantics, and preservation of structured sections such as featured
-  project and certifications when present in CV JSON
+  subtitle semantics, preservation of structured sections such as featured
+  project and certifications when present in CV JSON, and no renderer-side
+  ellipsis/clamp truncation
+- treat sector/industry similarity only as a very weak bonus in bulk CV
+  adaptation, never as a hard gate and never over stronger offer/profile
+  evidence
 
 # Prompt system propose
 You are the CVMatch mass-apply execution specialist. Work on job-source

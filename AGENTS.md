@@ -91,19 +91,24 @@ and must stay usable on heterogeneous Windows/Linux machines.
   actively exploit the CV JSON instead of flattening it to a few generic
   sections. The default one-page layout must prioritize:
   - a real summary capped to 3 short lines;
+  - a natural positioning sentence appended to the summary when offer/company
+    signal is available and grounded;
   - 3 to 5 credible technical skills (not a keyword dump);
-  - 2 to 3 concrete impacts per experience;
+  - 2 to 3 concrete impacts per experience, prioritizing the strongest
+    action-led and quantified evidence when available;
   - one featured project when available;
   - a compact certifications block when available;
   - soft skills only as a compact supporting signal, never as filler.
   The renderer may hide lower-priority sections under measured compression,
   but it must not collapse useful structured content into a vague
-  `additional relevant details` blob.
+  `additional relevant details` blob, and it must not truncate rendered
+  sentences with `...` / `…`. When content does not fit, select or reorder
+  whole grounded sentences; do not crop mid-sentence.
 - **Positioning-sentence word-sourcing hierarchy (MANDATORY)**: when a
   generator selects a small set of keywords to surface in a positioning
-  sentence (today: "Atouts pertinents pour {Company}: …"; same rule applies
-  to any future positioning phrase), words MUST be chosen in this tiered
-  order:
+  sentence (for example a natural summary tail such as `Profil pertinent pour
+  {Company} grâce à ...`; same rule applies to any future positioning
+  phrase), words MUST be chosen in this tiered order:
   1. **Generation** — offer keyword that ALSO matches a profile skill
      (profile concept rendered in offer vocabulary; this IS the product
      goal).
@@ -126,6 +131,11 @@ and must stay usable on heterogeneous Windows/Linux machines.
   junk tokens and one legitimate skill — because the selector used
   length/stopword filters only (no skill-shape check, no profile ranking,
   no deduplication against an existing positioning sentence).
+- **Positioning render contract (MANDATORY)**: when a positioning sentence is
+  present, final rendering must preserve it as the final sentence of the
+  summary instead of stripping it from HTML/PDF output. The sentence should
+  read naturally, echo the target company/offer, and remain grounded in
+  profile-backed or offer-backed terms selected by the hierarchy above.
 - **Photo invariant (MANDATORY)**: the profile photo must appear in the
   rendered CV regardless of template choice, user HTML edits, or history
   reopen — photo presence is a product invariant. When a user edits the
@@ -167,6 +177,16 @@ and must stay usable on heterogeneous Windows/Linux machines.
   next to its full-length twin because `_polish_experience_fragment`
   didn't strip the ellipsis on entry, so clipped fragments re-entered
   merge paths where fuzzy dedup couldn't match them.
+- **Experience render-selection contract (MANDATORY)**: final CV rendering
+  must prefer the 2 to 3 experience sentences most aligned to the target
+  offer, with strong action verbs and explicit impact when available.
+  Company-description prose is supporting context only: it may inform weak
+  sector inference or tie-breaking, but it must not outrank action/impact
+  evidence and should usually be omitted from the rendered bullet list.
+- **Sector/industry signal contract (MANDATORY)**: sector or industry context
+  may be inferred softly from employer/context text and used only as a minor
+  ranking or wording bonus. It must never be a hard gate, never override
+  stronger offer-skill/profile evidence, and never justify invented content.
 
 ## Additional CV Contracts
 - **Final experience dedup contract (MANDATORY)**: every final CV payload path

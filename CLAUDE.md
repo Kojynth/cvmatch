@@ -24,9 +24,13 @@
     candidature target (`Poste vise` / `Target role`) rather than an
     employer label
   - one-page content allocation contract: real summary (max 3 short lines),
-    3-5 credible technical skills, 2-3 impacts per role, one featured
+    3-5 credible technical skills, a natural positioning sentence appended
+    to the summary when grounded offer/company signal exists, 2-3 impacts
+    per role chosen from the strongest action-led evidence, one featured
     project, compact certifications, and no fallback to a vague
-    `additional relevant details` blob when structured sections exist
+    `additional relevant details` blob when structured sections exist;
+    never truncate final rendered sentences with `...` / `…`, select whole
+    grounded sentences instead
   - positioning-sentence word-sourcing hierarchy:
     **Generation > Offer-skill > Profile-verbatim**, with hard-reject of
     verbs, prepositions, adverbs, and generic field nouns (see
@@ -54,6 +58,15 @@
   profile-backed aligned skills/talents first, not just
   `missing_summary_terms`; cross-domain offer-only terms are allowed, but
   they must not evict better grounded aligned signal
+- positioning render contract: when present, the positioning sentence stays
+  in the final rendered summary as its closing sentence and should read
+  naturally, not as a raw keyword dump
+- experience render-selection contract: rendered experience details prefer
+  the 2-3 most offer-aligned action/impact sentences; company-description
+  prose is only weak sector context and usually should not appear in the CV
+- sector/industry signal contract: sector hints are allowed only as a minor
+  ranking/vocabulary bonus, never as a hard gate and never over stronger
+  offer-skill/profile evidence
 - High-risk files:
   - `app/workers/llm_worker.py`
   - `app/workers/qwen_manager.py`

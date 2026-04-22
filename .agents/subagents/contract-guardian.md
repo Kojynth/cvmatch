@@ -52,13 +52,18 @@ history, and `mass_apply`.
   explicit clickable contact header links with smart labels (no `Lien 1` /
   `Link 1` placeholders), explicit candidature target subtitle semantics
   (`Poste vise` / `Target role`), and preservation of structured sections
-  such as featured project and certifications when present in one-page CV JSON
+  such as featured project and certifications when present in one-page CV JSON;
+  final rendered sentences must stay whole (no `...` / `…` truncation), and
+  any grounded positioning sentence must remain visible in the rendered summary
 - when experience dedup/postprocessing is touched, verify both sides of the
   contract: duplicate retries/date-format variants collapse, but same
   company/title with conflicting normalized periods do NOT collapse
 - when summary adaptation/positioning is touched, verify the candidate pool
   uses profile-backed aligned skills/talents first; cross-domain offer-only
   terms may remain, but must not evict better grounded aligned signal
+- when experience rendering/selection is touched, verify company-description
+  prose is treated as weak context only and does not outrank stronger
+  action/impact sentences aligned with the offer
 
 # Prompt system propose
 You are the CVMatch contract guardian. Analyze a diff and verify full

@@ -281,6 +281,9 @@ class ExportManager:
         max_roles = 4 if space_pressure <= 1 else 3
         formatted_data["experience"] = self._compact_experience_entries(
             formatted_data.get("experience_primary") or formatted_data.get("experience"),
+            job_title=str(formatted_data.get("job_title") or "").strip(),
+            offer_terms=self._collect_offer_terms_for_render(formatted_data),
+            language_code=str(formatted_data.get("language") or "fr"),
             max_roles=max_roles,
             max_bullets=3,
         )
@@ -674,7 +677,7 @@ class ExportManager:
                     if not cleaned:
                         continue
                     cleaned_lines.append(cleaned)
-                    if len(cleaned_lines) >= 4:
+                    if len(cleaned_lines) >= 6:
                         break
                 return cleaned_lines
 
@@ -754,9 +757,9 @@ class ExportManager:
                             description_lines.insert(0, cleaned_summary)
 
                 if has_highlights:
-                    compact_lines.extend(cleaned_highlights[:4])
+                    compact_lines.extend(cleaned_highlights[:6])
                 else:
-                    compact_lines.extend(description_lines[:4])
+                    compact_lines.extend(description_lines[:6])
 
                 dedup_seen = set()
                 dedup_desc: List[str] = []
@@ -766,7 +769,7 @@ class ExportManager:
                         continue
                     dedup_seen.add(key)
                     dedup_desc.append(line)
-                    if len(dedup_desc) >= 4:
+                    if len(dedup_desc) >= 6:
                         break
 
                 entry["description"] = dedup_desc
@@ -1312,6 +1315,231 @@ class ExportManager:
             if sentence.strip()
         ]
 
+    def _normalize_render_text(self, value: Any) -> str:
+        return re.sub(r"\s+", " ", str(value or "").strip()).strip()
+
+    def _word_count(self, value: Any) -> int:
+        return len(re.findall(r"\b\S+\b", str(value or "").strip(), flags=re.UNICODE))
+
+    def _is_positioning_sentence(self, value: Any, *, is_en: bool) -> bool:
+        text = self._normalize_render_text(value)
+        if not text:
+            return False
+        patterns = (
+            (
+                re.compile(r"^Atouts\s+pertinents(?:\s+pour\s+[^.:]{1,80})?\s*[:\-]\s*.+\.$", re.IGNORECASE),
+                re.compile(r"^Profil\s+pertinent(?:\s+pour\s+[^.]{1,80}?)?\s+grace\s+a\s+.+\.$", re.IGNORECASE),
+            )
+            if not is_en
+            else (
+                re.compile(
+                    r"^Relevant\s+strengths(?:\s+for\s+[^.:]{1,80})?\s+include\s+.+\.$",
+                    re.IGNORECASE,
+                ),
+                re.compile(
+                    r"^Profile\s+aligned(?:\s+with\s+[^.]{1,80}?)?\s+through\s+.+\.$",
+                    re.IGNORECASE,
+                ),
+            )
+        )
+        return any(pattern.match(text) for pattern in patterns)
+
+    def _select_whole_sentences(
+        self,
+        sentences: Any,
+        *,
+        max_items: int,
+        char_budget: int = 0,
+        preferred_tail: str = "",
+    ) -> List[str]:
+        cleaned: List[str] = []
+        seen: set[str] = set()
+        for item in sentences or []:
+            text = self._normalize_render_text(item)
+            key = self._normalize_text_key(text)
+            if not text or not key or key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(text)
+
+        if not cleaned and not preferred_tail:
+            return []
+
+        selected: List[str] = []
+        used = 0
+        tail = self._normalize_render_text(preferred_tail)
+        tail_key = self._normalize_text_key(tail)
+        if tail_key:
+            cleaned = [item for item in cleaned if self._normalize_text_key(item) != tail_key]
+
+        reserve_slots = 1 if tail else 0
+        reserve_chars = (len(tail) + 1) if tail and char_budget > 0 else 0
+        max_regular_items = max(0, int(max_items or 0) - reserve_slots)
+        regular_budget = max(0, int(char_budget or 0) - reserve_chars) if char_budget > 0 else 0
+
+        for sentence in cleaned:
+            if len(selected) >= max_regular_items:
+                break
+            projected = used + len(sentence) + (1 if selected else 0)
+            if regular_budget > 0 and selected and projected > regular_budget:
+                continue
+            if regular_budget > 0 and not selected and len(sentence) > regular_budget and max_regular_items > 0:
+                continue
+            selected.append(sentence)
+            used = projected
+
+        if tail:
+            if not selected and max_items == 1:
+                return [tail]
+            while selected and char_budget > 0 and (used + len(tail) + 1) > char_budget:
+                removed = selected.pop()
+                used -= len(removed) + (1 if selected else 0)
+            if len(selected) < max(1, int(max_items or 1)):
+                if char_budget <= 0 or not selected or (used + len(tail) + 1) <= char_budget:
+                    selected.append(tail)
+                elif not selected:
+                    return [tail]
+
+        if not selected and cleaned:
+            return cleaned[: max(1, int(max_items or 1))]
+        return selected[: max(1, int(max_items or 1))]
+
+    def _score_experience_render_line(
+        self,
+        line: Any,
+        *,
+        company: str,
+        job_title: str,
+        offer_terms: List[str],
+        language_code: str,
+    ) -> float:
+        text = self._normalize_render_text(line)
+        if self._word_count(text) < 3:
+            return -100.0
+
+        try:
+            from ..utils.cv_postprocessing import (
+                _looks_like_company_description,
+                _starts_with_action_phrase,
+            )
+        except Exception:
+            def _looks_like_company_description(value, _company=""):
+                lowered = str(value or "").lower()
+                return ":" in lowered and any(
+                    token in lowered
+                    for token in ("filiale", "specialisee", "specialized", "group", "groupe", "company")
+                )
+
+            def _starts_with_action_phrase(value, *, language_code="fr"):
+                lowered = str(value or "").strip().lower()
+                verbs = (
+                    ("concevoir", "executer", "suivre", "rediger", "analyser", "piloter", "tester", "valider")
+                    if not str(language_code or "fr").lower().startswith("en")
+                    else ("designed", "built", "implemented", "tested", "led", "improved", "validated")
+                )
+                return lowered.startswith(verbs)
+
+        if _looks_like_company_description(text, company):
+            return -100.0
+
+        try:
+            from ..utils.keyword_alignment import (
+                normalize_keyword_for_match,
+                normalized_term_in_probe as normalized_term_present,
+            )
+        except Exception:
+            def normalize_keyword_for_match(value):
+                return self._normalize_text_key(value)
+
+            def normalized_term_present(probe, term):
+                return str(term or "") in str(probe or "")
+
+        normalized_text = normalize_keyword_for_match(text)
+        if not normalized_text:
+            return -100.0
+
+        score = 0.0
+        if _starts_with_action_phrase(text, language_code=language_code):
+            score += 2.5
+        if re.search(r"\b\d+(?:[.,]\d+)?\s*(?:%|k|m|ans?|mois|jours?|hours?|users?|clients?)?\b", text, re.IGNORECASE):
+            score += 1.2
+        if any(token in normalized_text for token in ("resultat", "impact", "gain", "reduce", "improve", "fiabil", "automatis", "benchmark")):
+            score += 0.8
+
+        job_norm = normalize_keyword_for_match(job_title)
+        if job_norm and normalized_term_present(normalized_text, job_norm):
+            score += 1.6
+
+        seen_terms: set[str] = set()
+        for item in offer_terms or []:
+            norm = normalize_keyword_for_match(item)
+            if not norm or norm in seen_terms:
+                continue
+            seen_terms.add(norm)
+            if normalized_term_present(normalized_text, norm):
+                score += 1.4 if " " in norm else 0.8
+
+        score += min(0.6, float(self._word_count(text)) / 20.0)
+        return score
+
+    def _select_experience_render_lines(
+        self,
+        lines: Any,
+        *,
+        company: str,
+        job_title: str,
+        offer_terms: List[str],
+        language_code: str,
+        max_items: int,
+    ) -> List[str]:
+        if not isinstance(lines, list):
+            return []
+
+        scored: List[Tuple[float, int, str]] = []
+        for idx, raw in enumerate(lines):
+            text = self._normalize_render_text(raw)
+            if not text:
+                continue
+            score = self._score_experience_render_line(
+                text,
+                company=company,
+                job_title=job_title,
+                offer_terms=offer_terms,
+                language_code=language_code,
+            )
+            if score <= -50.0:
+                continue
+            scored.append((score, idx, text))
+
+        if not scored:
+            fallback = [
+                self._normalize_render_text(item)
+                for item in lines
+                if self._normalize_render_text(item)
+            ]
+            deduped: List[str] = []
+            seen: set[str] = set()
+            for item in fallback:
+                key = self._normalize_text_key(item)
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                deduped.append(item)
+            return deduped[: max(1, int(max_items or 1))]
+
+        scored.sort(key=lambda row: (-row[0], row[1]))
+        selected_idx = sorted(row[1] for row in scored[: max(1, int(max_items or 1))])
+        selected: List[str] = []
+        seen: set[str] = set()
+        for idx in selected_idx:
+            item = self._normalize_render_text(lines[idx])
+            key = self._normalize_text_key(item)
+            if not item or not key or key in seen:
+                continue
+            seen.add(key)
+            selected.append(item)
+        return selected
+
     def _trim_render_text(self, value: Any, max_chars: int) -> str:
         text = str(value or "").strip()
         if not text:
@@ -1506,10 +1734,12 @@ class ExportManager:
             if not isinstance(exp, dict):
                 continue
             for candidate in exp.get("description") or []:
-                text = self._trim_render_text(candidate, 180)
-                if len(re.findall(r"\b\S+\b", text, flags=re.UNICODE)) < 4:
+                text = self._normalize_render_text(candidate)
+                if self._word_count(text) < 4:
                     continue
                 if lines and self._normalize_text_key(text) == self._normalize_text_key(lines[0]):
+                    continue
+                if len(text) > 220:
                     continue
                 if not text.endswith((".", "!", "?")):
                     text += "."
@@ -1519,22 +1749,36 @@ class ExportManager:
         return lines[:2]
 
     def _build_render_summary_lines(self, formatted_data: Dict[str, Any]) -> List[str]:
+        is_en = str((formatted_data or {}).get("language") or "").lower().startswith("en")
         summary = str((formatted_data or {}).get("profile_summary") or "").strip()
-        lines: List[str] = []
-        char_budget = 360
-        used = 0
-        for sentence in self._split_sentences(summary):
-            trimmed = self._trim_render_text(sentence, 170)
-            projected = used + len(trimmed) + (1 if lines else 0)
-            if len(lines) >= 3 or projected > char_budget:
-                break
-            lines.append(trimmed)
-            used = projected
+        positioning = str((formatted_data or {}).get("profile_positioning_sentence") or "").strip()
+        summary_sentences = [
+            sentence
+            for sentence in self._split_sentences(summary)
+            if not self._is_positioning_sentence(sentence, is_en=is_en)
+        ]
+        lines = self._select_whole_sentences(
+            summary_sentences,
+            max_items=3,
+            char_budget=360,
+            preferred_tail=positioning,
+        )
 
         if lines:
             return lines
 
-        return self._build_summary_fallback_lines(formatted_data)
+        fallback = self._build_summary_fallback_lines(formatted_data)
+        if positioning and not any(
+            self._normalize_text_key(item) == self._normalize_text_key(positioning)
+            for item in fallback
+        ):
+            fallback = self._select_whole_sentences(
+                fallback,
+                max_items=3,
+                char_budget=360,
+                preferred_tail=positioning,
+            )
+        return fallback
 
     def _split_technologies(self, value: Any, *, max_items: int = 4) -> List[str]:
         raw = str(value or "").strip()
@@ -1572,12 +1816,11 @@ class ExportManager:
             )
 
         best = sorted(candidates, key=_score, reverse=True)[0]
-        description_lines = [
-            self._trim_render_text(sentence, 170)
-            for sentence in self._split_sentences(best.get("description") or "")
-            if sentence.strip()
-        ]
-        description_lines = description_lines[:2]
+        description_lines = self._select_whole_sentences(
+            self._split_sentences(best.get("description") or ""),
+            max_items=2,
+            char_budget=280,
+        )
         return {
             "name": str(best.get("name") or "").strip(),
             "duration": str(best.get("duration") or "").strip(),
@@ -1617,6 +1860,9 @@ class ExportManager:
         self,
         experiences: Any,
         *,
+        job_title: str,
+        offer_terms: List[str],
+        language_code: str,
         max_roles: int,
         max_bullets: int,
     ) -> List[Dict[str, Any]]:
@@ -1627,12 +1873,14 @@ class ExportManager:
             if not isinstance(exp, dict):
                 continue
             entry = dict(exp)
-            lines = [
-                self._trim_render_text(line, 170)
-                for line in (entry.get("description") or [])
-                if isinstance(line, str) and line.strip()
-            ]
-            entry["description"] = lines[: max(1, int(max_bullets or 1))]
+            entry["description"] = self._select_experience_render_lines(
+                entry.get("description") or [],
+                company=str(entry.get("company") or "").strip(),
+                job_title=job_title,
+                offer_terms=offer_terms,
+                language_code=language_code,
+                max_items=max(1, int(max_bullets or 1)),
+            )
             compacted.append(entry)
             if len(compacted) >= max(1, int(max_roles or 1)):
                 break
@@ -1651,11 +1899,16 @@ class ExportManager:
             if not isinstance(entry, dict):
                 continue
             item = dict(entry)
-            details = [
-                self._trim_render_text(line, 140)
-                for line in (item.get("description") or [])
-                if isinstance(line, str) and line.strip()
-            ]
+            details = []
+            for line in (item.get("description") or []):
+                text = self._normalize_render_text(line)
+                if not text:
+                    continue
+                if len(text) > 160 and details:
+                    continue
+                details.append(text)
+                if len(details) >= 1:
+                    break
             item["description"] = details[:1]
             compacted.append(item)
             if len(compacted) >= max(1, int(max_items or 1)):

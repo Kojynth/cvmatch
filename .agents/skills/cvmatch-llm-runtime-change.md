@@ -9,5 +9,8 @@ Checklist:
 4. If output quality/rendering is affected, preserve the fit-to-page one-page
    contract: prioritized content, measured height, controlled compression,
    no CSS clipping, explicit clickable contacts, explicit target subtitle,
-   and structured sections instead of a generic blob.
+   structured sections instead of a generic blob, no renderer-side
+   ellipsis/clamp truncation, a short natural positioning sentence when
+   grounded, and experience selection that prefers action/impact evidence over
+   company-description text.
 5. Run targeted `tests/pipeline` or `tests/contracts` scopes plus compile checks.

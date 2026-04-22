@@ -26,6 +26,12 @@ Current render/export contracts to preserve across agent runs:
   structured experience/project/education blocks
 - one-page render must keep structured sections (summary, skills, experience,
   featured project, certifications) instead of flattening content into a blob
+- final rendered sentences must stay whole: no `...` / `…` truncation in the
+  one-page HTML/PDF path; select better sentences instead of clipping them
+- when a grounding-safe positioning sentence exists, keep it as the closing
+  sentence of the rendered summary
+- company-description prose is weak context only; rendered experience details
+  should prefer the strongest offer-aligned action/impact sentences
 
 If the execution environment does not support native sub-agent spawning, invoke
 these definitions manually: copy the target sub-agent prompt, preserve its file
