@@ -32,6 +32,11 @@ Current render/export contracts to preserve across agent runs:
   sentence of the rendered summary
 - company-description prose is weak context only; rendered experience details
   should prefer the strongest offer-aligned action/impact sentences
+- pure offer-only terms belong in the natural positioning sentence only; do
+  not present them elsewhere as proven facts unless profile evidence supports
+  a coherent implicit inference
+- offer-keyword extraction must prioritize requirement-heavy sections over
+  company marketing / benefits / remote / hiring-process text
 
 If the execution environment does not support native sub-agent spawning, invoke
 these definitions manually: copy the target sub-agent prompt, preserve its file

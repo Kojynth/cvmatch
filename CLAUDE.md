@@ -61,12 +61,22 @@
 - positioning render contract: when present, the positioning sentence stays
   in the final rendered summary as its closing sentence and should read
   naturally, not as a raw keyword dump
+- offer-only term placement contract: pure offer-only vocabulary belongs only
+  in the natural positioning sentence; do not surface unsupported offer-only
+  terms as proven skills or experience facts unless profile evidence supports
+  a coherent implicit inference
 - experience render-selection contract: rendered experience details prefer
   the 2-3 most offer-aligned action/impact sentences; company-description
   prose is only weak sector context and usually should not appear in the CV
 - sector/industry signal contract: sector hints are allowed only as a minor
   ranking/vocabulary bonus, never as a hard gate and never over stronger
   offer-skill/profile evidence
+- offer-keyword extraction contract: prioritize requirement-heavy sections
+  (`Role summary`, responsibilities, `About you`, stack/tools, ideal profile)
+  over company marketing, benefits, remote policy, or hiring-process text
+- explicit tool naming contract: when the profile supports concrete QA/
+  automation tools, prefer naming them explicitly over generic "automation
+  tools" wording
 - High-risk files:
   - `app/workers/llm_worker.py`
   - `app/workers/qwen_manager.py`

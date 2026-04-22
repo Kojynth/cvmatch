@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from .cv_fallback_generator import generate_fallback_cv_json
 from .offer_keywords_utils import dedup_preserve
+from .offer_enrichment import prepare_offer_text
 
 
 _TOOL_PATTERNS: Dict[str, re.Pattern[str]] = {
@@ -79,6 +80,25 @@ def _extract_offer_text_keywords(offer_text: str) -> List[str]:
         "offre",
         "company",
         "entreprise",
+        "about",
+        "believe",
+        "power",
+        "technology",
+        "technologies",
+        "designed",
+        "integrate",
+        "seamlessly",
+        "dynamic",
+        "collaborative",
+        "passionate",
+        "future",
+        "innovation",
+        "culture",
+        "benefits",
+        "remote",
+        "policy",
+        "hiring",
+        "process",
     }
     for token in token_pattern.findall(offer_text or ""):
         lowered = token.lower()
@@ -155,7 +175,11 @@ def build_offer_keywords_fallback(
             _extend_terms(extracted_tools, analysis.get("tools"))
             _extend_terms(extracted_lexical, analysis.get("lexical_field"))
 
-        offer_text = str(offer_data.get("text") or "")
+        offer_text = prepare_offer_text(
+            dict(offer_data),
+            max_chars=3200,
+            keywords=[job_title, company],
+        ) or str(offer_data.get("text") or "")
         if offer_text:
             extracted_keywords.extend(_extract_offer_text_keywords(offer_text))
             extracted_tools.extend(_extract_offer_text_tools(offer_text))

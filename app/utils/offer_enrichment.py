@@ -20,6 +20,7 @@ pipeline stages.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import Counter
 from typing import Any, Callable, Dict, List, Optional, Set
 
@@ -59,6 +60,183 @@ STOP_WORDS_FR = frozenset({
 })
 
 STOP_WORDS_ALL = STOP_WORDS_EN | STOP_WORDS_FR
+
+_HIGH_SIGNAL_OFFER_HEADINGS = (
+    "role summary",
+    "what you will do",
+    "about you",
+    "ideal if you have",
+    "now it would be ideal if you have",
+    "requirements",
+    "responsibilities",
+    "missions",
+    "profil recherche",
+    "ce que vous ferez",
+    "vos missions",
+    "competences requises",
+    "stack",
+    "outils",
+)
+
+_LOW_SIGNAL_OFFER_HEADINGS = (
+    "about us",
+    "about mistral",
+    "who are we",
+    "culture",
+    "what we offer",
+    "benefits",
+    "hiring process",
+    "location remote",
+    "location and remote",
+    "remote policy",
+    "applicant privacy policy",
+    "qui sont ils",
+    "l entreprise",
+    "ce que nous offrons",
+    "avantages",
+    "processus de recrutement",
+    "envie d en savoir plus",
+    "voir moins",
+)
+
+
+def _normalize_offer_heading(text: str) -> str:
+    value = unicodedata.normalize("NFKD", str(text or ""))
+    value = "".join(ch for ch in value if not unicodedata.combining(ch))
+    value = re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+    return re.sub(r"\s+", " ", value)
+
+
+def _offer_heading_priority(heading: str) -> int:
+    normalized = _normalize_offer_heading(heading)
+    if not normalized:
+        return 0
+    for marker in _HIGH_SIGNAL_OFFER_HEADINGS:
+        if normalized == marker or normalized.startswith(f"{marker} "):
+            return 3
+    for marker in _LOW_SIGNAL_OFFER_HEADINGS:
+        if normalized == marker or normalized.startswith(f"{marker} "):
+            return -2
+    return 0
+
+
+def _split_offer_sections(text: str) -> List[Dict[str, Any]]:
+    normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    if not normalized.strip():
+        return []
+
+    sections: List[Dict[str, Any]] = []
+    current_heading = ""
+    current_lines: List[str] = []
+
+    def flush() -> None:
+        nonlocal current_heading, current_lines
+        heading = str(current_heading or "").strip()
+        body = "\n".join(line for line in current_lines if str(line or "").strip()).strip()
+        if heading or body:
+            sections.append(
+                {
+                    "heading": heading,
+                    "body": body,
+                    "priority": _offer_heading_priority(heading),
+                }
+            )
+        current_heading = ""
+        current_lines = []
+
+    for raw_line in normalized.split("\n"):
+        line = str(raw_line or "").strip()
+        if not line:
+            if current_lines and current_lines[-1] != "":
+                current_lines.append("")
+            continue
+        priority = _offer_heading_priority(line)
+        if priority != 0:
+            flush()
+            current_heading = line
+            continue
+        current_lines.append(line)
+
+    flush()
+    return [section for section in sections if section.get("heading") or section.get("body")]
+
+
+def _select_offer_sections(
+    text: str,
+    *,
+    max_chars: int,
+    keywords: Optional[List[str]] = None,
+) -> str:
+    from .text_chunking import merge_blocks, select_relevant_blocks
+
+    sections = _split_offer_sections(text)
+    if len(sections) < 2:
+        return select_relevant_blocks(
+            text,
+            max_chars=max_chars,
+            keywords=keywords,
+            max_block_chars=900,
+        )
+
+    keyword_list = [
+        normalize_keyword_for_match(item)
+        for item in (keywords or [])
+        if normalize_keyword_for_match(item)
+    ]
+
+    scored: List[tuple[int, int, str]] = []
+    for idx, section in enumerate(sections):
+        heading = str(section.get("heading") or "").strip()
+        body = str(section.get("body") or "").strip()
+        block = "\n".join(part for part in (heading, body) if part).strip()
+        if not block:
+            continue
+        haystack = normalize_keyword_for_match(block)
+        score = int(section.get("priority") or 0) * 10
+        for keyword in keyword_list:
+            if keyword and keyword in haystack:
+                score += 3 if " " in keyword else 1
+        if heading and re.search(r"\b(?:you will|you are|must|should|responsib|mission|test|quality|api|model|python|typescript|playwright|postman)\b", block, re.IGNORECASE):
+            score += 2
+        scored.append((score, idx, block))
+
+    if not scored:
+        return select_relevant_blocks(
+            text,
+            max_chars=max_chars,
+            keywords=keywords,
+            max_block_chars=900,
+        )
+
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    chosen: List[tuple[int, str]] = []
+    total = 0
+    seen: set[str] = set()
+    for score, idx, block in scored:
+        normalized_block = normalize_keyword_for_match(block)
+        if not normalized_block or normalized_block in seen:
+            continue
+        if score < 0 and chosen:
+            continue
+        projected = total + len(block) + (2 if chosen else 0)
+        if chosen and projected > max_chars:
+            continue
+        if not chosen and len(block) > max_chars:
+            continue
+        seen.add(normalized_block)
+        chosen.append((idx, block))
+        total = projected
+
+    if not chosen:
+        return select_relevant_blocks(
+            text,
+            max_chars=max_chars,
+            keywords=keywords,
+            max_block_chars=900,
+        )
+
+    chosen.sort(key=lambda item: item[0])
+    return merge_blocks((block for _, block in chosen), max_chars=max_chars)
 
 
 def get_offer_keywords_json(
@@ -572,6 +750,14 @@ def prepare_offer_text(
 
     if len(offer_text) <= max_chars:
         return offer_text
+
+    prioritized = _select_offer_sections(
+        offer_text,
+        max_chars=max_chars,
+        keywords=keywords,
+    )
+    if prioritized:
+        return prioritized
 
     # Use intelligent block selection if available
     if select_relevant_blocks_fn and keywords:

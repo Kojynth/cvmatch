@@ -136,6 +136,15 @@ and must stay usable on heterogeneous Windows/Linux machines.
   summary instead of stripping it from HTML/PDF output. The sentence should
   read naturally, echo the target company/offer, and remain grounded in
   profile-backed or offer-backed terms selected by the hierarchy above.
+- **Offer-only term placement contract (MANDATORY)**: pure offer-only terms
+  (supported by the offer but not directly evidenced in the profile) may
+  appear only inside the natural positioning sentence of the profile block.
+  They must NOT be rendered as proven hard skills, experience bullets, or
+  project facts unless profile evidence or a coherent implicit inference
+  supports them. Implicit inference is allowed when the profile already shows
+  adjacent evidence (for example Python + model benchmarking + AI project
+  context), but must remain phrased as positioning or transferable relevance,
+  not as a fabricated past responsibility.
 - **Photo invariant (MANDATORY)**: the profile photo must appear in the
   rendered CV regardless of template choice, user HTML edits, or history
   reopen — photo presence is a product invariant. When a user edits the
@@ -187,6 +196,16 @@ and must stay usable on heterogeneous Windows/Linux machines.
   may be inferred softly from employer/context text and used only as a minor
   ranking or wording bonus. It must never be a hard gate, never override
   stronger offer-skill/profile evidence, and never justify invented content.
+- **Offer keyword extraction contract (MANDATORY)**: offer-keyword extraction
+  must prioritize requirement-heavy sections first (`Role summary`, `What you
+  will do`, `About you`, `Ideal if`, responsibilities, stack/tools, required
+  skills). Marketing, culture, benefits, remote-policy, and hiring-process
+  sections are low-priority context only. They may inform sector/company tone
+  lightly, but must not dominate extracted keywords or downstream alignment.
+- **Explicit tool naming contract (MANDATORY)**: when the profile evidences
+  concrete QA or automation tools/frameworks, generated summary/skills/
+  highlights should prefer naming those tools explicitly over generic wording
+  like "outils d'automatisation" whenever space allows.
 
 ## Additional CV Contracts
 - **Final experience dedup contract (MANDATORY)**: every final CV payload path

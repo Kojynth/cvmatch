@@ -482,6 +482,100 @@ def _collect_candidate_keywords(
     return _dedup_preserve(terms)[:40]
 
 
+_PROFILE_TOOL_HINT_LEXICON = {
+    "api",
+    "apis",
+    "cypress",
+    "docker",
+    "fastapi",
+    "github",
+    "github actions",
+    "gitlab",
+    "jira",
+    "kubernetes",
+    "playwright",
+    "postman",
+    "pytest",
+    "python",
+    "rest api",
+    "selenium",
+    "sql",
+    "swagger",
+    "typescript",
+    "xray",
+}
+
+
+def _collect_profile_tool_hints_from_json(
+    profile_json: Dict[str, Any],
+    *,
+    max_items: int = 8,
+) -> List[str]:
+    if not isinstance(profile_json, dict):
+        return []
+
+    out: List[str] = []
+    seen: set[str] = set()
+
+    def looks_like_tool_hint(value: str) -> bool:
+        raw = str(value or "").strip()
+        if not raw or len(raw) > 40:
+            return False
+        normalized = re.sub(r"\s+", " ", raw).strip().lower()
+        if normalized in _PROFILE_TOOL_HINT_LEXICON:
+            return True
+        if any(ch in raw for ch in ("+", "#", "/", ".")):
+            return True
+        if re.fullmatch(r"[A-Z]{2,8}", raw):
+            return True
+        return False
+
+    def add(value: Any) -> None:
+        if len(out) >= max(1, int(max_items or 1)):
+            return
+        if value is None:
+            return
+        if isinstance(value, str):
+            fragments = re.split(r"[\n,;|]+", value)
+            for fragment in fragments:
+                text = str(fragment or "").strip(" -•\t")
+                key = text.lower()
+                if not text or key in seen or not looks_like_tool_hint(text):
+                    continue
+                seen.add(key)
+                out.append(text)
+                if len(out) >= max(1, int(max_items or 1)):
+                    break
+            return
+        if isinstance(value, list):
+            for item in value:
+                add(item)
+                if len(out) >= max(1, int(max_items or 1)):
+                    break
+            return
+        if isinstance(value, dict):
+            for key in (
+                "name",
+                "tool",
+                "technology",
+                "technologies",
+                "tech_stack",
+                "items",
+                "skills",
+                "skills_list",
+            ):
+                add(value.get(key))
+                if len(out) >= max(1, int(max_items or 1)):
+                    break
+
+    for key in ("skills", "tools", "technologies", "projects", "experiences", "experience"):
+        add(profile_json.get(key))
+        if len(out) >= max(1, int(max_items or 1)):
+            break
+
+    return out[: max(1, int(max_items or 1))]
+
+
 def _match_offer_keywords(
     offer_text: Optional[str], candidate_terms: List[str], max_items: int = 16
 ) -> List[str]:
@@ -2309,6 +2403,13 @@ class CVGenerationWorker(QThread):
             if isinstance(priority_terms, list) and priority_terms
             else ""
         )
+        profile_tool_hints = _collect_profile_tool_hints_from_json(
+            profile_json,
+            max_items=8,
+        )
+        profile_tool_block = (
+            ", ".join(profile_tool_hints) if profile_tool_hints else ""
+        )
         system_prompt = (
             "You are a professional CV summary writer. Return JSON only. "
             "Write a concise candidate-focused summary from PROFILE_JSON facts. "
@@ -2329,11 +2430,23 @@ PROFILE_JSON (source of truth):
 PRIORITY_OFFER_TERMS:
 {priority_terms_block or "<none>"}
 
+PROFILE_TOOL_HINTS:
+{profile_tool_block or "<none>"}
+
 OUTPUT RULES:
 - Return JSON only with the shape: {{"summary": "..."}}
 - summary: 1 to 2 sentences, concise, recruiter-facing, and not generic.
-- Keep the summary candidate-focused. Do not describe the employer or company.
-- Reuse PRIORITY_OFFER_TERMS only when PROFILE_JSON supports them.
+- sentence 1 must stay candidate-focused and grounded in PROFILE_JSON facts.
+- sentence 2 is optional and may be a short natural positioning sentence that
+  mentions TARGET_COMPANY and offer vocabulary, including offer-only terms,
+  but only as positioning/relevance, not as a claimed past responsibility.
+- Do not describe employer history, mission, culture, benefits, or marketing copy.
+- Reuse PROFILE-backed PRIORITY_OFFER_TERMS directly in sentence 1.
+- Sentence 2 may reuse offer-only PRIORITY_OFFER_TERMS as positioning language
+  when they fit TARGET_COMPANY, but must not turn them into unsupported facts.
+- If PROFILE_JSON evidences concrete QA/automation tools or frameworks, prefer
+  naming them explicitly instead of generic wording like "test automation tools".
+- Prefer PROFILE_TOOL_HINTS when they help make the summary more specific.
 - Keep proper nouns, company names, product names, acronyms, and locations unchanged.
 - Write the summary fully in LANGUAGE.
 - If CURRENT_SUMMARY is empty, generic, or in the wrong language, replace it with a better summary.
@@ -4695,7 +4808,7 @@ OUTPUT RULES:
             missing_ratio,
         )
 
-    def _collect_offer_keywords(self) -> List[str]:
+    def _collect_offer_keywords(self, *, include_candidate_terms: bool = True) -> List[str]:
         from ..utils.offer_keywords_utils import (
             DEFAULT_ANALYSIS_KEY_FIELDS,
             DEFAULT_OFFER_KEY_FIELDS,
@@ -4740,30 +4853,30 @@ OUTPUT RULES:
         if job_title:
             keywords.extend(part for part in job_title.split() if part)
 
-        candidate_terms = _collect_candidate_keywords(self.profile_data)
-        keywords.extend(candidate_terms)
+        if include_candidate_terms:
+            candidate_terms = _collect_candidate_keywords(self.profile_data)
+            keywords.extend(candidate_terms)
 
         return _dedup_preserve(
             [k for k in keywords if isinstance(k, str) and k.strip()]
         )[:60]
 
-    def _prepare_offer_text(self, *, max_chars: int) -> str:
-        offer_text = extract_offer_text_from_offer_data(
-            self.offer_data if isinstance(self.offer_data, dict) else {}
-        )
-        offer_text = offer_text or ""
-        if not offer_text:
-            return ""
-        if len(offer_text) <= max_chars:
-            return offer_text
+    def _prepare_offer_text(
+        self,
+        *,
+        max_chars: int,
+        include_candidate_terms: bool = True,
+    ) -> str:
+        from ..utils.offer_enrichment import prepare_offer_text
         from ..utils.text_chunking import select_relevant_blocks
 
-        keywords = self._collect_offer_keywords()
-        return select_relevant_blocks(
-            offer_text,
+        return prepare_offer_text(
+            self.offer_data if isinstance(self.offer_data, dict) else {},
             max_chars=max_chars,
-            keywords=keywords,
-            max_block_chars=900,
+            keywords=self._collect_offer_keywords(
+                include_candidate_terms=include_candidate_terms
+            ),
+            select_relevant_blocks_fn=select_relevant_blocks,
         )
 
     def _prepare_cv_html(self, cv_html: str, *, max_chars: int) -> str:
@@ -4840,7 +4953,10 @@ OUTPUT RULES:
         self.offer_data["analysis"] = analysis
 
     def _build_offer_keywords_messages(self) -> Dict[str, str]:
-        offer_text = self._prepare_offer_text(max_chars=3200)
+        offer_text = self._prepare_offer_text(
+            max_chars=3200,
+            include_candidate_terms=False,
+        )
         job_title = self.offer_data.get("job_title") or ""
         company = self.offer_data.get("company") or ""
         language_code = self._resolve_language_code()

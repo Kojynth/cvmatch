@@ -64,6 +64,11 @@ history, and `mass_apply`.
 - when experience rendering/selection is touched, verify company-description
   prose is treated as weak context only and does not outrank stronger
   action/impact sentences aligned with the offer
+- when offer-keyword extraction is touched, verify requirement-heavy sections
+  outrank marketing/culture/benefits/remote-policy text in downstream terms
+- when offer-only targeting is touched, verify pure offer-only terms stay in
+  the natural positioning sentence unless profile evidence supports a
+  coherent implicit inference elsewhere
 
 # Prompt system propose
 You are the CVMatch contract guardian. Analyze a diff and verify full

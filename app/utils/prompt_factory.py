@@ -59,6 +59,10 @@ JOB_OFFER_TEXT:
   - Keep lists short (max 12 items per list).
   - Only extract items that are clearly supported by JOB_OFFER_TEXT; do not pad lists to meet a minimum count.
   - Aim for keywords>=8, skills>=4, tools>=2 only when the offer text clearly provides that many distinct items.
+  - Prioritize requirement-heavy sections first: role summary, responsibilities,
+    requirements, stack/tools, "about you", and ideal profile.
+  - Treat company marketing, culture, benefits, remote policy, and hiring
+    process as low-priority context unless they reveal a real domain/sector term.
   - Use short noun phrases (2-5 words).
   - skills = hard skills/tech stack only.
   - soft_skills = interpersonal traits only.
@@ -67,6 +71,8 @@ JOB_OFFER_TEXT:
   - keyword_families = map key requirement -> close terms/synonyms/acronyms used in this domain.
   - keyword_families values must stay factual and aligned with JOB_OFFER_TEXT.
   - For each keyword family, provide 2-6 close terms max, no generic fluff.
+  - Preserve exact tool/framework names when explicitly present (for example
+    Playwright, Postman, Python, TypeScript, dbt, Terraform).
   - language must match LANGUAGE; translate if the offer is in another language.
   - Do not mix languages inside the same extracted item.
   - job_title/company should mirror JOB_TITLE/COMPANY when provided.
@@ -149,8 +155,14 @@ OUTPUT RULES:
 - render_hints.section_order/emphasis/tone are structured hints.
 - Do not include review or instruction text in any field (no critique, no "this CV needs", no "should").
 - Summary must be candidate-focused (role, strengths, impact). Do not describe employer mission/history.
+- Offer-only vocabulary not grounded in PROFILE_JSON may appear only in a short
+  natural closing positioning sentence of the summary. Do not present pure
+  offer-only terms as proven skills, projects, or experience facts.
 - If MATCHED_KEYWORDS is present, ensure those terms appear in summary/skills/experience when relevant.
 - If RETRY_GUIDANCE is present, treat it as high-priority rewrite direction.
+- If PROFILE_JSON evidences concrete QA/automation tools or frameworks, name
+  them explicitly instead of generic wording like "automation tools" whenever
+  space allows.
 - MANDATORY for each experience item: rewrite entirely — never copy source description text verbatim.
   * summary: 1 compact sentence (scope + context, offer-aligned vocabulary).
   * highlights: 2-4 short plain strings; each must start with a strong action verb,
@@ -190,7 +202,8 @@ OUTPUT RULES:
   * Bullet structure preference when facts support it: "action verb + what was done + measurable or qualitative result/impact".
   * If exact metrics are absent but PROFILE_JSON makes the operational effect clear, you may express a qualitative impact without inventing numbers.
   * Include quantitative evidence when available: team size, percentages, user count, volumes, time saved, revenue figures.
-  * Mention the target company (COMPANY) at least once — in summary or in a highlight — to reinforce personalization; do not invent facts.
+  * Mention the target company (COMPANY) at least once — preferably in a short natural positioning sentence in the summary — to reinforce personalization; do not invent facts.
+  * Do not insert pure offer-only terms into skills/highlights as if they were already proven by PROFILE_JSON. Pure offer-only targeting language belongs in the summary positioning sentence only.
 """.strip()
 
     if stage == "final":
