@@ -277,12 +277,7 @@ def _skillish_score(
     tokens = norm.split()
     score = 0
 
-    for lemma in profile_lemmas:
-        if not lemma:
-            continue
-        if lemma == norm or (len(lemma) >= 3 and (lemma in norm or norm in lemma)):
-            score += 3
-            break
+    score += _profile_alignment_bonus(norm, profile_lemmas)
 
     # R2 — user explicitly prefers phrase groups over bare tokens
     # ("ça serait mieux d'avoir des ensembles de mots"). Multi-word compounds
@@ -315,7 +310,76 @@ def _skillish_score(
     return score
 
 
-def _iter_profile_skill_fallback(profile_json: Dict[str, Any] | None) -> List[str]:
+def _profile_alignment_bonus(norm: str, profile_lemmas: set[str]) -> int:
+    for lemma in profile_lemmas:
+        if not lemma:
+            continue
+        if lemma == norm or (len(lemma) >= 3 and (lemma in norm or norm in lemma)):
+            return 3
+    return 0
+
+
+def _summary_focus_context_tokens(values: Iterable[Any]) -> set[str]:
+    tokens: set[str] = set()
+    for raw in values or []:
+        norm = _normalize_marker(raw)
+        if not norm:
+            continue
+        for token in norm.split():
+            if token in _SUMMARY_FRAGMENT_STOPWORDS:
+                continue
+            if token in _POSITIONING_HARD_BLOCKLIST:
+                continue
+            if token in _ROLE_HEAD_TOKENS and len(token) > 2:
+                continue
+            if len(token) >= 3 or token in {"qa", "ui", "ux", "ml", "ai", "bi"}:
+                tokens.add(token)
+    return tokens
+
+
+def _score_profile_fallback_term(
+    text: str,
+    *,
+    offer_terms: Iterable[Any],
+    job_title: str = "",
+) -> int:
+    norm = _normalize_marker(text)
+    if not norm:
+        return 0
+
+    tokens = {token for token in norm.split() if token}
+    offer_norms = [
+        _normalize_marker(item)
+        for item in (offer_terms or [])
+        if _normalize_marker(item)
+    ]
+    role_tokens = _summary_focus_context_tokens([job_title])
+    score = 0
+
+    for offer_norm in offer_norms:
+        if offer_norm == norm:
+            score += 6
+            continue
+        if offer_norm and (offer_norm in norm or norm in offer_norm):
+            score += 4
+            continue
+        overlap = len(tokens & {token for token in offer_norm.split() if token})
+        if overlap:
+            score += min(3, overlap)
+
+    if role_tokens:
+        score += min(2, len(tokens & role_tokens))
+    if len(tokens) >= 2:
+        score += 1
+    return score
+
+
+def _iter_profile_skill_fallback(
+    profile_json: Dict[str, Any] | None,
+    *,
+    offer_terms: Iterable[Any] = (),
+    job_title: str = "",
+) -> List[str]:
     """Ordered profile skill labels for Tier-3 fallback when offer yields too few candidates.
 
     Accepts three shapes seen in the codebase:
@@ -327,7 +391,7 @@ def _iter_profile_skill_fallback(profile_json: Dict[str, Any] | None) -> List[st
     out: List[str] = []
     if not isinstance(profile_json, dict):
         return out
-    for key in ("skills", "technologies", "tools"):
+    for key in ("skills", "soft_skills", "technologies", "tools"):
         items = profile_json.get(key)
         if not isinstance(items, list):
             continue
@@ -343,7 +407,32 @@ def _iter_profile_skill_fallback(profile_json: Dict[str, Any] | None) -> List[st
                     for sub in nested:
                         if isinstance(sub, str) and sub.strip():
                             out.append(sub.strip())
-    return out
+    deduped: List[str] = []
+    seen: set[str] = set()
+    for item in out:
+        norm = _normalize_marker(item)
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        deduped.append(item)
+    if not deduped:
+        return deduped
+
+    ranked = []
+    for order, item in enumerate(deduped):
+        ranked.append(
+            (
+                _score_profile_fallback_term(
+                    item,
+                    offer_terms=offer_terms,
+                    job_title=job_title,
+                ),
+                order,
+                item,
+            )
+        )
+    ranked.sort(key=lambda payload: (-payload[0], payload[1]))
+    return [payload[2] for payload in ranked]
 
 
 _DETERMINISTIC_APPENDIX_PREFIXES = tuple(
@@ -444,6 +533,7 @@ def collect_targeted_offer_terms(
     profile_json: Dict[str, Any] | None = None,
     max_terms: int = 3,
     excluded_terms: Iterable[Any] = (),
+    job_title: str = "",
 ) -> List[str]:
     """Select offer terms to surface in the targeted summary sentence.
 
@@ -468,11 +558,13 @@ def collect_targeted_offer_terms(
     }
     target_count = max(1, int(max_terms or 1))
     profile_lemmas = _profile_skill_vocabulary(profile_json)
+    offer_terms_list = list(offer_terms or [])
 
-    scored: List[tuple[int, int, str, str]] = []
+    generation_scored: List[tuple[int, int, str, str]] = []
+    offer_only: List[tuple[int, str, str]] = []
     seen: set[str] = set()
 
-    for order, raw in enumerate(offer_terms or []):
+    for order, raw in enumerate(offer_terms_list):
         text = _clean_candidate_term(raw)
         if not text or len(text) > 72:
             continue
@@ -488,14 +580,30 @@ def collect_targeted_offer_terms(
             continue
         seen.add(norm)
         score = _skillish_score(text, norm, profile_lemmas=profile_lemmas)
-        scored.append((score, order, text, norm))
+        if _profile_alignment_bonus(norm, profile_lemmas) > 0:
+            generation_scored.append((score, order, text, norm))
+        else:
+            offer_only.append((order, text, norm))
 
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    selected: List[str] = [text for _s, _o, text, _n in scored[:target_count]]
+    generation_scored.sort(key=lambda item: (-item[0], item[1]))
+    selected: List[str] = [text for _s, _o, text, _n in generation_scored[:target_count]]
+    if len(selected) < target_count:
+        selected_norms = {_normalize_marker(text) for text in selected}
+        for _order, text, norm in offer_only:
+            if len(selected) >= target_count:
+                break
+            if norm in selected_norms:
+                continue
+            selected.append(text)
+            selected_norms.add(norm)
 
     if len(selected) < target_count:
         selected_norms = {_normalize_marker(text) for text in selected}
-        for fallback in _iter_profile_skill_fallback(profile_json):
+        for fallback in _iter_profile_skill_fallback(
+            profile_json,
+            offer_terms=offer_terms_list,
+            job_title=job_title,
+        ):
             if len(selected) >= target_count:
                 break
             text = _clean_candidate_term(fallback)

@@ -120,14 +120,3 @@ body {
     align-items: flex-start;
   }
 }
-
-@media print {
-  body {
-    padding: 0;
-    background: #ffffff;
-  }
-  .cv-container {
-    border: none;
-    padding: 0;
-  }
-}

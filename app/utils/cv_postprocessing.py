@@ -1801,6 +1801,108 @@ def _merge_experience_entries(
             existing[field] = incoming[field]
 
 
+def _experience_fuzzy_fingerprint(entry: Dict[str, Any]) -> str:
+    """Looser identity than `_experience_identity`: (company, title_prefix).
+
+    The strict identity tuple `company|title|start_date|end_date` used by
+    `_reconcile_experience_section` breaks whenever two retries emit the same
+    role with different date formatting (e.g. `09/2021` vs `2021-09`). This
+    fingerprint ignores dates and trims the title to its first three
+    normalized tokens so minor wording drift still collapses.
+    """
+    company = _normalize_for_match(entry.get("company")) or ""
+    title_norm = _normalize_for_match(entry.get("title")) or ""
+    title_prefix = " ".join(title_norm.split()[:3])
+    if not company and not title_prefix:
+        return ""
+    return f"{company}|{title_prefix}"
+
+
+def _experience_period_fingerprint(entry: Dict[str, Any]) -> Tuple[str, str]:
+    date_support = _derive_profile_date_support(
+        entry.get("start_date") or "",
+        entry.get("end_date") or "",
+    )
+    start_norm = date_support.get("start_date_norm") or _normalize_for_match(
+        entry.get("start_date")
+    )
+    end_norm = date_support.get("end_date_norm") or _normalize_for_match(
+        entry.get("end_date")
+    )
+    return start_norm, end_norm
+
+
+def _experience_periods_compatible(
+    left: Dict[str, Any], right: Dict[str, Any]
+) -> bool:
+    """Merge only when periods match or one side omits the conflicting date."""
+
+    left_start, left_end = _experience_period_fingerprint(left)
+    right_start, right_end = _experience_period_fingerprint(right)
+    if left_start and right_start and left_start != right_start:
+        return False
+    if left_end and right_end and left_end != right_end:
+        return False
+    return True
+
+
+def _dedup_experience_entries(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Collapse cross-entry duplicates that survived reconciliation.
+
+    Entries with the same fuzzy fingerprint and compatible normalized period
+    are merged via
+    `_merge_experience_entries` (longer summary wins, highlights union, first
+    non-empty date wins). Entries without a usable fingerprint are kept
+    as-is to preserve legitimate placeholder rows.
+    """
+    if not isinstance(entries, list):
+        return entries
+    survivors: List[Dict[str, Any]] = []
+    by_fingerprint: Dict[str, List[Dict[str, Any]]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            survivors.append(entry)
+            continue
+        fingerprint = _experience_fuzzy_fingerprint(entry)
+        if not fingerprint:
+            survivors.append(entry)
+            continue
+        bucket = by_fingerprint.get(fingerprint)
+        if bucket is None:
+            by_fingerprint[fingerprint] = [entry]
+            survivors.append(entry)
+            continue
+        merged = False
+        for existing in bucket:
+            if not _experience_periods_compatible(existing, entry):
+                continue
+            _merge_experience_entries(existing, entry)
+            merged = True
+            break
+        if merged:
+            continue
+        bucket.append(entry)
+        survivors.append(entry)
+    return survivors
+
+
+def _dedup_experience_sections_in_place(cv_json: Dict[str, Any]) -> None:
+    if not isinstance(cv_json, dict):
+        return
+    for section in ("experience", "experiences"):
+        entries = cv_json.get(section)
+        if not isinstance(entries, list):
+            continue
+        deduped_entries = _dedup_experience_entries(entries)
+        cv_json[section] = deduped_entries
+        for entry in deduped_entries:
+            if not isinstance(entry, dict):
+                continue
+            highlights = entry.get("highlights")
+            if isinstance(highlights, list) and len(highlights) > 1:
+                entry["highlights"] = _dedup_fuzzy_highlights(highlights)
+
+
 def _reconcile_experience_section(
     cv_json: Dict[str, Any],
     profile_json: Dict[str, Any],
@@ -3413,6 +3515,9 @@ def coerce_generated_cv_payload(
         offer_terms=offer_terms,
         job_title=job_title,
     )
+    # Reconcile may assign raw profile date strings (e.g. 'Présent' → 'PRESENT')
+    # onto entry.end_date, clobbering the earlier localization. Re-localize.
+    _normalize_experience_date_formats(merged, language_code=language_code)
 
     # Apply keyword alignment if provided
     if keyword_alignment_fn:
@@ -3452,6 +3557,7 @@ def coerce_generated_cv_payload(
         offer_terms=offer_terms,
         job_title=job_title,
     )
+    _normalize_experience_date_formats(merged, language_code=language_code)
 
     # Second offer-adaptation pass: rebalance/reconcile may overwrite
     # earlier keyword injections in summary/experience.
@@ -3472,6 +3578,7 @@ def coerce_generated_cv_payload(
                 offer_terms=offer_terms,
                 job_title=job_title,
             )
+            _normalize_experience_date_formats(merged, language_code=language_code)
             rebalance_cv_narrative(
                 merged,
                 profile_json=profile_json,
@@ -3487,6 +3594,7 @@ def coerce_generated_cv_payload(
                 offer_terms=offer_terms,
                 job_title=job_title,
             )
+            _normalize_experience_date_formats(merged, language_code=language_code)
 
     if callable(classify_cv_payload_source):
         try:
@@ -3507,15 +3615,17 @@ def coerce_generated_cv_payload(
         except Exception as exc:
             logger.warning("Final CV candidate source diagnostic failed: %s", exc)
 
+    _dedup_experience_sections_in_place(merged)
     _enforce_single_page_budget(merged)
     return merged
 
 
 # Soft cap for total bullet count across all experience entries. At typical
-# A4 density (~10.5pt, normal margins, 4-6 roles, summary + skills + education),
-# 22 bullets is a safe upper bound before WeasyPrint would overflow the page.
-# The CSS scale fallback (``--print-scale`` in ``ONE_PAGE_PRINT_CSS``) covers
-# minor overshoots; this budget prevents large overshoots that would get clipped.
+# A4 density (~10.5pt, normal margins, 3-4 roles, summary + skills + project
+# + education/certifications), 22 bullets remains a safe upper bound before
+# the measured fit-to-page pass has to compress too aggressively. The render
+# pipeline now prefers prioritized content + measured compression over hard
+# clipping, and this budget keeps experience verbosity within that envelope.
 _ONE_PAGE_TOTAL_BULLET_BUDGET = 22
 _ONE_PAGE_MAX_BULLETS_PER_ROLE = 4
 
@@ -3523,9 +3633,9 @@ _ONE_PAGE_MAX_BULLETS_PER_ROLE = 4
 def _enforce_single_page_budget(cv_json: Dict[str, Any]) -> None:
     """Trim experience highlights so the rendered CV still fits one A4 page.
 
-    Safety net complementing the CSS hard clip (``height: 297mm`` +
-    ``overflow: hidden``) in ``ONE_PAGE_PRINT_CSS``: drops the LAST bullet of
-    the LONGEST role iteratively until total bullet count is within budget.
+    Safety net complementing the measured fit-to-page render pass: drops the
+    LAST bullet of the LONGEST role iteratively until total bullet count is
+    within budget.
     Each role keeps at least one bullet (preserves signal per experience).
     Also caps each role at ``_ONE_PAGE_MAX_BULLETS_PER_ROLE``.
     """
@@ -3874,12 +3984,26 @@ def enforce_cv_offer_adaptation(
         if isinstance(summary_term_limit, int) and summary_term_limit > 0
         else 3
     )
-    candidate_summary_terms = missing_summary_terms or aligned_terms
+    aligned_summary_terms = _prepare_terms(aligned_terms)
+    candidate_summary_terms = missing_summary_terms or aligned_summary_terms
+    summary_supported_terms: List[str] = []
+    if isinstance(profile_json, dict) and profile_json:
+        support_seed_terms = aligned_summary_terms or candidate_summary_terms
+        supported_summary_buckets = collect_supported_skill_terms(
+            support_seed_terms,
+            profile_json,
+            require_profile_evidence=True,
+        )
+        summary_supported_terms = _dedup_preserve(
+            list(supported_summary_buckets.get("technical") or [])
+            + list(supported_summary_buckets.get("soft") or [])
+        )
     targeted_summary_terms = collect_targeted_offer_terms(
-        candidate_summary_terms,
+        summary_supported_terms + candidate_summary_terms,
         profile_json=profile_json if isinstance(profile_json, dict) else None,
         max_terms=summary_focus_limit,
         excluded_terms=[job_title, company],
+        job_title=job_title,
     )
     summary_missing_target_signal = not any(
         normalized_term_present(summary_norm, normalize_keyword_for_match(term))

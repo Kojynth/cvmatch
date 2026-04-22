@@ -46,6 +46,19 @@ history, and `mass_apply`.
   the CV quality contract: ATS readability, one-language output, reverse
   chronology, consistent dates, explicit durations when reliable, 2-4 concise
   bullets when supported, and grounded keyword usage instead of stuffing
+- when preview/export/rendering is touched, also verify the one-page render
+  contract: measured fit-to-page compression (no `overflow: hidden` crop,
+  no forced `body` A4 height), a single canonical print block with A4 margins,
+  explicit clickable contact header links with smart labels (no `Lien 1` /
+  `Link 1` placeholders), explicit candidature target subtitle semantics
+  (`Poste vise` / `Target role`), and preservation of structured sections
+  such as featured project and certifications when present in one-page CV JSON
+- when experience dedup/postprocessing is touched, verify both sides of the
+  contract: duplicate retries/date-format variants collapse, but same
+  company/title with conflicting normalized periods do NOT collapse
+- when summary adaptation/positioning is touched, verify the candidate pool
+  uses profile-backed aligned skills/talents first; cross-domain offer-only
+  terms may remain, but must not evict better grounded aligned signal
 
 # Prompt system propose
 You are the CVMatch contract guardian. Analyze a diff and verify full

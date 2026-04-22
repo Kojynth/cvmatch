@@ -12,9 +12,21 @@
   - history/export consistency
   - deterministic generation fallback
   - PII-safe logging
-  - one-page CV output (CSS hard clip `height: 297mm` + `overflow: hidden`
-    in `ONE_PAGE_PRINT_CSS` AND `_enforce_single_page_budget` content
-    backstop in `cv_postprocessing.py`)
+  - one-page CV output via prioritized content -> HTML render -> measured
+    fit -> controlled compression -> PDF export; `ONE_PAGE_PRINT_CSS`
+    must keep a single print block with A4 margins, no forced `body`
+    height, no `overflow: hidden`, and `break-inside: avoid` on structured
+    entries; `_enforce_single_page_budget` remains the experience-density
+    backstop in `cv_postprocessing.py`
+  - header render contract: actionable contacts are explicit links
+    (`mailto:`, `tel:`, LinkedIn, GitHub, portfolio), placeholder labels
+    like `Lien 1` are forbidden, and the target subtitle must read as a
+    candidature target (`Poste vise` / `Target role`) rather than an
+    employer label
+  - one-page content allocation contract: real summary (max 3 short lines),
+    3-5 credible technical skills, 2-3 impacts per role, one featured
+    project, compact certifications, and no fallback to a vague
+    `additional relevant details` blob when structured sections exist
   - positioning-sentence word-sourcing hierarchy:
     **Generation > Offer-skill > Profile-verbatim**, with hard-reject of
     verbs, prepositions, adverbs, and generic field nouns (see
@@ -34,6 +46,14 @@
     alignment-retry loop includes a final
     `_repair_clipped_bullets` + `_dedup_fuzzy_highlights` pass before
     returning success
+- final experience dedup contract: every final payload path must run
+  cross-entry dedup before one-page budgeting/export, but dedup may only
+  merge retries with compatible normalized periods; same company/title with
+  conflicting periods must survive as distinct stints
+- targeted-summary candidate contract: the positioning sentence must inspect
+  profile-backed aligned skills/talents first, not just
+  `missing_summary_terms`; cross-domain offer-only terms are allowed, but
+  they must not evict better grounded aligned signal
 - High-risk files:
   - `app/workers/llm_worker.py`
   - `app/workers/qwen_manager.py`

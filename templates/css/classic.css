@@ -116,14 +116,3 @@ body {
     padding: 20px;
   }
 }
-
-@media print {
-  body {
-    padding: 0;
-    background: #ffffff;
-  }
-  .cv-container {
-    box-shadow: none;
-    border: none;
-  }
-}

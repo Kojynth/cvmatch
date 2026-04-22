@@ -15,6 +15,18 @@ Recommended invocation order:
 - `subagents/mass-apply-worker.md` only for job sources, secrets, review, or
   bulk apply flows.
 
+Current render/export contracts to preserve across agent runs:
+- one-page CVs use measured fit-to-page compression, not CSS clipping
+- final header contact methods are explicit links; placeholder link labels are forbidden
+- target subtitle semantics are explicit candidature semantics:
+  `Poste vise: {job_title} | {company}` / `Target role: {job_title} | {company}`,
+  not an employer-looking label
+- print/PDF contract = single canonical print block, A4 margins, no forced
+  `body` A4 height, no `overflow: hidden`, and `break-inside: avoid` on
+  structured experience/project/education blocks
+- one-page render must keep structured sections (summary, skills, experience,
+  featured project, certifications) instead of flattening content into a blob
+
 If the execution environment does not support native sub-agent spawning, invoke
 these definitions manually: copy the target sub-agent prompt, preserve its file
 scope and guard-fous, then run only the targeted checks listed in the file.

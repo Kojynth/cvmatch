@@ -56,31 +56,182 @@ LETTER_TEMPLATES = {
     },
 }
 
+CV_BASE_LAYOUT_CSS = """
+:root {
+  --print-scale: 1;
+}
+.cv-container {
+  width: min(100%, 186mm) !important;
+  max-width: 186mm !important;
+  overflow: visible !important;
+}
+.contact-item {
+  text-decoration: none;
+  align-items: baseline !important;
+}
+.contact-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.contact-value {
+  overflow-wrap: anywhere;
+}
+.summary-content {
+  display: grid;
+  gap: 6px;
+}
+.summary-line,
+.summary-strengths,
+.project-line {
+  margin: 0;
+}
+.inline-label {
+  font-weight: 700;
+  margin-right: 6px;
+}
+.skill-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.skill-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 12px;
+  line-height: 1.2;
+}
+.experience-highlights,
+.certification-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.entry,
+.experience-entry,
+.education-entry,
+.project-entry {
+  break-inside: avoid;
+}
+:root[data-page-fit="compact"] .fit-compact-hide,
+:root[data-page-fit="tight"] .fit-compact-hide,
+:root[data-page-fit="ultra"] .fit-compact-hide,
+:root[data-page-fit="tight"] .fit-tight-hide,
+:root[data-page-fit="ultra"] .fit-tight-hide,
+:root[data-page-fit="ultra"] .fit-ultra-hide {
+  display: none !important;
+}
+:root[data-page-fit="compact"] .cv-section {
+  margin-top: 16px !important;
+}
+:root[data-page-fit="compact"] .cv-header {
+  padding-bottom: 12px !important;
+}
+:root[data-page-fit="compact"] .cv-body {
+  padding-top: 20px !important;
+  padding-bottom: 24px !important;
+}
+:root[data-page-fit="compact"] .section-content,
+:root[data-page-fit="compact"] .dynamic-content {
+  font-size: 13px !important;
+  line-height: 1.55 !important;
+}
+:root[data-page-fit="tight"] .cv-section {
+  margin-top: 14px !important;
+}
+:root[data-page-fit="tight"] .cv-header,
+:root[data-page-fit="tight"] .cv-body {
+  padding-left: 22px !important;
+  padding-right: 22px !important;
+}
+:root[data-page-fit="tight"] .section-content,
+:root[data-page-fit="tight"] .dynamic-content {
+  font-size: 12.5px !important;
+  line-height: 1.45 !important;
+}
+:root[data-page-fit="tight"] .skill-chip {
+  padding: 3px 8px !important;
+  font-size: 11px !important;
+}
+:root[data-page-fit="ultra"] .cv-section {
+  margin-top: 12px !important;
+}
+:root[data-page-fit="ultra"] .cv-header,
+:root[data-page-fit="ultra"] .cv-body {
+  padding-left: 18px !important;
+  padding-right: 18px !important;
+}
+:root[data-page-fit="ultra"] .section-content,
+:root[data-page-fit="ultra"] .dynamic-content {
+  font-size: 12px !important;
+  line-height: 1.35 !important;
+}
+:root[data-page-fit="ultra"] .skill-chip {
+  padding: 2px 7px !important;
+  font-size: 10.5px !important;
+}
+"""
+
 ONE_PAGE_PRINT_CSS = """
 @page {
   size: A4;
-  margin: 0;
+  margin: 12mm;
 }
 @media print {
   :root {
     --print-scale: 1;
   }
+  * {
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
   html,
   body {
-    width: 210mm;
-    height: 297mm;
     margin: 0;
     padding: 0;
-    overflow: hidden;
-    background: #ffffff;
+    background: #ffffff !important;
+  }
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
   .cv-container,
   .letter-container {
+    width: calc(186mm / var(--print-scale));
+    max-width: calc(186mm / var(--print-scale));
     margin: 0 auto !important;
-    width: calc(100% / var(--print-scale));
-    max-width: calc(100% / var(--print-scale));
     transform: scale(var(--print-scale));
     transform-origin: top left;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+  }
+  .cv-header,
+  .letter-header,
+  .contact-item {
+    background: transparent !important;
+  }
+  .contact-item {
+    border: none !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+  }
+  .cv-section,
+  .entry,
+  .experience-entry,
+  .education-entry,
+  .project-entry {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  a {
+    color: inherit !important;
+    text-decoration: none !important;
   }
 }
 """
@@ -115,6 +266,97 @@ ATS_SAFE_PRINT_CSS = """
 """
 
 
+CV_AUTO_FIT_SCRIPT = """
+(() => {
+  const PX_PER_MM = 96 / 25.4;
+  const PAGE_WIDTH = 210 * PX_PER_MM;
+  const PAGE_HEIGHT = 297 * PX_PER_MM;
+  const PAGE_MARGIN = 12 * PX_PER_MM;
+  const TARGET_WIDTH = PAGE_WIDTH - (PAGE_MARGIN * 2);
+  const TARGET_HEIGHT = PAGE_HEIGHT - (PAGE_MARGIN * 2);
+  const TIERS = ["base", "compact", "tight", "ultra"];
+
+  function fitToPage() {
+    const root = document.documentElement;
+    const container =
+      document.querySelector(".cv-container") ||
+      document.querySelector(".letter-container") ||
+      document.body;
+    if (!container) {
+      return { tier: "base", scale: 1 };
+    }
+
+    const measure = () => {
+      const rect = container.getBoundingClientRect();
+      return {
+        height: Math.max(container.scrollHeight || 0, Math.ceil(rect.height || 0)),
+        width: Math.max(container.scrollWidth || 0, Math.ceil(rect.width || 0)),
+      };
+    };
+
+    root.dataset.pageFit = "base";
+    root.style.setProperty("--print-scale", "1");
+
+    let metrics = measure();
+    for (const tier of TIERS) {
+      root.dataset.pageFit = tier;
+      metrics = measure();
+      if (metrics.height <= TARGET_HEIGHT && metrics.width <= TARGET_WIDTH) {
+        root.style.setProperty("--print-scale", "1");
+        return {
+          tier,
+          scale: 1,
+          height: metrics.height,
+          width: metrics.width,
+          targetHeight: TARGET_HEIGHT,
+          targetWidth: TARGET_WIDTH,
+        };
+      }
+    }
+
+    let scale = Math.min(
+      1,
+      TARGET_HEIGHT / Math.max(metrics.height, 1),
+      TARGET_WIDTH / Math.max(metrics.width, 1),
+    );
+    if (!Number.isFinite(scale) || scale <= 0) {
+      scale = 1;
+    }
+    scale = Math.max(scale, 0.94);
+    root.style.setProperty("--print-scale", scale.toFixed(3));
+    return {
+      tier: root.dataset.pageFit || "ultra",
+      scale,
+      height: metrics.height,
+      width: metrics.width,
+      targetHeight: TARGET_HEIGHT,
+      targetWidth: TARGET_WIDTH,
+    };
+  }
+
+  let scheduled = false;
+  function scheduleFit() {
+    if (scheduled) {
+      return;
+    }
+    scheduled = true;
+    window.requestAnimationFrame(() => {
+      scheduled = false;
+      fitToPage();
+    });
+  }
+
+  window.__cvmatchFitToPage = fitToPage;
+  document.addEventListener("DOMContentLoaded", scheduleFit, { once: true });
+  window.addEventListener("load", scheduleFit);
+  window.addEventListener("resize", scheduleFit);
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(scheduleFit).catch(() => {});
+  }
+})();
+"""
+
+
 _FILENAME_UNSAFE_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 
 
@@ -135,6 +377,51 @@ def _sanitize_export_filename_part(value: Any, fallback: str) -> str:
     if not text:
         return "export"
     return text
+
+
+def _strip_css_media_blocks(css_content: str, media_name: str) -> str:
+    source = str(css_content or "")
+    target = f"@media {media_name}".lower()
+    cursor = 0
+    output: list[str] = []
+
+    while cursor < len(source):
+        lower_slice = source[cursor:].lower()
+        relative = lower_slice.find(target)
+        if relative < 0:
+            output.append(source[cursor:])
+            break
+
+        start = cursor + relative
+        output.append(source[cursor:start])
+        brace_start = source.find("{", start)
+        if brace_start < 0:
+            cursor = start + len(target)
+            continue
+
+        depth = 0
+        end = brace_start
+        while end < len(source):
+            char = source[end]
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    end += 1
+                    break
+            end += 1
+
+        cursor = end
+
+    return "".join(output)
+
+
+def _sanitize_cv_template_css(css_content: str) -> str:
+    sanitized = _strip_css_media_blocks(css_content, "print")
+    sanitized = re.sub(r"overflow\s*:\s*hidden\s*;", "", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\n{3,}", "\n\n", sanitized)
+    return sanitized.strip()
 
 
 def _build_fallback_css(template_name: str) -> str:
@@ -1702,18 +1989,22 @@ class TemplatePreviewWindow(QMainWindow):
                 css_content = _build_fallback_css(template_name)
                 logger.warning(f"Fichier CSS non trouvé: {css_file} - fallback appliqué")
 
-            css_content = f"{css_content}\n{ATS_SAFE_PRINT_CSS}"
+            css_content = _sanitize_cv_template_css(css_content)
+            css_chunks = [css_content, CV_BASE_LAYOUT_CSS]
             if self.force_single_page:
-                css_content = f"{css_content}\n{ONE_PAGE_PRINT_CSS}"
+                css_chunks.append(ONE_PAGE_PRINT_CSS)
+            css_content = "\n".join(chunk for chunk in css_chunks if chunk)
 
             # Injecter le CSS dans le HTML
             if "<head>" in html_content:
                 css_tag = f"<style>\n{css_content}\n</style>"
-                html_content = html_content.replace("<head>", f"<head>\n{css_tag}")
+                script_tag = f"<script>\n{CV_AUTO_FIT_SCRIPT}\n</script>"
+                html_content = html_content.replace("<head>", f"<head>\n{css_tag}\n{script_tag}")
             else:
                 # Si pas de head, ajouter au début
                 css_tag = f"<style>\n{css_content}\n</style>\n"
-                html_content = css_tag + html_content
+                script_tag = f"<script>\n{CV_AUTO_FIT_SCRIPT}\n</script>\n"
+                html_content = css_tag + script_tag + html_content
             
             return html_content
             
@@ -1809,17 +2100,11 @@ class TemplatePreviewWindow(QMainWindow):
         page = web_view.page()
         script = """
         (() => {
-          const container = document.querySelector('.cv-container') || document.querySelector('.letter-container') || document.body;
-          const height = container.scrollHeight || document.body.scrollHeight || 1;
-          const width = container.scrollWidth || document.body.scrollWidth || 1;
-          const pageHeight = 1122;
-          const pageWidth = 794;
-          let scale = Math.min(1, pageHeight / height, pageWidth / width);
-          if (!isFinite(scale) || scale <= 0) {
-            scale = 1;
+          if (window.__cvmatchFitToPage) {
+            return window.__cvmatchFitToPage();
           }
-          document.documentElement.style.setProperty('--print-scale', scale.toFixed(3));
-          return scale;
+          document.documentElement.style.setProperty('--print-scale', '1');
+          return { tier: 'base', scale: 1 };
         })();
         """
 
