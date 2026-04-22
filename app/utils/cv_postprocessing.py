@@ -1772,11 +1772,42 @@ def _is_profile_experience_match_ambiguous(
     return False
 
 
+def _experience_identity(entry: Dict[str, Any]) -> str:
+    parts = (
+        _normalize_for_match(entry.get("company")),
+        _normalize_for_match(entry.get("title")),
+        _normalize_for_match(entry.get("start_date")),
+        _normalize_for_match(entry.get("end_date")),
+    )
+    key = "|".join(parts).strip("|")
+    if key:
+        return key
+    return _normalize_for_match(entry.get("title"))
+
+
+def _merge_experience_entries(
+    existing: Dict[str, Any], incoming: Dict[str, Any]
+) -> None:
+    combined_highlights = _dedup_preserve(
+        list(existing.get("highlights") or []) + list(incoming.get("highlights") or [])
+    )
+    existing["highlights"] = _dedup_fuzzy_highlights(combined_highlights)[:4]
+    incoming_summary = str(incoming.get("summary") or "")
+    existing_summary = str(existing.get("summary") or "")
+    if len(incoming_summary) > len(existing_summary):
+        existing["summary"] = incoming_summary
+    for field in ("location", "duration", "start_date", "end_date"):
+        if not existing.get(field) and incoming.get(field):
+            existing[field] = incoming[field]
+
+
 def _reconcile_experience_section(
     cv_json: Dict[str, Any],
     profile_json: Dict[str, Any],
     *,
     language_code: str = "fr",
+    offer_keywords: Optional[Sequence[str]] = None,
+    job_title: str = "",
 ) -> None:
     if not isinstance(cv_json, dict):
         return
@@ -1788,6 +1819,8 @@ def _reconcile_experience_section(
             cv_json,
             profile_json,
             language_code=language_code,
+            offer_keywords=offer_keywords,
+            job_title=job_title,
         )
         if seeded_count:
             logger.warning(
@@ -1972,7 +2005,16 @@ def _reconcile_experience_section(
             )
             or entry["highlights"]
         ):
-            reconciled.append(entry)
+            identity = _experience_identity(entry)
+            merged = False
+            if identity:
+                for existing in reconciled:
+                    if _experience_identity(existing) == identity:
+                        _merge_experience_entries(existing, entry)
+                        merged = True
+                        break
+            if not merged:
+                reconciled.append(entry)
 
     cv_json["experience"] = reconciled
     if reassigned_count:
@@ -2405,6 +2447,7 @@ def reconcile_cv_sections_with_profile(
     *,
     language_code: str = "fr",
     offer_terms: Optional[Sequence[str]] = None,
+    job_title: str = "",
 ) -> None:
     if not isinstance(cv_json, dict) or not isinstance(profile_json, dict):
         return
@@ -2412,6 +2455,8 @@ def reconcile_cv_sections_with_profile(
         cv_json,
         profile_json,
         language_code=language_code,
+        offer_keywords=offer_terms,
+        job_title=job_title,
     )
     _rebuild_skills_section_from_profile(
         cv_json,
@@ -2471,6 +2516,8 @@ def _seed_experience_from_profile(
     profile_json: Dict[str, Any],
     *,
     language_code: str = "fr",
+    offer_keywords: Optional[Sequence[str]] = None,
+    job_title: str = "",
 ) -> int:
     if not isinstance(cv_json, dict):
         return 0
@@ -2478,8 +2525,19 @@ def _seed_experience_from_profile(
     if isinstance(existing, list) and existing:
         return 0
 
+    profile_experiences = _extract_profile_experiences(profile_json)
+    if offer_keywords and profile_experiences:
+        try:
+            from app.utils.cv_fallback_generator import rank_experiences_by_offer_relevance
+
+            profile_experiences = rank_experiences_by_offer_relevance(
+                profile_experiences, list(offer_keywords), job_title=job_title or ""
+            )
+        except Exception as exc:
+            logger.debug("Seed offer-ranking skipped: %s", exc)
+
     seeded: List[Dict[str, Any]] = []
-    for item in _extract_profile_experiences(profile_json)[:4]:
+    for item in profile_experiences[:4]:
         fallback_description = item.get("description") or ""
         summary = _select_action_summary(
             "",
@@ -2529,6 +2587,8 @@ def rebalance_cv_narrative(
     *,
     profile_json: Dict[str, Any],
     language_code: str = "fr",
+    offer_keywords: Optional[Sequence[str]] = None,
+    job_title: str = "",
 ) -> None:
     """Rebalance narrative density between summary and experience bullets.
 
@@ -2566,6 +2626,8 @@ def rebalance_cv_narrative(
         cv_json,
         profile_json,
         language_code=language_code,
+        offer_keywords=offer_keywords,
+        job_title=job_title,
     )
     if seeded_count:
         logger.info(
@@ -3349,6 +3411,7 @@ def coerce_generated_cv_payload(
         profile_json,
         language_code=language_code,
         offer_terms=offer_terms,
+        job_title=job_title,
     )
 
     # Apply keyword alignment if provided
@@ -3376,6 +3439,8 @@ def coerce_generated_cv_payload(
         merged,
         profile_json=profile_json,
         language_code=language_code,
+        offer_keywords=offer_terms,
+        job_title=job_title,
     )
 
     # Re-sanitize after optional post-merge transformations.
@@ -3385,6 +3450,7 @@ def coerce_generated_cv_payload(
         profile_json,
         language_code=language_code,
         offer_terms=offer_terms,
+        job_title=job_title,
     )
 
     # Second offer-adaptation pass: rebalance/reconcile may overwrite
@@ -3404,11 +3470,14 @@ def coerce_generated_cv_payload(
                 profile_json,
                 language_code=language_code,
                 offer_terms=offer_terms,
+                job_title=job_title,
             )
             rebalance_cv_narrative(
                 merged,
                 profile_json=profile_json,
                 language_code=language_code,
+                offer_keywords=offer_terms,
+                job_title=job_title,
             )
             sanitize_cv_json_output(merged, language_code=language_code)
             reconcile_cv_sections_with_profile(
@@ -3416,6 +3485,7 @@ def coerce_generated_cv_payload(
                 profile_json,
                 language_code=language_code,
                 offer_terms=offer_terms,
+                job_title=job_title,
             )
 
     if callable(classify_cv_payload_source):

@@ -303,9 +303,23 @@ def _persist_cover_letter_style_in_offer_analysis(
     offer_data["analysis"] = analysis
 
 
-def _compact_profile_json_for_prompt(profile_json: Dict[str, Any]) -> Dict[str, Any]:
+def _compact_profile_json_for_prompt(
+    profile_json: Dict[str, Any],
+    *,
+    offer_keywords: Optional[List[str]] = None,
+    job_title: str = "",
+) -> Dict[str, Any]:
     if not isinstance(profile_json, dict):
         return {}
+    if offer_keywords:
+        experiences = profile_json.get("experiences")
+        if isinstance(experiences, list) and experiences:
+            from app.utils.cv_fallback_generator import rank_experiences_by_offer_relevance
+
+            profile_json = dict(profile_json)
+            profile_json["experiences"] = rank_experiences_by_offer_relevance(
+                experiences, list(offer_keywords), job_title=job_title or ""
+            )
     limits = {
         "experiences": 4,
         "education": 3,
@@ -2267,11 +2281,6 @@ class CVGenerationWorker(QThread):
         target_company: str,
         language_code: str,
     ) -> Dict[str, str]:
-        compact_profile = _compact_profile_json_for_prompt(profile_json)
-        profile_block = _trim_text(
-            json.dumps(compact_profile, indent=2, ensure_ascii=False),
-            2400,
-        )
         current_summary_block = _trim_text(str(current_summary or "").strip(), 420)
         offer_keywords = self._get_offer_keywords_json()
         priority_terms = collect_offer_keywords_merged(
@@ -2285,6 +2294,15 @@ class CVGenerationWorker(QThread):
             critic_json=None,
             job_title=target_job_title,
             max_items=10,
+        )
+        compact_profile = _compact_profile_json_for_prompt(
+            profile_json,
+            offer_keywords=priority_terms,
+            job_title=target_job_title,
+        )
+        profile_block = _trim_text(
+            json.dumps(compact_profile, indent=2, ensure_ascii=False),
+            2400,
         )
         priority_terms_block = (
             ", ".join(priority_terms)
@@ -4851,19 +4869,6 @@ OUTPUT RULES:
         company = self.offer_data.get("company") or ""
         language_code = self._resolve_language_code()
 
-        compact_profile = _compact_profile_json_for_prompt(profile_json)
-        profile_block = json.dumps(compact_profile, indent=2, ensure_ascii=False)
-        profile_block = _trim_text(profile_block, 2600)
-        matched_keywords = _match_offer_keywords(
-            offer_text, _collect_candidate_keywords(self.profile_data)
-        )
-
-        offer_keywords_block = ""
-        if offer_keywords:
-            offer_keywords_block = (
-                "\n\nOFFER_KEYWORDS_JSON (job offer summary):\n"
-                f"{_trim_text(json.dumps(offer_keywords, indent=2, ensure_ascii=False), 1400)}"
-            )
         priority_terms = collect_offer_keywords_merged(
             offer_keywords_json=offer_keywords if isinstance(offer_keywords, dict) else None,
             offer_analysis=(
@@ -4876,6 +4881,23 @@ OUTPUT RULES:
             job_title=job_title,
             max_items=18,
         )
+        compact_profile = _compact_profile_json_for_prompt(
+            profile_json,
+            offer_keywords=priority_terms,
+            job_title=job_title,
+        )
+        profile_block = json.dumps(compact_profile, indent=2, ensure_ascii=False)
+        profile_block = _trim_text(profile_block, 2600)
+        matched_keywords = _match_offer_keywords(
+            offer_text, _collect_candidate_keywords(self.profile_data)
+        )
+
+        offer_keywords_block = ""
+        if offer_keywords:
+            offer_keywords_block = (
+                "\n\nOFFER_KEYWORDS_JSON (job offer summary):\n"
+                f"{_trim_text(json.dumps(offer_keywords, indent=2, ensure_ascii=False), 1400)}"
+            )
         priority_terms_block = ""
         if priority_terms:
             priority_terms_block = (
