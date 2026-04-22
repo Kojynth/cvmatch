@@ -142,7 +142,13 @@ def _normalize_single_date(date_str: str) -> Optional[str]:
     if mm_yyyy_match:
         month, year = mm_yyyy_match.groups()
         return f"{year}-{month.zfill(2)}"
-    
+
+    # Format YYYY-MM (ISO month, emitted by profile section mappers)
+    iso_month_match = re.match(r'^(\d{4})-(\d{1,2})$', date_str)
+    if iso_month_match:
+        year, month = iso_month_match.groups()
+        return f"{year}-{month.zfill(2)}"
+
     # Format DD/MM/YYYY
     dd_mm_yyyy_match = re.match(r'^(\d{1,2})/(\d{1,2})/(\d{4})$', date_str)
     if dd_mm_yyyy_match:

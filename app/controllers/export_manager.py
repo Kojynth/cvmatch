@@ -132,18 +132,26 @@ class ExportManager:
             "linkedin_url": "",
             "location": "",
             "links": [],
+            "contact_methods": [],
             "job_title": "",
             "profile_summary": "",
+            "profile_summary_lines": [],
             "experience": [],
             "education": [],
             "skills": [],
+            "soft_skills": [],
+            "featured_skills": [],
+            "featured_soft_skills": [],
             "languages": [],
             "projects": [],
+            "featured_project": None,
             "certifications": [],
+            "featured_certifications": [],
             "interests": [],
             "labels": {},
             "language": "fr",
             "photo_base64": "",
+            "target_role_line": "",
         }
         
         # Fusion avec les données fournies
@@ -231,6 +239,53 @@ class ExportManager:
             formatted_data["experience_top_n"] = 0
             formatted_data["additional_relevant_summary"] = ""
 
+        contact_methods = formatted_data.get("contact_methods")
+        if not isinstance(contact_methods, list) or not contact_methods:
+            formatted_data["contact_methods"] = self._build_contact_methods_from_formatted_data(
+                formatted_data
+            )
+
+        formatted_data["featured_skills"] = self._select_featured_skills(
+            formatted_data.get("skills"),
+            max_items=5,
+        )
+        formatted_data["featured_soft_skills"] = self._select_featured_soft_skills(
+            formatted_data.get("soft_skills"),
+            max_items=3,
+        )
+        formatted_data["profile_summary_lines"] = self._build_render_summary_lines(
+            formatted_data
+        )
+        formatted_data["featured_project"] = self._build_featured_project(
+            formatted_data.get("projects"),
+        )
+        formatted_data["featured_certifications"] = self._build_featured_certifications(
+            formatted_data.get("certifications"),
+            max_items=2,
+        )
+        formatted_data["languages"] = self._compact_language_entries(
+            formatted_data.get("languages"),
+            max_items=2,
+        )
+
+        space_pressure = sum(
+            1
+            for item in (
+                formatted_data.get("featured_project"),
+                formatted_data.get("featured_certifications"),
+                formatted_data.get("education"),
+                formatted_data.get("languages"),
+            )
+            if item
+        )
+        max_roles = 4 if space_pressure <= 1 else 3
+        formatted_data["experience"] = self._compact_experience_entries(
+            formatted_data.get("experience_primary") or formatted_data.get("experience"),
+            max_roles=max_roles,
+            max_bullets=3,
+        )
+        formatted_data["experience_top_n"] = len(formatted_data["experience"])
+
         try:
             education_data = formatted_data.get("education")
             if education_data is not None and isinstance(education_data, list):
@@ -240,6 +295,11 @@ class ExportManager:
         except Exception as e:
             logger.warning(f"Erreur tri education: {e}")
             formatted_data["education"] = formatted_data.get("education") or []
+
+        formatted_data["education"] = self._compact_education_entries(
+            formatted_data.get("education"),
+            max_items=2,
+        )
         
         return formatted_data
     
@@ -1219,6 +1279,410 @@ class ExportManager:
             seen.add(key)
             labels.append(text)
         return labels
+
+    def _normalize_text_key(self, value: Any) -> str:
+        text = str(value or "").strip().casefold()
+        if not text:
+            return ""
+        text = unicodedata.normalize("NFKD", text)
+        text = "".join(ch for ch in text if not unicodedata.combining(ch))
+        text = re.sub(r"[^\w]+", " ", text, flags=re.UNICODE)
+        return re.sub(r"\s+", " ", text).strip()
+
+    def _human_join(self, items: List[str], *, is_en: bool) -> str:
+        cleaned = [str(item or "").strip() for item in items if str(item or "").strip()]
+        if not cleaned:
+            return ""
+        if len(cleaned) == 1:
+            return cleaned[0]
+        if len(cleaned) == 2:
+            glue = " and " if is_en else " et "
+            return glue.join(cleaned)
+        glue = "and" if is_en else "et"
+        return ", ".join(cleaned[:-1]) + f", {glue} {cleaned[-1]}"
+
+    def _split_sentences(self, value: Any) -> List[str]:
+        raw = str(value or "").strip()
+        if not raw:
+            return []
+        raw = re.sub(r"\s+", " ", raw).strip()
+        return [
+            sentence.strip()
+            for sentence in re.split(r"(?<=[.!?])\s+", raw)
+            if sentence.strip()
+        ]
+
+    def _trim_render_text(self, value: Any, max_chars: int) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        if len(text) <= max_chars:
+            return text
+        trimmed = text[: max_chars - 1].rstrip(" ,;:")
+        return f"{trimmed}..."
+
+    def _build_contact_methods_from_formatted_data(
+        self,
+        formatted_data: Dict[str, Any],
+    ) -> List[Dict[str, str]]:
+        methods: List[Dict[str, str]] = []
+        seen: set[str] = set()
+        is_en = str((formatted_data or {}).get("language") or "").lower().startswith("en")
+        safe_schemes = {"http", "https", "mailto", "tel"}
+
+        def _explicit_scheme(value: str) -> str:
+            match = re.match(r"^([a-z][a-z0-9+.\-]*):", str(value or "").strip(), re.IGNORECASE)
+            if not match:
+                return ""
+            return str(match.group(1) or "").lower()
+
+        def _normalize_href(value: Any) -> str:
+            text = str(value or "").strip()
+            if not text:
+                return ""
+            scheme = _explicit_scheme(text)
+            if scheme:
+                if scheme not in safe_schemes:
+                    return ""
+                return text
+            return f"https://{text.lstrip('/')}"
+
+        def _display_link_value(url: str, href: str) -> str:
+            scheme = _explicit_scheme(href)
+            if scheme in {"mailto", "tel"}:
+                return href.split(":", 1)[1].strip()
+            return url
+
+        def _append(kind: str, label: str, value: Any, href: str = "") -> None:
+            text = str(value or "").strip()
+            if not text:
+                return
+            resolved_href = str(href or "").strip()
+            scheme = _explicit_scheme(resolved_href)
+            if scheme:
+                if scheme not in safe_schemes:
+                    return
+            if kind != "location" and not resolved_href:
+                return
+            dedupe_key = (resolved_href or text).lower()
+            if dedupe_key in seen:
+                return
+            seen.add(dedupe_key)
+            methods.append(
+                {
+                    "kind": kind,
+                    "label": label,
+                    "value": text,
+                    "display_value": text,
+                    "href": resolved_href,
+                }
+            )
+
+        email = str((formatted_data or {}).get("email") or "").strip()
+        if email:
+            _append("email", "Email", email, f"mailto:{email}")
+
+        phone = str((formatted_data or {}).get("phone") or "").strip()
+        if phone:
+            tel = re.sub(r"[^\d+]+", "", phone)
+            _append("phone", "Phone" if is_en else "Telephone", phone, f"tel:{tel}")
+
+        linkedin = str((formatted_data or {}).get("linkedin_url") or "").strip()
+        if linkedin:
+            href = _normalize_href(linkedin)
+            _append("linkedin", "LinkedIn", linkedin, href)
+
+        for link in (formatted_data or {}).get("links") or []:
+            if not isinstance(link, dict):
+                continue
+            label = str(link.get("label") or "").strip()
+            url = str(link.get("url") or "").strip()
+            if not url:
+                continue
+            href = _normalize_href(url)
+            if not href:
+                continue
+            if not label or re.match(r"^(?:lien|link)\s*\d*$", label, re.IGNORECASE):
+                scheme = _explicit_scheme(href)
+                if scheme == "mailto":
+                    label = "Email"
+                elif scheme == "tel":
+                    label = "Phone" if is_en else "Telephone"
+                else:
+                    parsed = re.sub(r"^https?://", "", href, flags=re.IGNORECASE)
+                    label = parsed.split("/")[0].replace("www.", "").split(".")[0].capitalize()
+            display_value = _display_link_value(url, href)
+            _append(label.lower(), label, display_value, href)
+
+        location = str((formatted_data or {}).get("location") or "").strip()
+        if location:
+            _append("location", "Location" if is_en else "Localisation", location, "")
+
+        return methods
+
+    def _is_soft_skill_category(self, label: Any) -> bool:
+        normalized = self._normalize_text_key(label)
+        return normalized in {
+            "soft skill",
+            "soft skills",
+            "qualites",
+            "qualites personnelles",
+            "qualities",
+            "strengths",
+        }
+
+    def _select_featured_skills(self, skills: Any, *, max_items: int = 5) -> List[str]:
+        if not isinstance(skills, list):
+            return []
+
+        primary: List[str] = []
+        fallback: List[str] = []
+        seen: set[str] = set()
+
+        def _append(target: List[str], value: Any) -> None:
+            name = str(value or "").strip()
+            key = self._normalize_text_key(name)
+            if not name or not key or key in seen:
+                return
+            seen.add(key)
+            target.append(name)
+
+        for block in skills:
+            if isinstance(block, dict):
+                items = block.get("skills_list") or block.get("items") or block.get("skills") or []
+                bucket = fallback if self._is_soft_skill_category(block.get("category")) else primary
+                if not isinstance(items, list):
+                    continue
+                for item in items:
+                    if isinstance(item, dict):
+                        _append(bucket, item.get("name") or item.get("skill") or "")
+                    else:
+                        _append(bucket, item)
+            elif isinstance(block, str):
+                _append(primary, block)
+
+        combined = primary or fallback
+        return combined[: max(1, int(max_items or 1))]
+
+    def _select_featured_soft_skills(self, soft_skills: Any, *, max_items: int = 3) -> List[str]:
+        if not isinstance(soft_skills, list):
+            return []
+        selected: List[str] = []
+        seen: set[str] = set()
+        for item in soft_skills:
+            if isinstance(item, dict):
+                name = str(item.get("name") or item.get("label") or "").strip()
+            else:
+                name = str(item or "").strip()
+            key = self._normalize_text_key(name)
+            if not name or not key or key in seen:
+                continue
+            seen.add(key)
+            selected.append(name)
+            if len(selected) >= max(1, int(max_items or 1)):
+                break
+        return selected
+
+    def _build_summary_fallback_lines(self, formatted_data: Dict[str, Any]) -> List[str]:
+        is_en = str((formatted_data or {}).get("language") or "").lower().startswith("en")
+        role = (
+            str((formatted_data or {}).get("job_title") or "").strip()
+            or str(((formatted_data or {}).get("experience_all") or [{}])[0].get("title") or "").strip()
+        )
+        skills = list((formatted_data or {}).get("featured_skills") or [])[:3]
+
+        lines: List[str] = []
+        if role and skills:
+            skills_text = self._human_join(skills, is_en=is_en)
+            if skills_text:
+                if is_en:
+                    lines.append(f"{role} with experience in {skills_text}.")
+                else:
+                    lines.append(f"{role} avec experience en {skills_text}.")
+        elif role:
+            lines.append(role if role.endswith((".", "!", "?")) else f"{role}.")
+
+        for exp in (formatted_data or {}).get("experience_all") or []:
+            if not isinstance(exp, dict):
+                continue
+            for candidate in exp.get("description") or []:
+                text = self._trim_render_text(candidate, 180)
+                if len(re.findall(r"\b\S+\b", text, flags=re.UNICODE)) < 4:
+                    continue
+                if lines and self._normalize_text_key(text) == self._normalize_text_key(lines[0]):
+                    continue
+                if not text.endswith((".", "!", "?")):
+                    text += "."
+                lines.append(text)
+                return lines[:2]
+
+        return lines[:2]
+
+    def _build_render_summary_lines(self, formatted_data: Dict[str, Any]) -> List[str]:
+        summary = str((formatted_data or {}).get("profile_summary") or "").strip()
+        lines: List[str] = []
+        char_budget = 360
+        used = 0
+        for sentence in self._split_sentences(summary):
+            trimmed = self._trim_render_text(sentence, 170)
+            projected = used + len(trimmed) + (1 if lines else 0)
+            if len(lines) >= 3 or projected > char_budget:
+                break
+            lines.append(trimmed)
+            used = projected
+
+        if lines:
+            return lines
+
+        return self._build_summary_fallback_lines(formatted_data)
+
+    def _split_technologies(self, value: Any, *, max_items: int = 4) -> List[str]:
+        raw = str(value or "").strip()
+        if not raw:
+            return []
+        items = [
+            item.strip()
+            for item in re.split(r"\s*(?:,|;|\|)\s*", raw)
+            if item.strip()
+        ]
+        deduped: List[str] = []
+        seen: set[str] = set()
+        for item in items:
+            key = self._normalize_text_key(item)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
+            if len(deduped) >= max(1, int(max_items or 1)):
+                break
+        return deduped
+
+    def _build_featured_project(self, projects: Any) -> Optional[Dict[str, Any]]:
+        if not isinstance(projects, list):
+            return None
+        candidates = [item for item in projects if isinstance(item, dict) and str(item.get("name") or "").strip()]
+        if not candidates:
+            return None
+
+        def _score(project: Dict[str, Any]) -> int:
+            return sum(
+                1
+                for field in ("description", "technologies", "url", "duration")
+                if str(project.get(field) or "").strip()
+            )
+
+        best = sorted(candidates, key=_score, reverse=True)[0]
+        description_lines = [
+            self._trim_render_text(sentence, 170)
+            for sentence in self._split_sentences(best.get("description") or "")
+            if sentence.strip()
+        ]
+        description_lines = description_lines[:2]
+        return {
+            "name": str(best.get("name") or "").strip(),
+            "duration": str(best.get("duration") or "").strip(),
+            "url": str(best.get("url") or "").strip(),
+            "technologies": self._split_technologies(best.get("technologies") or "", max_items=4),
+            "description_lines": description_lines,
+        }
+
+    def _build_featured_certifications(
+        self,
+        certifications: Any,
+        *,
+        max_items: int = 2,
+    ) -> List[Dict[str, str]]:
+        if not isinstance(certifications, list):
+            return []
+        featured: List[Dict[str, str]] = []
+        for cert in certifications:
+            if not isinstance(cert, dict):
+                continue
+            name = str(cert.get("name") or "").strip()
+            if not name:
+                continue
+            featured.append(
+                {
+                    "name": name,
+                    "organization": str(cert.get("organization") or "").strip(),
+                    "date": str(cert.get("date") or "").strip(),
+                    "url": str(cert.get("url") or "").strip(),
+                }
+            )
+            if len(featured) >= max(1, int(max_items or 1)):
+                break
+        return featured
+
+    def _compact_experience_entries(
+        self,
+        experiences: Any,
+        *,
+        max_roles: int,
+        max_bullets: int,
+    ) -> List[Dict[str, Any]]:
+        if not isinstance(experiences, list):
+            return []
+        compacted: List[Dict[str, Any]] = []
+        for exp in experiences:
+            if not isinstance(exp, dict):
+                continue
+            entry = dict(exp)
+            lines = [
+                self._trim_render_text(line, 170)
+                for line in (entry.get("description") or [])
+                if isinstance(line, str) and line.strip()
+            ]
+            entry["description"] = lines[: max(1, int(max_bullets or 1))]
+            compacted.append(entry)
+            if len(compacted) >= max(1, int(max_roles or 1)):
+                break
+        return compacted
+
+    def _compact_education_entries(
+        self,
+        education: Any,
+        *,
+        max_items: int,
+    ) -> List[Dict[str, Any]]:
+        if not isinstance(education, list):
+            return []
+        compacted: List[Dict[str, Any]] = []
+        for entry in education:
+            if not isinstance(entry, dict):
+                continue
+            item = dict(entry)
+            details = [
+                self._trim_render_text(line, 140)
+                for line in (item.get("description") or [])
+                if isinstance(line, str) and line.strip()
+            ]
+            item["description"] = details[:1]
+            compacted.append(item)
+            if len(compacted) >= max(1, int(max_items or 1)):
+                break
+        return compacted
+
+    def _compact_language_entries(
+        self,
+        languages: Any,
+        *,
+        max_items: int,
+    ) -> List[Dict[str, Any]]:
+        if not isinstance(languages, list):
+            return []
+        compacted: List[Dict[str, Any]] = []
+        for entry in languages:
+            if not isinstance(entry, dict):
+                continue
+            compacted.append(
+                {
+                    "name": str(entry.get("name") or "").strip(),
+                    "level": str(entry.get("level") or "").strip(),
+                }
+            )
+            if len(compacted) >= max(1, int(max_items or 1)):
+                break
+        return compacted
 
     def save_html(self, html_content: str, output_path: Optional[str] = None) -> str:
         """Sauvegarde le HTML."""

@@ -62,18 +62,43 @@ and must stay usable on heterogeneous Windows/Linux machines.
 - Use canonical profile keys first and legacy aliases only as explicit fallback.
 - **One-page output (MANDATORY)**: the generated CV must always render to
   exactly one A4 page. This is a core product feature (reformat any profile,
-  regardless of length, to one page). `ONE_PAGE_PRINT_CSS` in
-  `app/views/template_preview_window.py` enforces the hard clip
-  (`height: 297mm` + `overflow: hidden`); `_enforce_single_page_budget` in
-  `app/utils/cv_postprocessing.py` is the content-budget backstop. Do NOT
-  relax `height` to `min-height`, do NOT remove `overflow: hidden`, and do
-  NOT disable the bullet-budget pass. Any PR touching that CSS, the export
-  templates, or the postprocess trimming logic must ship with a regression
-  test that pins both the CSS invariant and the per-role / total-bullet
-  budget. Reference incident: commit `223b30f` (2026-04-19) silently
-  relaxed `height` to `min-height`, broke single-page rendering, and
-  shipped because no test locked the CSS. Regression tests live in
+  regardless of length, to one page). The product must achieve this through
+  a **fit-to-page compiler**, not destructive clipping:
+  1. prioritized content allocation;
+  2. HTML render;
+  3. measured rendered height;
+  4. controlled compression tiers;
+  5. final PDF export.
+  `ONE_PAGE_PRINT_CSS` in `app/views/template_preview_window.py` is the
+  canonical print contract: one `@media print` block, A4 margins, no forced
+  `height: 297mm` on `body`, no `overflow: hidden`, and `break-inside: avoid`
+  on experience/project/education blocks. `_enforce_single_page_budget` in
+  `app/utils/cv_postprocessing.py` remains the content-budget backstop for
+  excessive bullet density. Do NOT reintroduce CSS clipping, duplicate print
+  blocks, or silent crop-to-page behavior. Any PR touching that CSS, the
+  export templates, or the postprocess trimming logic must ship with a
+  regression test that pins both the print-fit invariant and the per-role /
+  total-bullet budget. Regression tests live in
   `tests/test_one_page_invariant.py`.
+- **Header render contract (MANDATORY)**: CV contact methods must render as
+  explicit, accessible links when actionable (`mailto:`, `tel:`, LinkedIn,
+  GitHub, portfolio URL). Placeholder labels such as `Lien 1` / `Link 1`
+  are forbidden in final HTML. The target subtitle must make the recruitment
+  intent explicit (for example `Poste vise: {job_title} | {company}` /
+  `Target role: {job_title} | {company}`) instead of looking like an employer
+  label. Regression coverage must pin clickable contacts and smart link labels.
+- **Content allocation contract (MANDATORY)**: final one-page rendering must
+  actively exploit the CV JSON instead of flattening it to a few generic
+  sections. The default one-page layout must prioritize:
+  - a real summary capped to 3 short lines;
+  - 3 to 5 credible technical skills (not a keyword dump);
+  - 2 to 3 concrete impacts per experience;
+  - one featured project when available;
+  - a compact certifications block when available;
+  - soft skills only as a compact supporting signal, never as filler.
+  The renderer may hide lower-priority sections under measured compression,
+  but it must not collapse useful structured content into a vague
+  `additional relevant details` blob.
 - **Positioning-sentence word-sourcing hierarchy (MANDATORY)**: when a
   generator selects a small set of keywords to surface in a positioning
   sentence (today: "Atouts pertinents pour {Company}: …"; same rule applies
@@ -142,6 +167,27 @@ and must stay usable on heterogeneous Windows/Linux machines.
   next to its full-length twin because `_polish_experience_fragment`
   didn't strip the ellipsis on entry, so clipped fragments re-entered
   merge paths where fuzzy dedup couldn't match them.
+
+## Additional CV Contracts
+- **Final experience dedup contract (MANDATORY)**: every final CV payload path
+  must run cross-entry experience dedup before one-page budgeting/export. Use
+  `_dedup_experience_sections_in_place` / `_dedup_experience_entries` in
+  `app/utils/cv_postprocessing.py`. Dedup may merge retries that differ only
+  by wording or date formatting (`09/2021` vs `2021-09`), but it must NOT
+  merge two genuinely distinct stints sharing the same company/title when
+  their normalized periods conflict. Regression coverage lives in
+  `tests/test_retry_loop_experience_dedup.py`,
+  `tests/test_experience_dedup_regression.py`, and
+  `tests/contracts/test_cv_postprocessing_contract.py`.
+- **Targeted-summary candidate contract (MANDATORY)**: the positioning
+  sentence must surface profile-backed aligned skills/talents first when such
+  signal exists. `missing_summary_terms` alone is not a sufficient candidate
+  pool: the selector must also consider aligned skill/talent terms already
+  grounded in the profile, so cross-domain offer-only terms do not evict
+  better profile-backed keywords. Profile soft skills may appear only as
+  supported fallback signal, never as generic filler. Regression coverage
+  lives in `tests/contracts/test_cv_postprocessing_contract.py` and
+  `tests/utils/test_cv_summary_adaptation.py`.
 
 ## Safety And Privacy
 - Use safe logging wrappers and redaction helpers for any profile, offer,

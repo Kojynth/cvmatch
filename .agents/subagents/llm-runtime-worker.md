@@ -47,6 +47,19 @@ risk.
   explicit durations when reliable, 2-4 concise bullets per role when the
   profile supports bullets, and grounded keyword usage rather than lexical
   stuffing
+- when runtime changes can affect final CV rendering, preserve the one-page
+  **fit-to-page** contract end to end: prioritized content allocation,
+  measured rendered height, controlled compression tiers, then PDF export
+  (never rely on CSS clipping or crop-to-page)
+- preserve the header render contract for generated CVs: actionable contact
+  methods render as explicit links (`mailto:`, `tel:`, LinkedIn, GitHub,
+  portfolio URL), placeholder labels like `Lien 1` / `Link 1` are forbidden,
+  and the target subtitle must read as a candidature target
+  (`Poste vise` / `Target role`) rather than an employer label
+- preserve one-page section allocation: summary (max 3 short lines), 3-5
+  credible technical skills, 2-3 concrete impacts per role, one featured
+  project when present, compact certifications, and no fallback to a vague
+  `additional relevant details` blob when structured data exists
 - controlled inferred impact is allowed when it remains implicit and coherent
   with the existing profile and role context, but never invent new employers,
   roles, projects, technologies, degrees, certifications, or exact unsupported

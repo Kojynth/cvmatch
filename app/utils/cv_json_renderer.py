@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from urllib.parse import urlparse
 from typing import Any, Dict, List, Optional
 
 from ..controllers.export_manager import ExportManager
 from .language_policy import text_matches_target_language
+
+
+_CONTACT_PLACEHOLDER_LABEL_RE = re.compile(r"^(?:lien|link)\s*\d*$", re.IGNORECASE)
+_URL_SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.\-]*://", re.IGNORECASE)
+_PHONE_LIKE_RE = re.compile(r"^\+?[\d\s().\-]{6,}$")
+_EMAIL_LIKE_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_SAFE_CONTACT_SCHEMES = {"http", "https", "mailto", "tel"}
 
 
 def _normalize_description_line(value: Any) -> str:
@@ -189,6 +197,160 @@ def _display_language_level(value: Any, *, is_en: bool) -> str:
     }
     label = en_label[level] if is_en else fr_label[level]
     return f"{level} - {label}"
+
+
+def _clean_render_summary(value: Any, *, language_code: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        from .cv_summary_adaptation import (
+            strip_deterministic_summary_appendices,
+            strip_positioning_sentences,
+        )
+
+        text = strip_deterministic_summary_appendices(text)
+        text = strip_positioning_sentences(text, language_code=language_code)
+    except Exception:
+        pass
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _build_target_role_line(
+    job_title: Any,
+    company: Any,
+    *,
+    is_en: bool,
+) -> str:
+    parts = [str(part or "").strip() for part in (job_title, company)]
+    parts = [part for part in parts if part]
+    if not parts:
+        return ""
+    joined = " | ".join(parts)
+    prefix = "Target role" if is_en else "Poste vise"
+    return f"{prefix}: {joined}"
+
+
+def _normalize_contact_href(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if _EMAIL_LIKE_RE.match(text):
+        return f"mailto:{text}"
+    if text.lower().startswith("mailto:"):
+        return text
+    if text.lower().startswith("tel:"):
+        return text
+    if _PHONE_LIKE_RE.match(text):
+        digits = re.sub(r"[^\d+]+", "", text)
+        return f"tel:{digits}" if digits else ""
+    if _URL_SCHEME_RE.match(text):
+        parsed = urlparse(text)
+        if parsed.scheme.lower() not in _SAFE_CONTACT_SCHEMES:
+            return ""
+        return text
+    return f"https://{text.lstrip('/')}"
+
+
+def _display_contact_value(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    href = _normalize_contact_href(text)
+    if href.startswith("mailto:"):
+        return href[len("mailto:") :]
+    if href.startswith("tel:"):
+        return text
+    parsed = urlparse(href)
+    display = f"{parsed.netloc}{parsed.path}".strip("/")
+    if parsed.query:
+        display = f"{display}?{parsed.query}" if display else parsed.query
+    return display or text
+
+
+def _normalize_contact_label(label: Any, url: Any, *, idx: int, is_en: bool) -> str:
+    raw_label = str(label or "").strip()
+    href = _normalize_contact_href(url)
+    parsed = urlparse(href) if href else None
+    host = parsed.netloc.lower() if parsed else ""
+    if href.startswith("mailto:"):
+        return "Email"
+    if href.startswith("tel:"):
+        return "Phone" if is_en else "Telephone"
+    if "linkedin.com" in host:
+        return "LinkedIn"
+    if "github.com" in host:
+        return "GitHub"
+    if not raw_label or _CONTACT_PLACEHOLDER_LABEL_RE.match(raw_label):
+        if host:
+            host_label = host.replace("www.", "").split(".")[0].strip()
+            return host_label.capitalize() if host_label else f"Link {idx}"
+        return f"Link {idx}" if is_en else f"Lien {idx}"
+    return raw_label
+
+
+def _build_contact_methods(
+    *,
+    email: Any,
+    phone: Any,
+    linkedin_url: Any,
+    location: Any,
+    links: List[Dict[str, str]],
+    is_en: bool,
+) -> List[Dict[str, str]]:
+    methods: List[Dict[str, str]] = []
+    seen: set[str] = set()
+
+    def _append(kind: str, label: str, value: Any, href: Any = "") -> None:
+        display_value = str(value or "").strip()
+        resolved_href = str(href or "").strip() or _normalize_contact_href(display_value)
+        if not display_value:
+            return
+        if kind != "location" and not resolved_href:
+            return
+        dedupe_key = (resolved_href or display_value).strip().lower()
+        if dedupe_key and dedupe_key in seen:
+            return
+        if dedupe_key:
+            seen.add(dedupe_key)
+        methods.append(
+            {
+                "kind": kind,
+                "label": label,
+                "value": display_value,
+                "display_value": _display_contact_value(display_value),
+                "href": resolved_href,
+            }
+        )
+
+    _append("email", "Email", email)
+    _append("phone", "Phone" if is_en else "Telephone", phone)
+    _append("linkedin", "LinkedIn", linkedin_url)
+
+    for idx, link in enumerate(links or [], start=1):
+        if not isinstance(link, dict):
+            continue
+        url = str(link.get("url") or "").strip()
+        if not url:
+            continue
+        label = _normalize_contact_label(link.get("label"), url, idx=idx, is_en=is_en)
+        kind = label.lower().replace(" ", "_")
+        _append(kind, label, url)
+
+    location_text = str(location or "").strip()
+    if location_text:
+        methods.append(
+            {
+                "kind": "location",
+                "label": "Location" if is_en else "Localisation",
+                "value": location_text,
+                "display_value": location_text,
+                "href": "",
+            }
+        )
+
+    return methods
 
 
 def cv_json_to_cv_data(
@@ -378,14 +540,46 @@ def cv_json_to_cv_data(
     for item in cv_json.get("certifications", []) or []:
         if not isinstance(item, dict):
             continue
+        cert_name = item.get("name") or ""
+        try:
+            from .certification_normalizer import normalize_certification_text
+
+            cert_name = normalize_certification_text(str(cert_name or ""))
+        except Exception:
+            cert_name = str(cert_name or "").strip()
         certifications_section.append(
             {
-                "name": item.get("name") or "",
+                "name": cert_name,
                 "organization": item.get("organization") or "",
                 "date": item.get("date") or "",
                 "url": item.get("url") or "",
             }
         )
+
+    soft_skills_section: List[str] = []
+    for item in cv_json.get("soft_skills", []) or []:
+        if isinstance(item, dict):
+            name = str(item.get("name") or item.get("label") or "").strip()
+        else:
+            name = str(item or "").strip()
+        if name and text_matches_target_language(name, lang or "fr"):
+            soft_skills_section.append(name)
+
+    cleaned_summary = _clean_render_summary(
+        cv_json.get("summary") or "",
+        language_code=lang or "fr",
+    )
+    contact_methods = _build_contact_methods(
+        email=contact.get("email") or "",
+        phone=contact.get("phone") or "",
+        linkedin_url=contact.get("linkedin_url") or "",
+        location=contact.get("location") or "",
+        links=contact_links,
+        is_en=is_en,
+    )
+    job_title = cv_json.get("target_job_title") or ""
+    company = cv_json.get("target_company") or ""
+    target_role_line = _build_target_role_line(job_title, company, is_en=is_en)
 
     return {
         "name": contact.get("full_name") or "",
@@ -394,16 +588,19 @@ def cv_json_to_cv_data(
         "linkedin_url": contact.get("linkedin_url") or "",
         "location": contact.get("location") or "",
         "links": contact_links,
-        "job_title": cv_json.get("target_job_title") or "",
-        "company": cv_json.get("target_company") or "",
+        "contact_methods": contact_methods,
+        "job_title": job_title,
+        "company": company,
+        "target_role_line": target_role_line,
         "profile_summary": (
-            cv_json.get("summary") or ""
-            if text_matches_target_language(cv_json.get("summary") or "", lang or "fr")
+            cleaned_summary
+            if cleaned_summary and text_matches_target_language(cleaned_summary, lang or "fr")
             else ""
         ),
         "experience": experience_section,
         "education": education_section,
         "skills": skills_section,
+        "soft_skills": _dedupe_description_lines(soft_skills_section),
         "languages": languages_section,
         "projects": projects_section,
         "certifications": certifications_section,
@@ -435,7 +632,10 @@ def cv_json_to_markdown(cv_json: Dict[str, Any], language: Optional[str] = None)
 
     job_title = data.get("job_title") or ""
     company = data.get("company") or ""
-    if job_title or company:
+    target_role_line = data.get("target_role_line") or ""
+    if target_role_line:
+        lines.append(f"## {target_role_line}")
+    elif job_title or company:
         title_line = " | ".join([part for part in [job_title, company] if part])
         lines.append(f"## {title_line}")
 
@@ -446,21 +646,13 @@ def cv_json_to_markdown(cv_json: Dict[str, Any], language: Optional[str] = None)
         "location": "Location" if data.get("language") == "en" else "Localisation",
     }
     contact_lines: List[str] = []
-    if data.get("email"):
-        contact_lines.append(f"- {contact_labels['email']}: {data['email']}")
-    if data.get("phone"):
-        contact_lines.append(f"- {contact_labels['phone']}: {data['phone']}")
-    if data.get("linkedin_url"):
-        contact_lines.append(f"- {contact_labels['linkedin']}: {data['linkedin_url']}")
-    if data.get("location"):
-        contact_lines.append(f"- {contact_labels['location']}: {data['location']}")
-    for link in data.get("links") or []:
-        if not isinstance(link, dict):
+    for method in data.get("contact_methods") or []:
+        if not isinstance(method, dict):
             continue
-        label = str(link.get("label") or "Lien").strip()
-        url = str(link.get("url") or "").strip()
-        if url:
-            contact_lines.append(f"- {label}: {url}")
+        label = str(method.get("label") or "").strip()
+        value = str(method.get("display_value") or method.get("value") or "").strip()
+        if label and value:
+            contact_lines.append(f"- {label}: {value}")
     if contact_lines:
         lines.append(f"## {labels['contact']}")
         lines.extend(contact_lines)
@@ -501,6 +693,10 @@ def cv_json_to_markdown(cv_json: Dict[str, Any], language: Optional[str] = None)
             names = [item.get("name") for item in items if isinstance(item, dict)]
             if names:
                 lines.append(f"- {category}: {', '.join(names)}")
+        soft_skills = [item for item in data.get("soft_skills") or [] if isinstance(item, str)]
+        if soft_skills:
+            prefix = "Strengths" if data.get("language") == "en" else "Atouts"
+            lines.append(f"- {prefix}: {', '.join(soft_skills)}")
 
     if data.get("education"):
         lines.append("")

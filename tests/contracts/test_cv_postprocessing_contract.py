@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from app.utils.cv_postprocessing import coerce_generated_cv_payload
+from app.utils.cv_postprocessing import (
+    coerce_generated_cv_payload,
+    enforce_cv_offer_adaptation,
+)
 
 
 def _fallback_generator(_profile_json, _reason):
@@ -101,3 +104,90 @@ def test_offer_adaptation_failure_keeps_deterministic_reconciliation() -> None:
     assert result["experience"]
     assert result["skills"]
     assert result["skills"][0]["items"]
+
+
+def test_coerce_generated_cv_payload_dedups_duplicate_experience_entries() -> None:
+    profile_json = {
+        "experiences": [
+            {
+                "title": "QA Engineer",
+                "company": "ACME",
+                "start_date": "09/2021",
+                "end_date": "Present",
+                "description": "Validated releases, automated regression suites, and tracked defects.",
+            }
+        ],
+        "skills": [{"name": "Playwright"}],
+    }
+
+    result = coerce_generated_cv_payload(
+        payload={
+            "summary": "QA profile.",
+            "experience": [
+                {
+                    "title": "QA Engineer",
+                    "company": "ACME",
+                    "start_date": "09/2021",
+                    "end_date": "Present",
+                    "summary": "Validated releases.",
+                    "highlights": ["Validated releases."],
+                },
+                {
+                    "title": "QA Engineer",
+                    "company": "ACME",
+                    "start_date": "2021-09",
+                    "end_date": "Current",
+                    "summary": "Validated releases and automated regression suites.",
+                    "highlights": ["Automated regression suites."],
+                },
+            ],
+        },
+        profile_json=profile_json,
+        fallback_generator=_fallback_generator,
+        language_code="en",
+    )
+
+    assert len(result["experience"]) == 1
+    merged = result["experience"][0]
+    assert "automated regression suites" in merged["summary"].lower()
+    highlight_blob = " ".join(str(item) for item in merged["highlights"]).lower()
+    assert "validated releases" in highlight_blob
+    assert "automated regression suites" in highlight_blob
+
+
+def test_summary_focus_sentence_prefers_profile_backed_aligned_skills() -> None:
+    profile_json = {
+        "skills": [
+            {"name": "SQL"},
+            {"name": "Python"},
+        ],
+        "soft_skills": [
+            {"name": "Communication"},
+        ],
+    }
+    cv_json = {
+        "summary": "",
+        "experience": [],
+        "skills": [],
+        "projects": [],
+        "education": [],
+        "certifications": [],
+        "languages": [],
+    }
+
+    result = enforce_cv_offer_adaptation(
+        cv_json,
+        job_title="QA Engineer",
+        company="Mistral AI",
+        aligned_terms=["SQL", "Python", "Communication"],
+        missing_summary_terms=["LLM", "inference"],
+        missing_experience_terms=[],
+        profile_json=profile_json,
+        language_code="fr",
+    )
+
+    summary = str(result.get("summary") or "")
+    assert "Atouts pertinents pour Mistral AI" in summary
+    lowered = summary.lower()
+    assert "sql" in lowered
+    assert "python" in lowered

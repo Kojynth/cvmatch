@@ -32,7 +32,6 @@ a {
   border-radius: 18px;
   border: 1px solid var(--border);
   box-shadow: 0 24px 40px rgba(15, 23, 42, 0.12);
-  overflow: hidden;
 }
 
 .cv-header {
@@ -144,20 +143,5 @@ a {
   .contact-info {
     flex-direction: column;
     align-items: flex-start;
-  }
-}
-
-@media print {
-  body {
-    padding: 0;
-    background: #ffffff;
-  }
-  .cv-container {
-    box-shadow: none;
-    border-radius: 0;
-  }
-  .contact-item {
-    background: transparent;
-    padding: 0;
   }
 }

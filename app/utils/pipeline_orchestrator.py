@@ -850,9 +850,14 @@ class FinalCVPhase:
                         state.alignment_audit.get("overall_score") or 0.0
                     )
                     candidate_score = float(candidate_audit.get("overall_score") or 0.0)
+                    # Strict-gt: a retry must STRICTLY improve alignment to be
+                    # accepted. Same-score retries typically return a partial
+                    # payload that postprocess fills with re-reconciled profile
+                    # entries, yielding duplicates with no score benefit.
+                    score_improvement_epsilon = 0.01
                     if (
                         bool(candidate_audit.get("sufficient"))
-                        or candidate_score >= current_score
+                        or candidate_score > current_score + score_improvement_epsilon
                     ):
                         state.cv_json_final = candidate_final
                         state.alignment_audit = candidate_audit
@@ -875,10 +880,13 @@ class FinalCVPhase:
             # run a final clip-repair + dedup pass across every experience
             # entry, so any clipped twin that re-entered during a retry is
             # merged with its full sibling before we hand off to render.
+            # Additionally collapse cross-entry duplicates (same role emitted
+            # with slightly different wording across retries).
             try:
                 from .cv_postprocessing import (
                     _repair_clipped_bullets,
                     _dedup_fuzzy_highlights,
+                    _dedup_experience_entries,
                 )
 
                 if isinstance(state.cv_json_final, dict):
@@ -887,7 +895,9 @@ class FinalCVPhase:
                         entries = state.cv_json_final.get(section)
                         if not isinstance(entries, list):
                             continue
-                        for entry in entries:
+                        deduped_entries = _dedup_experience_entries(entries)
+                        state.cv_json_final[section] = deduped_entries
+                        for entry in deduped_entries:
                             if not isinstance(entry, dict):
                                 continue
                             highlights = entry.get("highlights")

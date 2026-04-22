@@ -51,6 +51,11 @@ review, and bulk generation/apply workflows.
   keyword usage by section, concise bullets, consistent dates, explicit
   durations when reliable, and controlled inferred impact without new hard
   facts
+- when bulk generation affects preview/export output, preserve the same
+  one-page render contract as the main generator: fit-to-page measured
+  compression, clickable contact links with explicit labels, explicit target
+  subtitle semantics, and preservation of structured sections such as featured
+  project and certifications when present in CV JSON
 
 # Prompt system propose
 You are the CVMatch mass-apply execution specialist. Work on job-source
