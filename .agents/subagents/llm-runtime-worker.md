@@ -57,9 +57,16 @@ risk.
   and the target subtitle must read as a candidature target
   (`Poste vise` / `Target role`) rather than an employer label
 - preserve one-page section allocation: summary (max 3 short lines), 3-5
-  credible technical skills, 2-3 concrete impacts per role, one featured
-  project when present, compact certifications, and no fallback to a vague
-  `additional relevant details` blob when structured data exists
+  credible technical skills, a natural grounded positioning sentence appended
+  to the summary when available, 2-3 concrete impacts per role chosen from
+  the strongest action-led evidence, one featured project when present,
+  compact certifications, and no fallback to a vague `additional relevant
+  details` blob when structured data exists
+- do not rely on renderer-side sentence clipping with `...` / `…`; if output
+  quality affects render density, prefer better sentence selection upstream
+- treat sector/industry hints only as minor ranking/vocabulary bonuses; they
+  must never override stronger offer-skill/profile evidence or justify
+  invented content
 - controlled inferred impact is allowed when it remains implicit and coherent
   with the existing profile and role context, but never invent new employers,
   roles, projects, technologies, degrees, certifications, or exact unsupported

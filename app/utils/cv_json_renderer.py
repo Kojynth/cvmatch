@@ -16,6 +16,28 @@ _URL_SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.\-]*://", re.IGNORECASE)
 _PHONE_LIKE_RE = re.compile(r"^\+?[\d\s().\-]{6,}$")
 _EMAIL_LIKE_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _SAFE_CONTACT_SCHEMES = {"http", "https", "mailto", "tel"}
+_RENDER_POSITIONING_PATTERNS = {
+    "fr": (
+        re.compile(
+            r"\bAtouts\s+pertinents(?:\s+pour\s+(?P<company>[^.:]{1,80}))?\s*[:\-]\s*(?P<terms>[^.]+)\.",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\bProfil\s+pertinent(?:\s+pour\s+(?P<company>[^.]{1,80}?))?\s+grace\s+a\s+(?P<terms>[^.]+)\.",
+            re.IGNORECASE,
+        ),
+    ),
+    "en": (
+        re.compile(
+            r"\bRelevant\s+strengths(?:\s+for\s+(?P<company>[^.:]{1,80}))?\s+include\s+(?P<terms>[^.]+)\.",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\bProfile\s+aligned(?:\s+with\s+(?P<company>[^.]{1,80}?))?\s+through\s+(?P<terms>[^.]+)\.",
+            re.IGNORECASE,
+        ),
+    ),
+}
 
 
 def _normalize_description_line(value: Any) -> str:
@@ -25,6 +47,61 @@ def _normalize_description_line(value: Any) -> str:
     text = re.sub(r"[\W_]+", " ", text, flags=re.UNICODE)
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def _dedupe_sentences(text: Any) -> str:
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    deduped: List[str] = []
+    seen: set[str] = set()
+    for sentence in re.split(r"(?<=[.!?])\s+", raw):
+        cleaned = re.sub(r"\s+", " ", str(sentence or "").strip())
+        if not cleaned:
+            continue
+        norm = cleaned.casefold()
+        if norm in seen:
+            continue
+        seen.add(norm)
+        deduped.append(cleaned)
+    return " ".join(deduped).strip()
+
+
+def _build_render_positioning_sentence(
+    terms: str,
+    *,
+    company: str = "",
+    language_code: str = "fr",
+) -> str:
+    cleaned_terms = re.sub(r"\s+", " ", str(terms or "").strip(" ,;:-"))
+    company_name = re.sub(r"\s+", " ", str(company or "").strip(" ,;:-"))
+    if not cleaned_terms:
+        return ""
+    is_en = str(language_code or "").lower().startswith("en")
+    if is_en:
+        if company_name:
+            return f"Profile aligned with {company_name} through {cleaned_terms}."
+        return f"Profile aligned through {cleaned_terms}."
+    if company_name:
+        return f"Profil pertinent pour {company_name} grace a {cleaned_terms}."
+    return f"Profil pertinent grace a {cleaned_terms}."
+
+
+def _extract_render_positioning_sentence(value: Any, *, language_code: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    lang_key = "en" if str(language_code or "").lower().startswith("en") else "fr"
+    for pattern in _RENDER_POSITIONING_PATTERNS.get(lang_key, ()):
+        match = pattern.search(text)
+        if not match:
+            continue
+        return _build_render_positioning_sentence(
+            match.group("terms") or "",
+            company=match.group("company") or "",
+            language_code=language_code,
+        )
+    return ""
 
 
 def _strip_ats_unsafe_bullet_markers(value: Any) -> str:
@@ -214,7 +291,7 @@ def _clean_render_summary(value: Any, *, language_code: str) -> str:
     except Exception:
         pass
     text = re.sub(r"\s+", " ", text).strip()
-    return text
+    return _dedupe_sentences(text)
 
 
 def _build_target_role_line(
@@ -434,31 +511,41 @@ def cv_json_to_cv_data(
         reverse=True,
     ):
         description: List[str] = []
-        summary = item.get("summary")
-        if isinstance(summary, str) and summary.strip():
-            cleaned_summary = _strip_ats_unsafe_bullet_markers(summary)
-            normalized_summary = re.sub(
+
+        def _append_experience_line(value: Any) -> None:
+            cleaned = _strip_ats_unsafe_bullet_markers(value)
+            normalized = re.sub(
                 r"\s+",
                 " ",
-                str(cleaned_summary or "").strip().lower(),
+                str(cleaned or "").strip().lower(),
             )
-            if cleaned_summary and text_matches_target_language(
-                cleaned_summary,
-                lang or "fr",
-            ) and normalized_summary not in {
+            if not cleaned:
+                return
+            if not text_matches_target_language(cleaned, lang or "fr"):
+                return
+            if normalized in {
                 "delivered key contributions in this role.",
                 "contributions principales realisees sur ce poste.",
-            } and not normalized_summary.startswith("delivered key contributions as "):
-                description.append(cleaned_summary)
+            }:
+                return
+            if normalized.startswith("delivered key contributions as "):
+                return
+            description.append(cleaned)
+
+        summary = item.get("summary")
+        if isinstance(summary, str) and summary.strip():
+            _append_experience_line(summary)
         for highlight in item.get("highlights", []) or []:
             if isinstance(highlight, str) and highlight.strip():
-                cleaned_highlight = _strip_ats_unsafe_bullet_markers(highlight)
-                if cleaned_highlight and text_matches_target_language(
-                    cleaned_highlight,
-                    lang or "fr",
-                ):
-                    description.append(cleaned_highlight)
-        description = _dedupe_description_lines(description)[:4]
+                _append_experience_line(highlight)
+        raw_description = item.get("description")
+        if isinstance(raw_description, str) and raw_description.strip():
+            _append_experience_line(raw_description)
+        elif isinstance(raw_description, list):
+            for value in raw_description:
+                if isinstance(value, str) and value.strip():
+                    _append_experience_line(value)
+        description = _dedupe_description_lines(description)[:6]
         experience_section.append(
             {
                 "title": item.get("title") or "",
@@ -569,6 +656,10 @@ def cv_json_to_cv_data(
         cv_json.get("summary") or "",
         language_code=lang or "fr",
     )
+    positioning_summary = _extract_render_positioning_sentence(
+        cv_json.get("summary") or "",
+        language_code=lang or "fr",
+    )
     contact_methods = _build_contact_methods(
         email=contact.get("email") or "",
         phone=contact.get("phone") or "",
@@ -595,6 +686,12 @@ def cv_json_to_cv_data(
         "profile_summary": (
             cleaned_summary
             if cleaned_summary and text_matches_target_language(cleaned_summary, lang or "fr")
+            else ""
+        ),
+        "profile_positioning_sentence": (
+            positioning_summary
+            if positioning_summary
+            and text_matches_target_language(positioning_summary, lang or "fr")
             else ""
         ),
         "experience": experience_section,
@@ -658,10 +755,17 @@ def cv_json_to_markdown(cv_json: Dict[str, Any], language: Optional[str] = None)
         lines.extend(contact_lines)
 
     summary = data.get("profile_summary") or ""
+    positioning = data.get("profile_positioning_sentence") or ""
     if summary:
         lines.append("")
         lines.append(f"## {labels['profile']}")
         lines.append(summary.strip())
+        if positioning:
+            lines.append(positioning.strip())
+    elif positioning:
+        lines.append("")
+        lines.append(f"## {labels['profile']}")
+        lines.append(positioning.strip())
 
     if data.get("experience"):
         lines.append("")
