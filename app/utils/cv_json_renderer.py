@@ -19,21 +19,21 @@ _SAFE_CONTACT_SCHEMES = {"http", "https", "mailto", "tel"}
 _RENDER_POSITIONING_PATTERNS = {
     "fr": (
         re.compile(
-            r"\bAtouts\s+pertinents(?:\s+pour\s+(?P<company>[^.:]{1,80}))?\s*[:\-]\s*(?P<terms>[^.]+)\.",
+            r"^\s*Atouts\s+pertinents(?:\s+pour\s+(?P<company>.+?))?\s*[:\-]\s*(?P<terms>.+?)\.\s*$",
             re.IGNORECASE,
         ),
         re.compile(
-            r"\bProfil\s+pertinent(?:\s+pour\s+(?P<company>[^.]{1,80}?))?\s+grace\s+a\s+(?P<terms>[^.]+)\.",
+            r"^\s*Profil\s+pertinent(?:\s+pour\s+(?P<company>.+?))?\s+gr(?:a|â)ce\s+[aà]\s+(?P<terms>.+?)\.\s*$",
             re.IGNORECASE,
         ),
     ),
     "en": (
         re.compile(
-            r"\bRelevant\s+strengths(?:\s+for\s+(?P<company>[^.:]{1,80}))?\s+include\s+(?P<terms>[^.]+)\.",
+            r"^\s*Relevant\s+strengths(?:\s+for\s+(?P<company>.+?))?\s+include\s+(?P<terms>.+?)\.\s*$",
             re.IGNORECASE,
         ),
         re.compile(
-            r"\bProfile\s+aligned(?:\s+with\s+(?P<company>[^.]{1,80}?))?\s+through\s+(?P<terms>[^.]+)\.",
+            r"^\s*Profile\s+aligned(?:\s+with\s+(?P<company>.+?))?\s+through\s+(?P<terms>.+?)\.\s*$",
             re.IGNORECASE,
         ),
     ),
@@ -49,17 +49,70 @@ def _normalize_description_line(value: Any) -> str:
     return text
 
 
+def _split_summary_sentences(value: Any) -> List[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return []
+    return [
+        re.sub(r"\s+", " ", sentence).strip()
+        for sentence in re.split(r"(?<=[.!?])\s+", raw)
+        if str(sentence or "").strip()
+    ]
+
+
+def _normalize_sentence_key(value: Any) -> str:
+    text = re.sub(r"\s+", " ", str(value or "").strip()).strip()
+    if not text:
+        return ""
+    text = re.sub(r"[.!?]+$", "", text)
+    return text.casefold()
+
+
+def _match_render_positioning_sentence(
+    value: Any,
+    *,
+    language_code: str,
+) -> re.Match[str] | None:
+    text = re.sub(r"\s+", " ", str(value or "").strip()).strip()
+    if not text:
+        return None
+    lang_key = "en" if str(language_code or "").lower().startswith("en") else "fr"
+    for pattern in _RENDER_POSITIONING_PATTERNS.get(lang_key, ()):
+        match = pattern.match(text)
+        if match:
+            return match
+    return None
+
+
+def _strip_render_positioning_sentences(value: Any, *, language_code: str) -> str:
+    kept: List[str] = []
+    for sentence in _split_summary_sentences(value):
+        if _match_render_positioning_sentence(sentence, language_code=language_code):
+            continue
+        kept.append(sentence)
+    return " ".join(kept).strip()
+
+
+def _text_contains_sentence(text: Any, sentence: Any) -> bool:
+    target = _normalize_sentence_key(sentence)
+    if not target:
+        return False
+    return any(
+        _normalize_sentence_key(item) == target
+        for item in _split_summary_sentences(text)
+    )
+
+
 def _dedupe_sentences(text: Any) -> str:
     raw = str(text or "").strip()
     if not raw:
         return ""
     deduped: List[str] = []
     seen: set[str] = set()
-    for sentence in re.split(r"(?<=[.!?])\s+", raw):
-        cleaned = re.sub(r"\s+", " ", str(sentence or "").strip())
+    for cleaned in _split_summary_sentences(raw):
         if not cleaned:
             continue
-        norm = cleaned.casefold()
+        norm = _normalize_sentence_key(cleaned)
         if norm in seen:
             continue
         seen.add(norm)
@@ -88,12 +141,11 @@ def _build_render_positioning_sentence(
 
 
 def _extract_render_positioning_sentence(value: Any, *, language_code: str) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    lang_key = "en" if str(language_code or "").lower().startswith("en") else "fr"
-    for pattern in _RENDER_POSITIONING_PATTERNS.get(lang_key, ()):
-        match = pattern.search(text)
+    for sentence in _split_summary_sentences(value):
+        match = _match_render_positioning_sentence(
+            sentence,
+            language_code=language_code,
+        )
         if not match:
             continue
         return _build_render_positioning_sentence(
@@ -290,6 +342,7 @@ def _clean_render_summary(value: Any, *, language_code: str) -> str:
         text = strip_positioning_sentences(text, language_code=language_code)
     except Exception:
         pass
+    text = _strip_render_positioning_sentences(text, language_code=language_code)
     text = re.sub(r"\s+", " ", text).strip()
     return _dedupe_sentences(text)
 
@@ -692,6 +745,7 @@ def cv_json_to_cv_data(
             positioning_summary
             if positioning_summary
             and text_matches_target_language(positioning_summary, lang or "fr")
+            and not _text_contains_sentence(cleaned_summary, positioning_summary)
             else ""
         ),
         "experience": experience_section,
