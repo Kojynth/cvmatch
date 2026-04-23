@@ -32,5 +32,8 @@ Checklist:
    and verify pure offer-only vocabulary stays confined to the natural
    positioning sentence unless profile evidence supports a coherent implicit
    inference elsewhere.
-9. Run `tests/contracts` plus the smallest targeted rendering/export scope.
-10. Record skipped scope explicitly.
+9. If tooling wording is touched, verify named products/platforms from the
+   source outrank vague categories like `automation tools` or
+   `outils de facturation`.
+10. Run `tests/contracts` plus the smallest targeted rendering/export scope.
+11. Record skipped scope explicitly.

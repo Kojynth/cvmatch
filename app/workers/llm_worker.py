@@ -91,6 +91,10 @@ from ..utils.offer_keywords_quality import (
     stabilize_offer_keywords_payload,
 )
 from ..utils.offer_keywords_llm_retry import run_offer_keywords_second_pass
+from ..domain.generation.tool_signals import (
+    collect_named_tool_hints,
+    find_vague_tool_phrases,
+)
 from ..utils.model_quality_routing import resolve_writer_quality_override
 from ..utils.prompt_factory import (
     build_cv_json_messages as build_cv_json_prompt_messages,
@@ -480,100 +484,6 @@ def _collect_candidate_keywords(
             add_term(entry)
 
     return _dedup_preserve(terms)[:40]
-
-
-_PROFILE_TOOL_HINT_LEXICON = {
-    "api",
-    "apis",
-    "cypress",
-    "docker",
-    "fastapi",
-    "github",
-    "github actions",
-    "gitlab",
-    "jira",
-    "kubernetes",
-    "playwright",
-    "postman",
-    "pytest",
-    "python",
-    "rest api",
-    "selenium",
-    "sql",
-    "swagger",
-    "typescript",
-    "xray",
-}
-
-
-def _collect_profile_tool_hints_from_json(
-    profile_json: Dict[str, Any],
-    *,
-    max_items: int = 8,
-) -> List[str]:
-    if not isinstance(profile_json, dict):
-        return []
-
-    out: List[str] = []
-    seen: set[str] = set()
-
-    def looks_like_tool_hint(value: str) -> bool:
-        raw = str(value or "").strip()
-        if not raw or len(raw) > 40:
-            return False
-        normalized = re.sub(r"\s+", " ", raw).strip().lower()
-        if normalized in _PROFILE_TOOL_HINT_LEXICON:
-            return True
-        if any(ch in raw for ch in ("+", "#", "/", ".")):
-            return True
-        if re.fullmatch(r"[A-Z]{2,8}", raw):
-            return True
-        return False
-
-    def add(value: Any) -> None:
-        if len(out) >= max(1, int(max_items or 1)):
-            return
-        if value is None:
-            return
-        if isinstance(value, str):
-            fragments = re.split(r"[\n,;|]+", value)
-            for fragment in fragments:
-                text = str(fragment or "").strip(" -•\t")
-                key = text.lower()
-                if not text or key in seen or not looks_like_tool_hint(text):
-                    continue
-                seen.add(key)
-                out.append(text)
-                if len(out) >= max(1, int(max_items or 1)):
-                    break
-            return
-        if isinstance(value, list):
-            for item in value:
-                add(item)
-                if len(out) >= max(1, int(max_items or 1)):
-                    break
-            return
-        if isinstance(value, dict):
-            for key in (
-                "name",
-                "tool",
-                "technology",
-                "technologies",
-                "tech_stack",
-                "items",
-                "skills",
-                "skills_list",
-            ):
-                add(value.get(key))
-                if len(out) >= max(1, int(max_items or 1)):
-                    break
-
-    for key in ("skills", "tools", "technologies", "projects", "experiences", "experience"):
-        add(profile_json.get(key))
-        if len(out) >= max(1, int(max_items or 1)):
-            break
-
-    return out[: max(1, int(max_items or 1))]
 
 
 def _match_offer_keywords(
@@ -2403,12 +2313,22 @@ class CVGenerationWorker(QThread):
             if isinstance(priority_terms, list) and priority_terms
             else ""
         )
-        profile_tool_hints = _collect_profile_tool_hints_from_json(
+        profile_tool_hints = collect_named_tool_hints(
             profile_json,
             max_items=8,
         )
+        vague_tool_phrases = find_vague_tool_phrases(
+            {
+                "profile": profile_json,
+                "summary": current_summary,
+            },
+            max_items=6,
+        )
         profile_tool_block = (
             ", ".join(profile_tool_hints) if profile_tool_hints else ""
+        )
+        vague_tool_block = (
+            ", ".join(vague_tool_phrases) if vague_tool_phrases else ""
         )
         system_prompt = (
             "You are a professional CV summary writer. Return JSON only. "
@@ -2433,6 +2353,9 @@ PRIORITY_OFFER_TERMS:
 PROFILE_TOOL_HINTS:
 {profile_tool_block or "<none>"}
 
+VAGUE_TOOL_PHRASES:
+{vague_tool_block or "<none>"}
+
 OUTPUT RULES:
 - Return JSON only with the shape: {{"summary": "..."}}
 - summary: 1 to 2 sentences, concise, recruiter-facing, and not generic.
@@ -2444,8 +2367,12 @@ OUTPUT RULES:
 - Reuse PROFILE-backed PRIORITY_OFFER_TERMS directly in sentence 1.
 - Sentence 2 may reuse offer-only PRIORITY_OFFER_TERMS as positioning language
   when they fit TARGET_COMPANY, but must not turn them into unsupported facts.
-- If PROFILE_JSON evidences concrete QA/automation tools or frameworks, prefer
-  naming them explicitly instead of generic wording like "test automation tools".
+- If PROFILE_JSON evidences concrete named tools, software, platforms,
+  systems, suites, or frameworks, prefer naming them explicitly instead of
+  vague wording like "outils", "logiciels", "plateformes", or "frameworks".
+- If VAGUE_TOOL_PHRASES are present and PROFILE_TOOL_HINTS provide concrete
+  names, rewrite the vague phrasing into specific named tools whenever the
+  source supports that rewrite.
 - Prefer PROFILE_TOOL_HINTS when they help make the summary more specific.
 - Keep proper nouns, company names, product names, acronyms, and locations unchanged.
 - Write the summary fully in LANGUAGE.

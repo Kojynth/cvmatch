@@ -71,8 +71,12 @@ JOB_OFFER_TEXT:
   - keyword_families = map key requirement -> close terms/synonyms/acronyms used in this domain.
   - keyword_families values must stay factual and aligned with JOB_OFFER_TEXT.
   - For each keyword family, provide 2-6 close terms max, no generic fluff.
-  - Preserve exact tool/framework names when explicitly present (for example
-    Playwright, Postman, Python, TypeScript, dbt, Terraform).
+  - Preserve exact tool/software/platform/system/suite names when explicitly
+    present (for example Playwright, Postman, Python, TypeScript, ServiceNow,
+    Salesforce, SAP, Sage, Stripe Billing, dbt, Terraform).
+  - When the offer contains both a vague category and named products, prefer
+    the named products over generic categories like "billing tools",
+    "automation software", or "CRM platforms".
   - language must match LANGUAGE; translate if the offer is in another language.
   - Do not mix languages inside the same extracted item.
   - job_title/company should mirror JOB_TITLE/COMPANY when provided.
@@ -160,9 +164,13 @@ OUTPUT RULES:
   offer-only terms as proven skills, projects, or experience facts.
 - If MATCHED_KEYWORDS is present, ensure those terms appear in summary/skills/experience when relevant.
 - If RETRY_GUIDANCE is present, treat it as high-priority rewrite direction.
-- If PROFILE_JSON evidences concrete QA/automation tools or frameworks, name
-  them explicitly instead of generic wording like "automation tools" whenever
+- If PROFILE_JSON evidences concrete named tools, software, platforms,
+  systems, suites, or frameworks, name them explicitly instead of generic
+  wording like "tools", "software", "platforms", or "frameworks" whenever
   space allows.
+- If source text uses vague tooling phrases but PROFILE_JSON also names
+  concrete products, rewrite the vague phrasing into those concrete names when
+  truthful.
 - MANDATORY for each experience item: rewrite entirely — never copy source description text verbatim.
   * summary: 1 compact sentence (scope + context, offer-aligned vocabulary).
   * highlights: 2-4 short plain strings; each must start with a strong action verb,

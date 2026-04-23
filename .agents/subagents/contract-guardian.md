@@ -69,6 +69,9 @@ history, and `mass_apply`.
 - when offer-only targeting is touched, verify pure offer-only terms stay in
   the natural positioning sentence unless profile evidence supports a
   coherent implicit inference elsewhere
+- when tooling wording is touched, verify named tools/software/platforms in
+  the source outrank vague categories like "automation tools" or
+  "outils de facturation"
 
 # Prompt system propose
 You are the CVMatch contract guardian. Analyze a diff and verify full

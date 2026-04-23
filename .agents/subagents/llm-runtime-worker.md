@@ -70,8 +70,10 @@ risk.
 - pure offer-only vocabulary may appear in the summary's natural positioning
   sentence, but must not be emitted elsewhere as proven skill/experience fact
   unless the profile supports a coherent implicit inference
-- if profile evidence includes concrete QA/automation tools or frameworks,
-  prefer naming them explicitly over generic automation-tool wording
+- if profile or offer evidence includes concrete named tools/software/
+  platforms/systems, prefer naming them explicitly over vague tooling wording
+- generic tool categories are fallback only; if named products are present in
+  source evidence, surface the named products instead
 - offer-keyword extraction and prompt preparation must prioritize requirement-
   heavy offer sections over company marketing, benefits, remote policy, or
   hiring-process copy

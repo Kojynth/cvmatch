@@ -74,9 +74,12 @@
 - offer-keyword extraction contract: prioritize requirement-heavy sections
   (`Role summary`, responsibilities, `About you`, stack/tools, ideal profile)
   over company marketing, benefits, remote policy, or hiring-process text
-- explicit tool naming contract: when the profile supports concrete QA/
-  automation tools, prefer naming them explicitly over generic "automation
-  tools" wording
+- explicit tool naming contract: when the profile or offer supports concrete
+  named tools/software/platforms/systems, prefer those names over vague
+  wording like "automation tools", "billing software", or "outils de
+  facturation"
+- vague tooling phrase contract: generic tool categories are fallback context
+  only; if named products exist in the source, surface the named products
 - High-risk files:
   - `app/workers/llm_worker.py`
   - `app/workers/qwen_manager.py`

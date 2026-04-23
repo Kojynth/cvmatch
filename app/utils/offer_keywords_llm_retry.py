@@ -66,6 +66,9 @@ RETRY TARGET:
   requirements, stack/tools, "about you", and ideal profile.
 - Down-rank company marketing, culture, benefits, remote policy, and hiring
   process unless they contain a real domain term needed for context.
+- Preserve exact named tools/software/platforms/systems when present, and
+  prefer those names over vague categories like "automation tools" or
+  "billing software" when the offer mentions both.
 
 OUTPUT RULES:
 - Return JSON only.

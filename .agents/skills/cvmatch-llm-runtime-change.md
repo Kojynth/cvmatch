@@ -18,4 +18,6 @@ Checklist:
    vocabulary in the positioning sentence unless profile evidence supports a
    coherent implicit inference elsewhere, and prefer explicit QA/automation
    tool names when the profile contains them.
-6. Run targeted `tests/pipeline` or `tests/contracts` scopes plus compile checks.
+6. If tooling wording is affected, treat named products/platforms/systems as
+   higher-value than vague tool categories across any domain.
+7. Run targeted `tests/pipeline` or `tests/contracts` scopes plus compile checks.

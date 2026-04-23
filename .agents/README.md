@@ -37,6 +37,8 @@ Current render/export contracts to preserve across agent runs:
   a coherent implicit inference
 - offer-keyword extraction must prioritize requirement-heavy sections over
   company marketing / benefits / remote / hiring-process text
+- named tools/software/platforms from the profile or offer should replace
+  vague tooling categories whenever the source contains those concrete names
 
 If the execution environment does not support native sub-agent spawning, invoke
 these definitions manually: copy the target sub-agent prompt, preserve its file

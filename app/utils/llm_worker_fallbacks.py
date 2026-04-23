@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
+from ..domain.generation.tool_signals import extract_named_tool_hints_from_text
 from .cv_fallback_generator import generate_fallback_cv_json
 from .offer_keywords_utils import dedup_preserve
 from .offer_enrichment import prepare_offer_text
@@ -109,8 +110,12 @@ def _extract_offer_text_keywords(offer_text: str) -> List[str]:
 
 
 def _extract_offer_text_tools(offer_text: str) -> List[str]:
-    tools: List[str] = []
     text = str(offer_text or "")
+    tools: List[str] = extract_named_tool_hints_from_text(
+        text,
+        explicit_context=False,
+        max_items=12,
+    )
     for label, pattern in _TOOL_PATTERNS.items():
         if pattern.search(text):
             tools.append(label)

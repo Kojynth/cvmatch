@@ -202,10 +202,17 @@ and must stay usable on heterogeneous Windows/Linux machines.
   skills). Marketing, culture, benefits, remote-policy, and hiring-process
   sections are low-priority context only. They may inform sector/company tone
   lightly, but must not dominate extracted keywords or downstream alignment.
-- **Explicit tool naming contract (MANDATORY)**: when the profile evidences
-  concrete QA or automation tools/frameworks, generated summary/skills/
-  highlights should prefer naming those tools explicitly over generic wording
-  like "outils d'automatisation" whenever space allows.
+- **Explicit tool naming contract (MANDATORY)**: when the profile or offer
+  evidences concrete named tools, software, platforms, systems, suites, or
+  frameworks, generated summary/skills/highlights should prefer naming those
+  concrete products explicitly over vague wording like "outils", "logiciels",
+  "plateformes", "frameworks", "outils d'automatisation", or
+  "outils de facturation" whenever space allows.
+- **Vague tooling phrase contract (MANDATORY)**: generic tooling categories
+  (`automation tools`, `CRM software`, `outils de facturation`, etc.) are
+  acceptable only when no concrete named product is available in the source.
+  If named products exist in the profile or offer, the generator must prefer
+  those names and treat the vague category as fallback context only.
 
 ## Additional CV Contracts
 - **Final experience dedup contract (MANDATORY)**: every final CV payload path
