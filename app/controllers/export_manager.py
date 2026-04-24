@@ -296,6 +296,7 @@ class ExportManager:
             experience_entries=formatted_data.get("experience"),
             experience_all=formatted_data.get("experience_all"),
             projects=formatted_data.get("projects"),
+            language_code=str(formatted_data.get("language") or "fr"),
         )
         formatted_data["profile_summary_lines"] = self._build_render_summary_lines(
             formatted_data
@@ -2323,11 +2324,13 @@ class ExportManager:
         *,
         experience_entries: Any,
         projects: Any,
+        language_code: str = "fr",
     ) -> str:
         text = self._normalize_render_text(skill_name)
         if not text:
             return ""
 
+        is_en = str(language_code or "").lower().startswith("en")
         normalized = self._normalize_text_key(text)
         context_probe = self._normalize_match_probe(
             " ".join(
@@ -2361,29 +2364,31 @@ class ExportManager:
 
         if "tests d acceptance" in normalized or "tests d acceptation" in normalized or "acceptance" in normalized:
             if "explor" in normalized:
-                return "Tests d'acceptation et exploratoires"
-            return "Tests d'acceptation"
+                return "Acceptance and exploratory testing" if is_en else "Tests d'acceptation et exploratoires"
+            return "Acceptance testing" if is_en else "Tests d'acceptation"
         if "plan de test" in normalized or "plans de test" in normalized:
-            return "Plans de test"
+            return "Test plans" if is_en else "Plans de test"
         if "anomal" in normalized:
-            return "Suivi d'anomalies"
+            return "Defect tracking" if is_en else "Suivi d'anomalies"
         if "regress" in normalized:
             if compact_tools:
                 return self._restore_display_acronyms(
-                    f"Tests de non-régression {' / '.join(compact_tools)}"
+                    f"Regression testing {' / '.join(compact_tools)}"
+                    if is_en
+                    else f"Tests de non-régression {' / '.join(compact_tools)}"
                 )
-            return "Tests de non-régression"
+            return "Regression testing" if is_en else "Tests de non-régression"
         if normalized in {"api", "apis"}:
             if any(
                 self._match_probe_contains_term(context_probe, marker)
                 for marker in ("api testing", "test api", "postman", "tests", "qa")
             ):
-                return "Tests API"
+                return "API testing" if is_en else "Tests API"
             return "API"
         if normalized == "qa":
             return "QA"
         if "bilan de recette" in normalized or "bilans de recettes" in normalized or "recette" in normalized:
-            return "Bilans de recette"
+            return "Acceptance reports" if is_en else "Bilans de recette"
         if "dev back" in normalized or "back end" in normalized or "backend" in normalized:
             return "Back-end"
         if any(token in normalized for token in ("tableau", "powerbi", "power bi", "looker")):
@@ -2392,11 +2397,12 @@ class ExportManager:
         if any(marker in normalized for marker in ("benchmark", "benchmarker", "compar", "evaluation", "evaluer")):
             if compact_tools:
                 return self._restore_display_acronyms(f"Benchmark {' / '.join(compact_tools)}")
-            return "Benchmark d'outils d'automatisation"
+            return "Automation tool benchmark" if is_en else "Benchmark d'outils d'automatisation"
         if any(marker in normalized for marker in ("explor", "research", "veille")):
             if compact_tools:
-                return self._restore_display_acronyms(f"Exploration {' / '.join(compact_tools)}")
-            return "Exploration d'outils"
+                prefix = "Exploration" if not is_en else "Exploration"
+                return self._restore_display_acronyms(f"{prefix} {' / '.join(compact_tools)}")
+            return "Tool exploration" if is_en else "Exploration d'outils"
         return self._restore_display_acronyms(text)
 
     def _score_featured_skill_relevance(
@@ -2743,6 +2749,7 @@ class ExportManager:
         experience_entries: Any = None,
         experience_all: Any = None,
         projects: Any = None,
+        language_code: str = "fr",
     ) -> List[str]:
         if not isinstance(skills, list):
             skills = []
@@ -2805,6 +2812,7 @@ class ExportManager:
                             name,
                             experience_entries=experience_probe_entries or (experience_all or []),
                             projects=projects,
+                            language_code=language_code,
                         ),
                         offer_terms=list(offer_terms or []),
                         job_title=job_title,
@@ -2816,6 +2824,7 @@ class ExportManager:
                         name,
                         experience_entries=experience_probe_entries or (experience_all or []),
                         projects=projects,
+                        language_code=language_code,
                     ) or name,
                     source,
                 )
@@ -3335,7 +3344,7 @@ class ExportManager:
                     sentence = normalized_existing
         if not sentence and candidate_sentence:
             sentence = candidate_sentence
-        elif company and job_title:
+        elif not sentence and company and job_title:
             sentence = (
                 f"Profile aligned with {company} for a {job_title} role."
                 if is_en
