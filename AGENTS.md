@@ -136,6 +136,15 @@ and must stay usable on heterogeneous Windows/Linux machines.
   summary instead of stripping it from HTML/PDF output. The sentence should
   read naturally, echo the target company/offer, and remain grounded in
   profile-backed or offer-backed terms selected by the hierarchy above.
+- **Offer-only term placement contract (MANDATORY)**: pure offer-only terms
+  (supported by the offer but not directly evidenced in the profile) may
+  appear only inside the natural positioning sentence of the profile block.
+  They must NOT be rendered as proven hard skills, experience bullets, or
+  project facts unless profile evidence or a coherent implicit inference
+  supports them. Implicit inference is allowed when the profile already shows
+  adjacent evidence (for example Python + model benchmarking + AI project
+  context), but must remain phrased as positioning or transferable relevance,
+  not as a fabricated past responsibility.
 - **Photo invariant (MANDATORY)**: the profile photo must appear in the
   rendered CV regardless of template choice, user HTML edits, or history
   reopen — photo presence is a product invariant. When a user edits the
@@ -187,6 +196,52 @@ and must stay usable on heterogeneous Windows/Linux machines.
   may be inferred softly from employer/context text and used only as a minor
   ranking or wording bonus. It must never be a hard gate, never override
   stronger offer-skill/profile evidence, and never justify invented content.
+- **Offer keyword extraction contract (MANDATORY)**: offer-keyword extraction
+  must prioritize requirement-heavy sections first (`Role summary`, `What you
+  will do`, `About you`, `Ideal if`, responsibilities, stack/tools, required
+  skills). Marketing, culture, benefits, remote-policy, and hiring-process
+  sections are low-priority context only. They may inform sector/company tone
+  lightly, but must not dominate extracted keywords or downstream alignment.
+- **Explicit tool naming contract (MANDATORY)**: when the profile or offer
+  evidences concrete named tools, software, platforms, systems, suites, or
+  frameworks, generated summary/skills/highlights should prefer naming those
+  concrete products explicitly over vague wording like "outils", "logiciels",
+  "plateformes", "frameworks", "outils d'automatisation", or
+  "outils de facturation" whenever space allows.
+- **Vague tooling phrase contract (MANDATORY)**: generic tooling categories
+  (`automation tools`, `CRM software`, `outils de facturation`, etc.) are
+  acceptable only when no concrete named product is available in the source.
+  If named products exist in the profile or offer, the generator must prefer
+  those names and treat the vague category as fallback context only.
+- **Named-tool detection contract (MANDATORY)**: capitalization alone is not
+  enough to classify a fragment as a tool. Tool detection must favor
+  tool-shaped tokens (acronyms, product names, symbolic tokens like
+  `llama.cpp`, `C#`, `dbt`, `open-webui`) and scan only tool-relevant fields;
+  names, locations, company labels, and headings must not consume the
+  `PROFILE_TOOL_HINTS` budget.
+- **Source-file encoding invariant (MANDATORY)**: every tracked source file
+  (`.py`, `.md`, `.txt`, `.bat`, `.sh`, `.json`, `.yaml`, `.html`, `.css`,
+  `.ini`, `.toml`) MUST be saved as **UTF-8 without BOM**. Any edit that
+  produces mojibake signatures (`Ã©`, `Ã¨`, `Ãª`, `Ã `, `Ã§`, `Ã´`, `Ã»`,
+  `Ã®`, `â€™`, `â€œ`, `â€"`, `â€¦`, `Â«`, `Â»`, or `ðŸ`-prefixed broken
+  emojis) must be rejected and redone with correct encoding. When
+  reading/writing files from Python, always pass `encoding='utf-8'`
+  explicitly. On Windows, when content contains CRLF and non-ASCII
+  characters, use `Path.write_bytes(content.encode('utf-8'))` instead of
+  `Path.write_text(...)` to avoid `\r\n → \r\r\n` doubling. JSON dumps
+  that ship Unicode text must use `ensure_ascii=False` (the one exception
+  is `profile_json.py`'s SHA-256 fingerprint, which must stay
+  deterministic ASCII). Never commit code or docs containing mojibake —
+  if a scan surfaces `Ã©`/`â€™`/`ðŸ` in production files, treat it as a
+  bug, not a style preference. Reference audit: 2026-04-22 found 7 files
+  still affected (`app/views/panels/job_application_panel.py`,
+  `app/utils/universal_gpu_adapter.py`, `app/workers/llm_worker.py`,
+  `app/workers/qwen_manager.py`, `tests/pipeline/test_export_manager_quality.py`,
+  `docs/STRUCTURE.md`, `scripts/cleanup_reset.bat`) despite the
+  2026-03-01 byte-level fix. Legitimate fix-maps in `app/utils/text_norm.py`,
+  `app/views/text_cleaner.py`, `app/utils/ui_text.py`, and archived
+  `scripts/archive/legacy_tools/*` are exempt — those contain the
+  patterns by design as replacement keys.
 
 ## Additional CV Contracts
 - **Final experience dedup contract (MANDATORY)**: every final CV payload path

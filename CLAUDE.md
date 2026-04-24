@@ -50,6 +50,15 @@
     alignment-retry loop includes a final
     `_repair_clipped_bullets` + `_dedup_fuzzy_highlights` pass before
     returning success
+  - source-file encoding: every tracked source file (`.py`, `.md`, `.txt`,
+    `.bat`, `.sh`, `.json`, `.yaml`, `.html`, `.css`, `.ini`, `.toml`) MUST
+    stay **UTF-8 without BOM**. Any edit producing mojibake (`Ã©`, `Ã¨`,
+    `â€™`, `â€"`, `ðŸ`…) is a regression — use `encoding='utf-8'` on all
+    Python I/O; on Windows with CRLF + non-ASCII, use
+    `Path.write_bytes(content.encode('utf-8'))` instead of `write_text()`.
+    Legitimate fix-maps (`app/utils/text_norm.py`,
+    `app/views/text_cleaner.py`, `app/utils/ui_text.py`) and
+    `scripts/archive/legacy_tools/*` are exempt. Reference audit: 2026-04-22
 - final experience dedup contract: every final payload path must run
   cross-entry dedup before one-page budgeting/export, but dedup may only
   merge retries with compatible normalized periods; same company/title with
@@ -61,12 +70,28 @@
 - positioning render contract: when present, the positioning sentence stays
   in the final rendered summary as its closing sentence and should read
   naturally, not as a raw keyword dump
+- offer-only term placement contract: pure offer-only vocabulary belongs only
+  in the natural positioning sentence; do not surface unsupported offer-only
+  terms as proven skills or experience facts unless profile evidence supports
+  a coherent implicit inference
 - experience render-selection contract: rendered experience details prefer
   the 2-3 most offer-aligned action/impact sentences; company-description
   prose is only weak sector context and usually should not appear in the CV
 - sector/industry signal contract: sector hints are allowed only as a minor
   ranking/vocabulary bonus, never as a hard gate and never over stronger
   offer-skill/profile evidence
+- offer-keyword extraction contract: prioritize requirement-heavy sections
+  (`Role summary`, responsibilities, `About you`, stack/tools, ideal profile)
+  over company marketing, benefits, remote policy, or hiring-process text
+- explicit tool naming contract: when the profile or offer supports concrete
+  named tools/software/platforms/systems, prefer those names over vague
+  wording like "automation tools", "billing software", or "outils de
+  facturation"
+- vague tooling phrase contract: generic tool categories are fallback context
+  only; if named products exist in the source, surface the named products
+- named-tool detection contract: capitalization alone is not sufficient to
+  classify a fragment as a tool; scan tool-relevant fields only and keep
+  names/locations/companies/headings out of the tool-hint budget
 - High-risk files:
   - `app/workers/llm_worker.py`
   - `app/workers/qwen_manager.py`

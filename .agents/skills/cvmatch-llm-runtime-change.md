@@ -13,4 +13,11 @@ Checklist:
    ellipsis/clamp truncation, a short natural positioning sentence when
    grounded, and experience selection that prefers action/impact evidence over
    company-description text.
-5. Run targeted `tests/pipeline` or `tests/contracts` scopes plus compile checks.
+5. If offer extraction/targeting is affected, prioritize requirement-heavy
+   offer sections over company marketing/benefits text, keep pure offer-only
+   vocabulary in the positioning sentence unless profile evidence supports a
+   coherent implicit inference elsewhere, and prefer explicit QA/automation
+   tool names when the profile contains them.
+6. If tooling wording is affected, treat named products/platforms/systems as
+   higher-value than vague tool categories across any domain.
+7. Run targeted `tests/pipeline` or `tests/contracts` scopes plus compile checks.

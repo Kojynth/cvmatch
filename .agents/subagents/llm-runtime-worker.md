@@ -67,6 +67,18 @@ risk.
 - treat sector/industry hints only as minor ranking/vocabulary bonuses; they
   must never override stronger offer-skill/profile evidence or justify
   invented content
+- pure offer-only vocabulary may appear in the summary's natural positioning
+  sentence, but must not be emitted elsewhere as proven skill/experience fact
+  unless the profile supports a coherent implicit inference
+- if profile or offer evidence includes concrete named tools/software/
+  platforms/systems, prefer naming them explicitly over vague tooling wording
+- generic tool categories are fallback only; if named products are present in
+  source evidence, surface the named products instead
+- capitalization alone is not enough to treat a fragment as a tool; avoid
+  leaking names, headings, companies, or locations into tool hints
+- offer-keyword extraction and prompt preparation must prioritize requirement-
+  heavy offer sections over company marketing, benefits, remote policy, or
+  hiring-process copy
 - controlled inferred impact is allowed when it remains implicit and coherent
   with the existing profile and role context, but never invent new employers,
   roles, projects, technologies, degrees, certifications, or exact unsupported

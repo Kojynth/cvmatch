@@ -27,5 +27,13 @@ Checklist:
    profile-backed aligned skills/talents first, does not rely on
    `missing_summary_terms` alone, reads naturally in final render, and uses
    sector/industry only as a very weak bonus rather than a gate.
-8. Run `tests/contracts` plus the smallest targeted rendering/export scope.
-9. Record skipped scope explicitly.
+8. If offer-keyword extraction or prompt preparation is touched, verify
+   requirement-heavy sections outrank marketing/culture/benefits/remote text,
+   and verify pure offer-only vocabulary stays confined to the natural
+   positioning sentence unless profile evidence supports a coherent implicit
+   inference elsewhere.
+9. If tooling wording is touched, verify named products/platforms from the
+   source outrank vague categories like `automation tools` or
+   `outils de facturation`.
+10. Run `tests/contracts` plus the smallest targeted rendering/export scope.
+11. Record skipped scope explicitly.

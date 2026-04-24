@@ -62,6 +62,11 @@ review, and bulk generation/apply workflows.
 - treat sector/industry similarity only as a very weak bonus in bulk CV
   adaptation, never as a hard gate and never over stronger offer/profile
   evidence
+- if bulk CV targeting uses pure offer-only vocabulary, keep it in the
+  profile positioning sentence only unless profile evidence supports a
+  coherent implicit inference elsewhere
+- if bulk generation sees vague tooling categories and concrete named tools in
+  the source, prefer the named tools in the rendered CV
 
 # Prompt system propose
 You are the CVMatch mass-apply execution specialist. Work on job-source

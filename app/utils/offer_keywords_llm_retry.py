@@ -9,6 +9,7 @@ from .offer_keywords_quality import (
     extract_offer_text_from_offer_data,
     is_offer_keywords_payload_weak,
 )
+from .offer_enrichment import prepare_offer_text
 
 
 def _trim_text(value: Any, max_chars: int) -> str:
@@ -27,11 +28,16 @@ def _build_retry_messages(
     language_code: str,
     previous_payload: Mapping[str, Any],
 ) -> Dict[str, str]:
-    offer_text = extract_offer_text_from_offer_data(offer_data)
+    raw_offer_text = extract_offer_text_from_offer_data(offer_data)
     job_title = str((offer_data or {}).get("job_title") or "")
     company = str((offer_data or {}).get("company") or "")
     previous_block = _trim_text(json.dumps(dict(previous_payload or {}), ensure_ascii=False), 1400)
     base_user = _trim_text((base_messages or {}).get("user", ""), 1400)
+    offer_text = prepare_offer_text(
+        dict(offer_data or {}),
+        max_chars=3400,
+        keywords=[job_title, company],
+    ) or raw_offer_text
 
     system_prompt = (
         "You extract ATS-focused offer keywords. Return JSON only matching the schema. "
@@ -56,6 +62,13 @@ RETRY TARGET:
 - Improve extraction coverage while staying factual.
 - Ensure non-empty actionable output when offer text is substantive.
 - Prefer at least: keywords>=8, skills>=4, tools>=2 when evidence exists.
+- Prioritize requirement-heavy sections first: role summary, responsibilities,
+  requirements, stack/tools, "about you", and ideal profile.
+- Down-rank company marketing, culture, benefits, remote policy, and hiring
+  process unless they contain a real domain term needed for context.
+- Preserve exact named tools/software/platforms/systems when present, and
+  prefer those names over vague categories like "automation tools" or
+  "billing software" when the offer mentions both.
 
 OUTPUT RULES:
 - Return JSON only.

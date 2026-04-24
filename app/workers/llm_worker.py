@@ -91,6 +91,10 @@ from ..utils.offer_keywords_quality import (
     stabilize_offer_keywords_payload,
 )
 from ..utils.offer_keywords_llm_retry import run_offer_keywords_second_pass
+from ..domain.generation.tool_signals import (
+    collect_named_tool_hints,
+    find_vague_tool_phrases,
+)
 from ..utils.model_quality_routing import resolve_writer_quality_override
 from ..utils.prompt_factory import (
     build_cv_json_messages as build_cv_json_prompt_messages,
@@ -2309,6 +2313,23 @@ class CVGenerationWorker(QThread):
             if isinstance(priority_terms, list) and priority_terms
             else ""
         )
+        profile_tool_hints = collect_named_tool_hints(
+            profile_json,
+            max_items=8,
+        )
+        vague_tool_phrases = find_vague_tool_phrases(
+            {
+                "profile": profile_json,
+                "summary": current_summary,
+            },
+            max_items=6,
+        )
+        profile_tool_block = (
+            ", ".join(profile_tool_hints) if profile_tool_hints else ""
+        )
+        vague_tool_block = (
+            ", ".join(vague_tool_phrases) if vague_tool_phrases else ""
+        )
         system_prompt = (
             "You are a professional CV summary writer. Return JSON only. "
             "Write a concise candidate-focused summary from PROFILE_JSON facts. "
@@ -2329,11 +2350,30 @@ PROFILE_JSON (source of truth):
 PRIORITY_OFFER_TERMS:
 {priority_terms_block or "<none>"}
 
+PROFILE_TOOL_HINTS:
+{profile_tool_block or "<none>"}
+
+VAGUE_TOOL_PHRASES:
+{vague_tool_block or "<none>"}
+
 OUTPUT RULES:
 - Return JSON only with the shape: {{"summary": "..."}}
 - summary: 1 to 2 sentences, concise, recruiter-facing, and not generic.
-- Keep the summary candidate-focused. Do not describe the employer or company.
-- Reuse PRIORITY_OFFER_TERMS only when PROFILE_JSON supports them.
+- sentence 1 must stay candidate-focused and grounded in PROFILE_JSON facts.
+- sentence 2 is optional and may be a short natural positioning sentence that
+  mentions TARGET_COMPANY and offer vocabulary, including offer-only terms,
+  but only as positioning/relevance, not as a claimed past responsibility.
+- Do not describe employer history, mission, culture, benefits, or marketing copy.
+- Reuse PROFILE-backed PRIORITY_OFFER_TERMS directly in sentence 1.
+- Sentence 2 may reuse offer-only PRIORITY_OFFER_TERMS as positioning language
+  when they fit TARGET_COMPANY, but must not turn them into unsupported facts.
+- If PROFILE_JSON evidences concrete named tools, software, platforms,
+  systems, suites, or frameworks, prefer naming them explicitly instead of
+  vague wording like "outils", "logiciels", "plateformes", or "frameworks".
+- If VAGUE_TOOL_PHRASES are present and PROFILE_TOOL_HINTS provide concrete
+  names, rewrite the vague phrasing into specific named tools whenever the
+  source supports that rewrite.
+- Prefer PROFILE_TOOL_HINTS when they help make the summary more specific.
 - Keep proper nouns, company names, product names, acronyms, and locations unchanged.
 - Write the summary fully in LANGUAGE.
 - If CURRENT_SUMMARY is empty, generic, or in the wrong language, replace it with a better summary.
@@ -4695,7 +4735,7 @@ OUTPUT RULES:
             missing_ratio,
         )
 
-    def _collect_offer_keywords(self) -> List[str]:
+    def _collect_offer_keywords(self, *, include_candidate_terms: bool = True) -> List[str]:
         from ..utils.offer_keywords_utils import (
             DEFAULT_ANALYSIS_KEY_FIELDS,
             DEFAULT_OFFER_KEY_FIELDS,
@@ -4740,30 +4780,30 @@ OUTPUT RULES:
         if job_title:
             keywords.extend(part for part in job_title.split() if part)
 
-        candidate_terms = _collect_candidate_keywords(self.profile_data)
-        keywords.extend(candidate_terms)
+        if include_candidate_terms:
+            candidate_terms = _collect_candidate_keywords(self.profile_data)
+            keywords.extend(candidate_terms)
 
         return _dedup_preserve(
             [k for k in keywords if isinstance(k, str) and k.strip()]
         )[:60]
 
-    def _prepare_offer_text(self, *, max_chars: int) -> str:
-        offer_text = extract_offer_text_from_offer_data(
-            self.offer_data if isinstance(self.offer_data, dict) else {}
-        )
-        offer_text = offer_text or ""
-        if not offer_text:
-            return ""
-        if len(offer_text) <= max_chars:
-            return offer_text
+    def _prepare_offer_text(
+        self,
+        *,
+        max_chars: int,
+        include_candidate_terms: bool = True,
+    ) -> str:
+        from ..utils.offer_enrichment import prepare_offer_text
         from ..utils.text_chunking import select_relevant_blocks
 
-        keywords = self._collect_offer_keywords()
-        return select_relevant_blocks(
-            offer_text,
+        return prepare_offer_text(
+            self.offer_data if isinstance(self.offer_data, dict) else {},
             max_chars=max_chars,
-            keywords=keywords,
-            max_block_chars=900,
+            keywords=self._collect_offer_keywords(
+                include_candidate_terms=include_candidate_terms
+            ),
+            select_relevant_blocks_fn=select_relevant_blocks,
         )
 
     def _prepare_cv_html(self, cv_html: str, *, max_chars: int) -> str:
@@ -4840,7 +4880,10 @@ OUTPUT RULES:
         self.offer_data["analysis"] = analysis
 
     def _build_offer_keywords_messages(self) -> Dict[str, str]:
-        offer_text = self._prepare_offer_text(max_chars=3200)
+        offer_text = self._prepare_offer_text(
+            max_chars=3200,
+            include_candidate_terms=False,
+        )
         job_title = self.offer_data.get("job_title") or ""
         company = self.offer_data.get("company") or ""
         language_code = self._resolve_language_code()
