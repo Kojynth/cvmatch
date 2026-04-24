@@ -229,7 +229,9 @@ _VAGUE_TOOL_PATTERNS = (
     re.compile(
         r"\b(?:outils?|tools?|logiciels?|software|frameworks?|plateformes?|platforms?|"
         r"syst[eè]mes?|systems?|suites?)\s+(?:d['’]|de|des|for|of)\s+"
-        r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9/-]*(?:\s+[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9/-]*){0,3}\b",
+        r"(?!and\b|et\b|or\b|ou\b)"
+        r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9+.#/-]*"
+        r"(?:\s+(?!and\b|et\b|or\b|ou\b)[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9+.#/-]*){0,2}\b",
         re.IGNORECASE,
     ),
     re.compile(
@@ -326,6 +328,15 @@ def _clean_fragment(text: str) -> str:
         value,
         flags=re.IGNORECASE,
     )
+    value = value.strip(" ,;:()[]{}.!?")
+    value = re.sub(r"\s+", " ", value)
+    return value
+
+
+def _clean_vague_phrase(text: str) -> str:
+    value = str(text or "").strip(" -•\t\r\n")
+    if not value:
+        return ""
     value = value.strip(" ,;:()[]{}.!?")
     value = re.sub(r"\s+", " ", value)
     return value
@@ -525,7 +536,7 @@ def find_vague_tool_phrases(value: Any, *, max_items: int = 8) -> List[str]:
                 return
             for pattern in _VAGUE_TOOL_PATTERNS:
                 for match in pattern.finditer(item):
-                    phrase = _clean_fragment(match.group(0))
+                    phrase = _clean_vague_phrase(match.group(0))
                     key = _normalize(phrase)
                     if not phrase or not key or key in seen:
                         continue

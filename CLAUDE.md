@@ -50,6 +50,15 @@
     alignment-retry loop includes a final
     `_repair_clipped_bullets` + `_dedup_fuzzy_highlights` pass before
     returning success
+  - source-file encoding: every tracked source file (`.py`, `.md`, `.txt`,
+    `.bat`, `.sh`, `.json`, `.yaml`, `.html`, `.css`, `.ini`, `.toml`) MUST
+    stay **UTF-8 without BOM**. Any edit producing mojibake (`Ã©`, `Ã¨`,
+    `â€™`, `â€"`, `ðŸ`…) is a regression — use `encoding='utf-8'` on all
+    Python I/O; on Windows with CRLF + non-ASCII, use
+    `Path.write_bytes(content.encode('utf-8'))` instead of `write_text()`.
+    Legitimate fix-maps (`app/utils/text_norm.py`,
+    `app/views/text_cleaner.py`, `app/utils/ui_text.py`) and
+    `scripts/archive/legacy_tools/*` are exempt. Reference audit: 2026-04-22
 - final experience dedup contract: every final payload path must run
   cross-entry dedup before one-page budgeting/export, but dedup may only
   merge retries with compatible normalized periods; same company/title with

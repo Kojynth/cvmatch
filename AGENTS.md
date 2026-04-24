@@ -219,6 +219,29 @@ and must stay usable on heterogeneous Windows/Linux machines.
   `llama.cpp`, `C#`, `dbt`, `open-webui`) and scan only tool-relevant fields;
   names, locations, company labels, and headings must not consume the
   `PROFILE_TOOL_HINTS` budget.
+- **Source-file encoding invariant (MANDATORY)**: every tracked source file
+  (`.py`, `.md`, `.txt`, `.bat`, `.sh`, `.json`, `.yaml`, `.html`, `.css`,
+  `.ini`, `.toml`) MUST be saved as **UTF-8 without BOM**. Any edit that
+  produces mojibake signatures (`Ã©`, `Ã¨`, `Ãª`, `Ã `, `Ã§`, `Ã´`, `Ã»`,
+  `Ã®`, `â€™`, `â€œ`, `â€"`, `â€¦`, `Â«`, `Â»`, or `ðŸ`-prefixed broken
+  emojis) must be rejected and redone with correct encoding. When
+  reading/writing files from Python, always pass `encoding='utf-8'`
+  explicitly. On Windows, when content contains CRLF and non-ASCII
+  characters, use `Path.write_bytes(content.encode('utf-8'))` instead of
+  `Path.write_text(...)` to avoid `\r\n → \r\r\n` doubling. JSON dumps
+  that ship Unicode text must use `ensure_ascii=False` (the one exception
+  is `profile_json.py`'s SHA-256 fingerprint, which must stay
+  deterministic ASCII). Never commit code or docs containing mojibake —
+  if a scan surfaces `Ã©`/`â€™`/`ðŸ` in production files, treat it as a
+  bug, not a style preference. Reference audit: 2026-04-22 found 7 files
+  still affected (`app/views/panels/job_application_panel.py`,
+  `app/utils/universal_gpu_adapter.py`, `app/workers/llm_worker.py`,
+  `app/workers/qwen_manager.py`, `tests/pipeline/test_export_manager_quality.py`,
+  `docs/STRUCTURE.md`, `scripts/cleanup_reset.bat`) despite the
+  2026-03-01 byte-level fix. Legitimate fix-maps in `app/utils/text_norm.py`,
+  `app/views/text_cleaner.py`, `app/utils/ui_text.py`, and archived
+  `scripts/archive/legacy_tools/*` are exempt — those contain the
+  patterns by design as replacement keys.
 
 ## Additional CV Contracts
 - **Final experience dedup contract (MANDATORY)**: every final CV payload path

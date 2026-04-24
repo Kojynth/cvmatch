@@ -61,6 +61,17 @@ STOP_WORDS_FR = frozenset({
 
 STOP_WORDS_ALL = STOP_WORDS_EN | STOP_WORDS_FR
 
+
+def resolve_offer_text_from_offer_data(offer_data: Optional[Dict[str, Any]]) -> str:
+    """Resolve canonical offer text from common source keys."""
+    if not isinstance(offer_data, dict):
+        return ""
+    for key in ("text", "offer_text", "description", "job_description", "content", "raw_text"):
+        value = offer_data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
 _HIGH_SIGNAL_OFFER_HEADINGS = (
     "role summary",
     "what you will do",
@@ -716,7 +727,7 @@ def extract_job_metadata(
     return {
         "job_title": str(offer_data.get("job_title") or "").strip(),
         "company": str(offer_data.get("company") or "").strip(),
-        "text": str(offer_data.get("text") or "").strip(),
+        "text": resolve_offer_text_from_offer_data(offer_data).strip(),
     }
 
 
@@ -742,8 +753,8 @@ def prepare_offer_text(
     Returns:
         Prepared offer text
     """
-    offer_text = offer_data.get("text") if isinstance(offer_data, dict) else ""
-    offer_text = offer_text or ""
+    offer_text = resolve_offer_text_from_offer_data(offer_data)
+    offer_text = str(offer_text or "")
 
     if not offer_text:
         return ""
