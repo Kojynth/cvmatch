@@ -245,10 +245,6 @@ class ExportManager:
                 formatted_data
             )
 
-        formatted_data["featured_skills"] = self._select_featured_skills(
-            formatted_data.get("skills"),
-            max_items=5,
-        )
         formatted_data["featured_soft_skills"] = self._select_featured_soft_skills(
             formatted_data.get("soft_skills"),
             max_items=3,
@@ -275,16 +271,32 @@ class ExportManager:
             )
             if item
         )
+        max_skill_items = 10
         max_roles = 4 if space_pressure <= 1 else 3
+        offer_terms = self._collect_offer_terms_for_render(formatted_data)
+        job_title_hint = (
+            formatted_data.get("job_title")
+            or formatted_data.get("target_job_title")
+            or ""
+        )
         formatted_data["experience"] = self._compact_experience_entries(
             formatted_data.get("experience_primary") or formatted_data.get("experience"),
-            job_title=str(formatted_data.get("job_title") or "").strip(),
-            offer_terms=self._collect_offer_terms_for_render(formatted_data),
+            job_title=str(job_title_hint).strip(),
+            offer_terms=offer_terms,
             language_code=str(formatted_data.get("language") or "fr"),
             max_roles=max_roles,
             max_bullets=3,
         )
         formatted_data["experience_top_n"] = len(formatted_data["experience"])
+        formatted_data["featured_skills"] = self._select_featured_skills(
+            formatted_data.get("skills"),
+            max_items=max_skill_items,
+            offer_terms=offer_terms,
+            job_title=str(job_title_hint).strip(),
+            experience_entries=formatted_data.get("experience"),
+            experience_all=formatted_data.get("experience_all"),
+            projects=formatted_data.get("projects"),
+        )
         formatted_data["profile_summary_lines"] = self._build_render_summary_lines(
             formatted_data
         )
@@ -961,6 +973,10 @@ class ExportManager:
 
         scored: List[Tuple[float, int, int, int, Dict[str, Any]]] = []
         max_relevance = 0.0
+        try:
+            from ..domain.generation.tool_signals import collect_named_tool_hints
+        except Exception:
+            collect_named_tool_hints = None
         for idx, exp in enumerate(experiences):
             if not isinstance(exp, dict):
                 continue
@@ -972,14 +988,83 @@ class ExportManager:
             for line in exp.get("description") or []:
                 if isinstance(line, str) and line.strip():
                     parts.append(line.strip())
+            for tech in exp.get("technologies") or []:
+                if isinstance(tech, str) and tech.strip():
+                    parts.append(tech.strip())
             blob_norm = normalize_keyword_for_match(" ".join(parts))
+            title_norm = normalize_keyword_for_match(exp.get("title") or "")
 
             relevance = 0.0
             if job_norm and normalized_term_present(blob_norm, job_norm):
-                relevance += 2.0
+                relevance += 4.0
+                if title_norm and normalized_term_present(title_norm, job_norm):
+                    relevance += 1.8
             for term in normalized_terms:
                 if normalized_term_present(blob_norm, term):
-                    relevance += 1.8 if " " in term else 1.0
+                    relevance += 2.2 if " " in term else 1.1
+
+            impact_hits = sum(
+                1
+                for token in (
+                    "resultat",
+                    "impact",
+                    "gain",
+                    "amelior",
+                    "improve",
+                    "reduce",
+                    "acceler",
+                    "fiabil",
+                    "automatis",
+                    "benchmark",
+                    "qualif",
+                    "validation",
+                    "release",
+                    "gate",
+                )
+                if token in blob_norm
+            )
+            if impact_hits:
+                relevance += min(2.2, impact_hits * 0.45)
+            if re.search(
+                r"\b\d+(?:[.,]\d+)?\s*(?:%|k|m|ans?|mois|jours?|hours?|users?|clients?|applications?)?\b",
+                " ".join(parts),
+                re.IGNORECASE,
+            ):
+                relevance += 0.9
+
+            action_hits = sum(
+                1
+                for token in (
+                    "concevoir",
+                    "executer",
+                    "suivre",
+                    "rediger",
+                    "analyser",
+                    "piloter",
+                    "tester",
+                    "valider",
+                    "implement",
+                    "develop",
+                    "design",
+                    "lead",
+                    "build",
+                    "improve",
+                    "deliver",
+                )
+                if token in blob_norm
+            )
+            if action_hits:
+                relevance += min(1.8, action_hits * 0.35)
+
+            if collect_named_tool_hints:
+                named_tools = collect_named_tool_hints(
+                    {
+                        "experience": [exp],
+                    },
+                    max_items=8,
+                )
+                if named_tools:
+                    relevance += min(1.5, len(named_tools) * 0.35)
 
             max_relevance = max(max_relevance, relevance)
             recency_rank = self._experience_recency_rank(exp)
@@ -1060,8 +1145,20 @@ class ExportManager:
         else:
             count = max(1, int(primary_count))
 
-        primary_items = ranked[:count]
-        additional_relevant_items = ranked[count:]
+        selected_keys = {
+            self._experience_identity_key(exp)
+            for exp in ranked[:count]
+            if isinstance(exp, dict)
+        }
+        primary_items: List[Dict[str, Any]] = []
+        additional_relevant_items: List[Dict[str, Any]] = []
+        for exp in experiences:
+            if not isinstance(exp, dict):
+                continue
+            if self._experience_identity_key(exp) in selected_keys:
+                primary_items.append(exp)
+            else:
+                additional_relevant_items.append(exp)
         return primary_items, additional_relevant_items
 
     def _build_additional_relevant_summary(
@@ -1260,6 +1357,20 @@ class ExportManager:
                 names.append(name)
         return names
 
+    def _experience_identity_key(self, exp: Dict[str, Any]) -> str:
+        if not isinstance(exp, dict):
+            return ""
+        return self._normalize_text_key(
+            "::".join(
+                [
+                    str(exp.get("title") or "").strip(),
+                    str(exp.get("company") or "").strip(),
+                    str(exp.get("start_date") or "").strip(),
+                    str(exp.get("end_date") or "").strip(),
+                ]
+            )
+        )
+
     def _collect_education_labels_for_compact_summary(self, education: Any) -> List[str]:
         if not isinstance(education, list):
             return []
@@ -1457,6 +1568,31 @@ class ExportManager:
         normalized_text = normalize_keyword_for_match(text)
         if not normalized_text:
             return -100.0
+
+        company_desc_match = re.match(
+            r"^\s*(?P<head>[^:]{1,60})\s*:\s*(?P<tail>.+)$",
+            text,
+        ) or re.match(
+            r"^\s*(?P<head>.+?)\s+[-–—]\s+(?P<tail>.+)$",
+            text,
+        )
+        if company_desc_match:
+            tail_norm = normalize_keyword_for_match(company_desc_match.group("tail") or "")
+            company_descriptor_starts = (
+                "filiale",
+                "specialisee",
+                "specialisee",
+                "specialized",
+                "specialised",
+                "groupe",
+                "group",
+                "plateforme",
+                "platform",
+                "company",
+                "societe",
+            )
+            if any(tail_norm.startswith(prefix) for prefix in company_descriptor_starts):
+                return -100.0
 
         score = 0.0
         if _starts_with_action_phrase(text, language_code=language_code):
@@ -1659,7 +1795,12 @@ class ExportManager:
             "strengths",
         }
 
-    def _score_featured_skill_candidate(self, value: Any) -> float:
+    def _score_featured_skill_candidate(
+        self,
+        value: Any,
+        *,
+        source: str = "skill",
+    ) -> float:
         text = self._normalize_render_text(value)
         if not text:
             return -100.0
@@ -1710,6 +1851,36 @@ class ExportManager:
             "validating",
         }
         short_allowed = {"ai", "ml", "qa", "ui", "ux", "bi", "ci", "cd", "db", "sql", "api", "erp", "crm"}
+        hard_generic_singletons = {
+            "api",
+            "apis",
+            "automation",
+            "automatisation",
+            "bi",
+            "cloud",
+            "crm",
+            "erp",
+            "framework",
+            "frameworks",
+            "outil",
+            "outils",
+            "platform",
+            "platforms",
+            "plateforme",
+            "plateformes",
+            "qa",
+            "reporting",
+            "software",
+            "stack",
+            "suite",
+            "suites",
+            "system",
+            "systems",
+            "testing",
+            "tests",
+            "tool",
+            "tools",
+        }
 
         score = 0.0
         if len(tokens) == 1:
@@ -1729,28 +1900,505 @@ class ExportManager:
             score += 1.2
         if any(token in short_allowed for token in tokens):
             score += 1.0
+        if len(tokens) == 1 and tokens[0] in hard_generic_singletons:
+            score -= 4.5
+        if source == "named_tool":
+            score += 2.2
+        elif source == "experience_tool":
+            score += 1.6
         if tokens[0] in action_starters:
             score -= 4.0
         if any(token in {"with", "through", "using"} for token in tokens[:2]):
             score -= 1.0
+        if len(tokens) >= 2 and any(token in {"api", "apis", "testing", "sql", "python", "jira", "xray", "mongodb", "postgresql", "postman", "playwright", "cypress", "selenium"} for token in tokens):
+            score += 0.8
 
         return score
 
-    def _select_featured_skills(self, skills: Any, *, max_items: int = 5) -> List[str]:
-        if not isinstance(skills, list):
+    def _collect_named_featured_skill_candidates(
+        self,
+        formatted_data: Dict[str, Any],
+    ) -> List[str]:
+        try:
+            from ..domain.generation.tool_signals import collect_named_tool_hints
+        except Exception:
             return []
 
-        primary: List[Tuple[int, str]] = []
-        fallback: List[Tuple[int, str]] = []
+        payload = {
+            "skills": (formatted_data or {}).get("skills"),
+            "experience": (formatted_data or {}).get("experience_all") or (formatted_data or {}).get("experience"),
+            "projects": (formatted_data or {}).get("projects"),
+        }
+        return collect_named_tool_hints(payload, max_items=18)
+
+    def _normalize_match_probe(self, value: Any) -> str:
+        try:
+            from ..utils.keyword_alignment import normalize_keyword_for_match
+        except Exception:
+            return self._normalize_text_key(value)
+        return normalize_keyword_for_match(value)
+
+    def _looks_like_compact_tool_label(self, value: Any) -> bool:
+        text = self._normalize_render_text(value)
+        if not text:
+            return False
+        words = text.split()
+        if len(words) > 3:
+            return False
+        normalized = self._normalize_text_key(text)
+        if not normalized:
+            return False
+        if normalized in {
+            "automation",
+            "automatisation",
+            "benchmark",
+            "comparison",
+            "comparaison",
+            "evaluation",
+            "exploration",
+            "outils",
+            "tools",
+            "logiciels",
+            "software",
+            "platform",
+            "plateforme",
+            "differents modeles",
+        }:
+            return False
+        if words[0].casefold() in {
+            "analyser",
+            "concevoir",
+            "creer",
+            "deliver",
+            "develop",
+            "ensure",
+            "executer",
+            "execute",
+            "implement",
+            "improve",
+            "integrate",
+            "realiser",
+            "suivre",
+            "tester",
+            "using",
+            "validate",
+        }:
+            return False
+        common_lowercase_tools = {
+            "agilitest",
+            "cypress",
+            "docker",
+            "jira",
+            "kubernetes",
+            "looker",
+            "mongodb",
+            "mysql",
+            "playwright",
+            "postman",
+            "postgresql",
+            "powerbi",
+            "pytest",
+            "python",
+            "selenium",
+            "serviceNow".casefold(),
+            "sql",
+            "tableau",
+            "xray",
+        }
+        if normalized in common_lowercase_tools:
+            return True
+        if re.search(r"[+#./0-9]", text):
+            return True
+        if any(ch.isupper() for ch in text[1:]):
+            return True
+        return bool(re.fullmatch(r"[A-Z][A-Za-z0-9#+./-]{1,30}(?:\s+[A-Z][A-Za-z0-9#+./-]{1,30}){0,2}", text))
+
+    def _match_probe_contains_term(self, probe: Any, term: Any) -> bool:
+        try:
+            from ..utils.keyword_alignment import (
+                normalize_keyword_for_match,
+                normalized_term_in_probe as normalized_term_present,
+            )
+        except Exception:
+            norm_probe = self._normalize_text_key(probe)
+            norm_term = self._normalize_text_key(term)
+            return bool(norm_probe and norm_term and norm_term in norm_probe)
+        return normalized_term_present(
+            normalize_keyword_for_match(probe),
+            normalize_keyword_for_match(term),
+        )
+
+    def _collect_skill_proof_tools(
+        self,
+        skill_name: Any,
+        *,
+        experience_entries: Any,
+        projects: Any,
+        max_items: int = 8,
+    ) -> List[str]:
+        try:
+            from ..domain.generation.tool_signals import collect_named_tool_hints
+        except Exception:
+            return []
+
+        skill_norm = self._normalize_text_key(skill_name)
+        if not skill_norm:
+            return []
+
+        context_keywords = {
+            token
+            for token in skill_norm.split()
+            if len(token) >= 4
+        }
+        comparative_markers = {
+            "benchmark",
+            "benchmarker",
+            "compar",
+            "evaluation",
+            "evaluer",
+            "explor",
+            "automat",
+            "automatis",
+            "outil",
+            "outils",
+            "tool",
+            "tools",
+            "logiciel",
+            "software",
+            "platform",
+            "plateforme",
+        }
+        specific_context_keywords = {
+            token[:8]
+            for token in context_keywords
+            if token not in comparative_markers and token not in {"outil", "outils", "tool", "tools"}
+        }
+
+        contextual_lines: List[str] = []
+        for block in list(experience_entries or []) + list(projects or []):
+            if not isinstance(block, dict):
+                continue
+            candidates: List[str] = []
+            for key in ("summary", "description"):
+                value = block.get(key)
+                if isinstance(value, str) and value.strip():
+                    candidates.append(value.strip())
+                elif isinstance(value, list):
+                    candidates.extend(
+                        str(item).strip()
+                        for item in value
+                        if isinstance(item, str) and item.strip()
+                    )
+            for key in ("highlights",):
+                value = block.get(key)
+                if isinstance(value, list):
+                    candidates.extend(
+                        str(item).strip()
+                        for item in value
+                        if isinstance(item, str) and item.strip()
+                    )
+            technologies = block.get("technologies")
+            if isinstance(technologies, list):
+                candidates.extend(
+                    str(item).strip()
+                    for item in technologies
+                    if isinstance(item, str) and item.strip()
+                )
+            elif isinstance(technologies, str) and technologies.strip():
+                candidates.append(technologies.strip())
+
+            for candidate in candidates:
+                candidate_norm = self._normalize_text_key(candidate)
+                if not candidate_norm:
+                    continue
+                if any(marker in candidate_norm for marker in comparative_markers):
+                    if specific_context_keywords and any(
+                        token in candidate_norm for token in specific_context_keywords
+                    ):
+                        contextual_lines.append(candidate)
+                    elif not specific_context_keywords:
+                        contextual_lines.append(candidate)
+                    continue
+                if specific_context_keywords and any(token in candidate_norm for token in specific_context_keywords):
+                    contextual_lines.append(candidate)
+
+        payload: Dict[str, Any]
+        if contextual_lines:
+            payload = {"description": contextual_lines}
+        else:
+            payload = {
+                "experience": experience_entries,
+                "projects": projects,
+            }
+
+        candidates = collect_named_tool_hints(payload, max_items=max_items * 3)
+        filtered: List[str] = []
+        seen_filtered: set[str] = set()
+        for candidate in candidates:
+            parts = [
+                self._normalize_render_text(part)
+                for part in re.split(r"\s*(?:/|,|;|\|)\s*", str(candidate or "").strip())
+                if self._normalize_render_text(part)
+            ]
+            for part in parts or [self._normalize_render_text(candidate)]:
+                key = self._normalize_text_key(part)
+                if not key or key in seen_filtered:
+                    continue
+                if not self._looks_like_compact_tool_label(part):
+                    continue
+                seen_filtered.add(key)
+                filtered.append(part)
+                if len(filtered) >= max(1, int(max_items or 1)):
+                    return filtered
+        if filtered:
+            return filtered[: max(1, int(max_items or 1))]
+
+        if contextual_lines:
+            for line in contextual_lines:
+                probe = re.split(
+                    r"\b(?:notamment|including|such as|like|avec|using|used|comme)\b",
+                    str(line or ""),
+                    maxsplit=1,
+                    flags=re.IGNORECASE,
+                )
+                tail = probe[-1] if probe else str(line or "")
+                for part in re.split(r"\s*(?:,|;|/|\bet\b|\band\b|\bou\b|\bor\b)\s*", tail):
+                    cleaned = self._normalize_render_text(part)
+                    key = self._normalize_text_key(cleaned)
+                    if not cleaned or not key or key in seen_filtered:
+                        continue
+                    if not self._looks_like_compact_tool_label(cleaned):
+                        continue
+                    seen_filtered.add(key)
+                    filtered.append(cleaned)
+                    if len(filtered) >= max(1, int(max_items or 1)):
+                        return filtered
+        return filtered[: max(1, int(max_items or 1))]
+
+    def _rewrite_featured_skill_label(
+        self,
+        skill_name: Any,
+        *,
+        experience_entries: Any,
+        projects: Any,
+    ) -> str:
+        text = self._normalize_render_text(skill_name)
+        if not text:
+            return ""
+
+        normalized = self._normalize_text_key(text)
+        proof_tools = self._collect_skill_proof_tools(
+            text,
+            experience_entries=experience_entries,
+            projects=projects,
+            max_items=8,
+        )
+        compact_tools = [tool for tool in proof_tools if self._normalize_render_text(tool)]
+        if not compact_tools:
+            return text
+
+        if any(marker in normalized for marker in ("benchmark", "benchmarker", "compar", "evaluation", "evaluer")):
+            return f"Benchmark {' / '.join(compact_tools)}"
+        if any(marker in normalized for marker in ("explor", "research", "veille")):
+            return f"Exploration {' / '.join(compact_tools)}"
+        return text
+
+    def _score_featured_skill_relevance(
+        self,
+        original_name: Any,
+        display_name: Any,
+        *,
+        offer_terms: List[str],
+        job_title: str,
+        experience_entries: Any,
+        projects: Any,
+    ) -> float:
+        original_text = self._normalize_render_text(original_name)
+        display_text = self._normalize_render_text(display_name) or original_text
+        score = self._score_featured_skill_candidate(display_text, source="skill")
+
+        probes: List[str] = []
+        for entry in experience_entries or []:
+            if not isinstance(entry, dict):
+                continue
+            probes.append(" ".join(
+                [
+                    str(entry.get("title") or "").strip(),
+                    str(entry.get("company") or "").strip(),
+                    " ".join(
+                        str(line).strip()
+                        for line in (entry.get("description") or [])
+                        if isinstance(line, str) and str(line).strip()
+                    ),
+                    " ".join(
+                        str(line).strip()
+                        for line in (entry.get("_render_source_description") or [])
+                        if isinstance(line, str) and str(line).strip()
+                    ),
+                ]
+            ))
+        all_experience_probe = self._normalize_match_probe(" ".join(probes))
+        anchor_probe = ""
+        recent_probe = ""
+        ranked_entries = [entry for entry in (experience_entries or []) if isinstance(entry, dict)]
+        if ranked_entries:
+            anchor_entry = sorted(
+                ranked_entries,
+                key=lambda item: float(item.get("render_alignment_score") or 0.0),
+                reverse=True,
+            )[0]
+            anchor_probe = self._normalize_match_probe(
+                " ".join(
+                    [
+                        str(anchor_entry.get("title") or "").strip(),
+                        " ".join(
+                            str(line).strip()
+                            for line in (anchor_entry.get("_render_source_description") or anchor_entry.get("description") or [])
+                            if isinstance(line, str) and str(line).strip()
+                        ),
+                    ]
+                )
+            )
+            recent_entry = sorted(
+                ranked_entries,
+                key=self._experience_recency_rank,
+                reverse=True,
+            )[0]
+            recent_probe = self._normalize_match_probe(
+                " ".join(
+                    [
+                        str(recent_entry.get("title") or "").strip(),
+                        " ".join(
+                            str(line).strip()
+                            for line in (recent_entry.get("_render_source_description") or recent_entry.get("description") or [])
+                            if isinstance(line, str) and str(line).strip()
+                        ),
+                    ]
+                )
+            )
+        project_parts: List[str] = []
+        for project in (projects or []):
+            if not isinstance(project, dict):
+                continue
+            project_parts.extend(
+                [
+                    str(project.get("name") or "").strip(),
+                    str(project.get("description") or "").strip(),
+                    str(project.get("technologies") or "").strip(),
+                ]
+            )
+        project_probe = self._normalize_match_probe(" ".join(project_parts))
+
+        evidence_terms: List[str] = []
+        for item in (original_text, display_text):
+            if item:
+                evidence_terms.append(item)
+        for tool in self._collect_skill_proof_tools(
+            original_text,
+            experience_entries=experience_entries,
+            projects=projects,
+            max_items=8,
+        ):
+            text = self._normalize_render_text(tool)
+            if text:
+                evidence_terms.append(text)
+
+        evidence_terms = [
+            item
+            for idx, item in enumerate(evidence_terms)
+            if item and self._normalize_text_key(item) not in {
+                self._normalize_text_key(other)
+                for other in evidence_terms[:idx]
+            }
+        ]
+
+        offer_hits = 0.0
+        for term in offer_terms or []:
+            term_text = self._normalize_render_text(term)
+            if not term_text:
+                continue
+            if any(self._match_probe_contains_term(candidate, term_text) for candidate in evidence_terms):
+                offer_hits += 2.1 if " " in self._normalize_match_probe(term_text) else 1.1
+        score += min(5.5, offer_hits)
+
+        if job_title and any(self._match_probe_contains_term(candidate, job_title) for candidate in evidence_terms):
+            score += 1.8
+
+        if anchor_probe and any(self._match_probe_contains_term(anchor_probe, candidate) for candidate in evidence_terms):
+            score += 2.2
+        if recent_probe and any(self._match_probe_contains_term(recent_probe, candidate) for candidate in evidence_terms):
+            score += 1.6
+        if all_experience_probe and any(self._match_probe_contains_term(all_experience_probe, candidate) for candidate in evidence_terms):
+            score += 1.0
+        if project_probe and any(self._match_probe_contains_term(project_probe, candidate) for candidate in evidence_terms):
+            score += 0.8
+
+        generic_labels = {
+            "pack office",
+            "microsoft office",
+            "zoom et teams",
+            "zoom and teams",
+            "dev back",
+        }
+        normalized_display = self._normalize_text_key(display_text)
+        if normalized_display in generic_labels and offer_hits <= 0.0:
+            score -= 2.4
+        if "/" in display_text:
+            score += 1.0
+        if ":" in display_text and any(
+            marker in normalized_display for marker in ("benchmark", "exploration", "evaluation")
+        ):
+            score -= 0.5
+        if any(
+            marker in normalized_display for marker in ("benchmark", "exploration", "evaluation")
+        ) and len(evidence_terms) >= 3:
+            score += 1.2
+
+        rendered_probe = self._normalize_match_probe(
+            " ".join(
+                str(line).strip()
+                for entry in (experience_entries or [])
+                if isinstance(entry, dict)
+                for line in (entry.get("description") or [])
+                if isinstance(line, str) and str(line).strip()
+            )
+        )
+        if rendered_probe and self._match_probe_contains_term(rendered_probe, display_text):
+            score -= 0.8
+
+        return score
+
+    def _select_featured_skills(
+        self,
+        skills: Any,
+        *,
+        max_items: int = 5,
+        offer_terms: Optional[List[str]] = None,
+        job_title: str = "",
+        experience_entries: Any = None,
+        experience_all: Any = None,
+        projects: Any = None,
+    ) -> List[str]:
+        if not isinstance(skills, list):
+            skills = []
+
+        primary: List[Tuple[int, str, str]] = []
+        fallback: List[Tuple[int, str, str]] = []
         seen: set[str] = set()
 
-        def _append(target: List[Tuple[int, str]], value: Any, order: int) -> int:
+        def _append(
+            target: List[Tuple[int, str, str]],
+            value: Any,
+            order: int,
+            *,
+            source: str,
+        ) -> int:
             name = str(value or "").strip()
             key = self._normalize_text_key(name)
             if not name or not key or key in seen:
                 return order
             seen.add(key)
-            target.append((order, name))
+            target.append((order, name, source))
             return order + 1
 
         order = 0
@@ -1763,31 +2411,63 @@ class ExportManager:
                     continue
                 for item in items:
                     if isinstance(item, dict):
-                        order = _append(bucket, item.get("name") or item.get("skill") or "", order)
+                        order = _append(
+                            bucket,
+                            item.get("name") or item.get("skill") or "",
+                            order,
+                            source="skill",
+                        )
                     else:
-                        order = _append(bucket, item, order)
+                        order = _append(bucket, item, order, source="skill")
             elif isinstance(block, str):
-                order = _append(primary, block, order)
+                order = _append(primary, block, order, source="skill")
 
         candidates = primary or fallback
         if not candidates:
             return []
 
+        experience_probe_entries = [
+            item
+            for item in ((experience_entries or []) or (experience_all or []) or [])
+            if isinstance(item, dict)
+        ]
         ranked = sorted(
             (
                 (
-                    self._score_featured_skill_candidate(name) + (0.8 if (order, name) in primary else 0.0),
+                    self._score_featured_skill_relevance(
+                        name,
+                        self._rewrite_featured_skill_label(
+                            name,
+                            experience_entries=experience_probe_entries or (experience_all or []),
+                            projects=projects,
+                        ),
+                        offer_terms=list(offer_terms or []),
+                        job_title=job_title,
+                        experience_entries=experience_probe_entries or (experience_all or []),
+                        projects=projects,
+                    ),
                     order,
-                    name,
+                    self._rewrite_featured_skill_label(
+                        name,
+                        experience_entries=experience_probe_entries or (experience_all or []),
+                        projects=projects,
+                    ) or name,
+                    source,
                 )
-                for order, name in candidates
+                for order, name, source in candidates
             ),
             key=lambda row: (-row[0], row[1]),
         )
-        selected = [name for score, _order, name in ranked if score > -2.5]
-        if not selected:
-            selected = [name for _score, _order, name in ranked]
-        return selected[: max(1, int(max_items or 1))]
+        selected = [name for score, _order, name, _source in ranked if score > -2.5]
+        deduped: List[str] = []
+        seen_selected: set[str] = set()
+        for item in selected:
+            key = self._normalize_text_key(item)
+            if not key or key in seen_selected:
+                continue
+            seen_selected.add(key)
+            deduped.append(item)
+        return deduped[: max(1, int(max_items or 1))]
 
     def _select_featured_soft_skills(self, soft_skills: Any, *, max_items: int = 3) -> List[str]:
         if not isinstance(soft_skills, list):
@@ -1893,9 +2573,9 @@ class ExportManager:
             seen.add(key)
             terms.append(text)
 
-        for item in self._collect_skill_names_for_compact_summary((formatted_data or {}).get("skills")):
-            _append(item)
         for item in (formatted_data or {}).get("featured_skills") or []:
+            _append(item)
+        for item in self._collect_skill_names_for_compact_summary((formatted_data or {}).get("skills")):
             _append(item)
 
         for cert in (formatted_data or {}).get("featured_certifications") or []:
@@ -2374,7 +3054,15 @@ class ExportManager:
             if isinstance(item, dict)
         ]
         offer_terms = self._collect_offer_terms_for_render(formatted_data)
-        anchor_exp = experience_entries[0] if experience_entries else None
+        anchor_exp = (
+            sorted(
+                experience_entries,
+                key=lambda item: float(item.get("render_alignment_score") or 0.0),
+                reverse=True,
+            )[0]
+            if experience_entries
+            else None
+        )
         recent_exp = None
         if experience_entries:
             recent_exp = sorted(
@@ -2518,24 +3206,23 @@ class ExportManager:
     ) -> List[Dict[str, Any]]:
         if not isinstance(experiences, list):
             return []
-        ranked_experiences, _scored_rows = self._rank_experiences_for_render(
+        ranked_experiences, scored_rows = self._rank_experiences_for_render(
             [item for item in experiences if isinstance(item, dict)],
             job_title=job_title,
             offer_terms=offer_terms,
         )
-        ranked_keys = [
-            self._normalize_text_key(
-                "::".join(
-                    [
-                        str(item.get("title") or "").strip(),
-                        str(item.get("company") or "").strip(),
-                        str(item.get("start_date") or "").strip(),
-                        str(item.get("end_date") or "").strip(),
-                    ]
-                )
-            )
-            for item in ranked_experiences
-        ]
+        ranked_keys = [self._experience_identity_key(item) for item in ranked_experiences]
+        score_by_key = {
+            self._experience_identity_key(item): float(score)
+            for score, _recency, _position, _info_units, item in scored_rows
+            if isinstance(item, dict)
+        }
+        info_units_by_key = {
+            self._experience_identity_key(item): int(info_units or 1)
+            for _score, _recency, _position, info_units, item in scored_rows
+            if isinstance(item, dict)
+        }
+        max_roles_limit = max(1, int(max_roles or 1))
         most_recent_key = ""
         if ranked_experiences:
             most_recent_exp = sorted(
@@ -2543,31 +3230,51 @@ class ExportManager:
                 key=self._experience_recency_rank,
                 reverse=True,
             )[0]
-            most_recent_key = self._normalize_text_key(
-                "::".join(
-                    [
-                        str(most_recent_exp.get("title") or "").strip(),
-                        str(most_recent_exp.get("company") or "").strip(),
-                        str(most_recent_exp.get("start_date") or "").strip(),
-                        str(most_recent_exp.get("end_date") or "").strip(),
-                    ]
+            most_recent_key = self._experience_identity_key(most_recent_exp)
+        anchor_key = ranked_keys[0] if ranked_keys else ""
+
+        render_candidates = [item for item in experiences if isinstance(item, dict)]
+        if len(render_candidates) > max_roles_limit:
+            selected_candidates = list(render_candidates[:max_roles_limit])
+            selected_keys = [self._experience_identity_key(item) for item in selected_candidates]
+            if anchor_key and anchor_key not in selected_keys:
+                drop_index = len(selected_candidates) - 1
+                for idx in range(len(selected_candidates) - 1, -1, -1):
+                    candidate_key = selected_keys[idx]
+                    if candidate_key != anchor_key:
+                        drop_index = idx
+                        if candidate_key != most_recent_key:
+                            break
+                selected_candidates.pop(drop_index)
+                anchor_candidate = next(
+                    (
+                        item
+                        for item in render_candidates
+                        if self._experience_identity_key(item) == anchor_key
+                    ),
+                    None,
                 )
-            )
+                if anchor_candidate is not None:
+                    selected_candidates.append(anchor_candidate)
+                selected_key_set = {
+                    self._experience_identity_key(item)
+                    for item in selected_candidates
+                    if isinstance(item, dict)
+                }
+                render_candidates = [
+                    item
+                    for item in render_candidates
+                    if self._experience_identity_key(item) in selected_key_set
+                ]
+            else:
+                render_candidates = selected_candidates
+
         compacted: List[Dict[str, Any]] = []
-        for exp in experiences:
+        for exp in render_candidates:
             if not isinstance(exp, dict):
                 continue
             entry = dict(exp)
-            exp_key = self._normalize_text_key(
-                "::".join(
-                    [
-                        str(entry.get("title") or "").strip(),
-                        str(entry.get("company") or "").strip(),
-                        str(entry.get("start_date") or "").strip(),
-                        str(entry.get("end_date") or "").strip(),
-                    ]
-                )
-            )
+            exp_key = self._experience_identity_key(entry)
             source_description = [
                 self._normalize_render_text(item)
                 for item in (entry.get("description") or [])
@@ -2576,8 +3283,15 @@ class ExportManager:
             entry["_render_source_description"] = source_description
 
             role_budget = max(1, int(max_bullets or 1))
-            if ranked_keys and exp_key == ranked_keys[0] and len(ranked_keys) > 1:
-                role_budget = max(role_budget + 1, 4)
+            exp_score = float(score_by_key.get(exp_key) or 0.0)
+            info_units = int(info_units_by_key.get(exp_key) or 1)
+            if ranked_keys and exp_key == ranked_keys[0]:
+                if len(source_description) >= 9 or info_units >= 7:
+                    role_budget = max(role_budget + 3, 6)
+                elif len(source_description) >= 6 or info_units >= 6:
+                    role_budget = max(role_budget + 2, 4)
+                elif len(ranked_keys) > 1:
+                    role_budget = max(role_budget + 1, 4)
             elif most_recent_key and exp_key == most_recent_key:
                 role_budget = max(role_budget, 3)
             elif len(compacted) >= 2:
@@ -2591,10 +3305,16 @@ class ExportManager:
                 language_code=language_code,
                 max_items=role_budget,
             )
+            entry["render_alignment_score"] = exp_score
+            entry["render_role_priority"] = (
+                "anchor"
+                if ranked_keys and exp_key == ranked_keys[0]
+                else "recent"
+                if most_recent_key and exp_key == most_recent_key
+                else "support"
+            )
             entry["render_detail_budget"] = role_budget
             compacted.append(entry)
-            if len(compacted) >= max(1, int(max_roles or 1)):
-                break
         return compacted
 
     def _compact_education_entries(

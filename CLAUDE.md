@@ -24,7 +24,7 @@
     candidature target (`Poste vise` / `Target role`) rather than an
     employer label
   - one-page content allocation contract: structured summary assembled from retained blocks,
-    3-5 credible technical skills, a natural positioning sentence appended
+    up to 10 compact credible skill/tool chips when layout allows, a natural positioning sentence appended
     to the summary when grounded offer/company signal exists, 2-4 impacts
     per role chosen from the strongest action-led evidence, with the anchor
     role protected before lower-priority roles, one featured
@@ -32,6 +32,19 @@
     `additional relevant details` blob when structured sections exist;
     never truncate final rendered sentences with `...` / `…`, select whole
     grounded sentences instead
+  - chronology/detail contract: keep rendered roles in reverse chronology and
+    use relevance ranking only to allocate richer detail to the anchor role
+  - featured-skills contract: compact chips come from the profile `skills`
+    pool first; experience/project evidence may reprioritize or compactly
+    rewrite labels, but must not mint extra chips from narrative bullets
+  - skill-list credibility contract: do not backfill weak/noisy skill chips
+    just to hit a display quota; fewer credible chips are better than filler
+  - comparative-skill wording contract: if source evidence names concrete
+    tools for a benchmark/exploration skill, prefer a compact label such as
+    `Benchmark Playwright / Cypress / Selenium`
+  - company-description filter contract: suppress true employer-description
+    intros, but do not drop action/impact bullets merely because they use an
+    early colon or dash
   - positioning-sentence word-sourcing hierarchy:
   - render-summary assembly contract: build the summary after experience /
     project / certification selection, avoid repeating the same signal already

@@ -34,8 +34,21 @@ Current render/export contracts to preserve across agent runs:
   repeat the same signals already visible in rendered experience bullets
 - protect the most aligned experience first; lower-priority roles compress
   before the anchor role loses detail
+- keep rendered experience order reverse-chronological; use relevance only to
+  allocate detail, not to reshuffle the visible role order
+- compact skill chips may extend to roughly 10 visible items when the row-wrap
+  stays clean; do not artificially collapse to 3-5 if the layout remains readable
+- featured skill chips come from the profile `skills` pool first; use
+  experience/project evidence to reprioritize or compactly rewrite labels, but
+  do not mint extra chips directly from narrative bullets
+- do not backfill weak/noisy skill chips just to reach a visual max; fewer
+  credible chips are better than filler
+- when a comparative skill is grounded by named tools, prefer a compact label
+  such as `Benchmark Playwright / Cypress / Selenium`
 - company-description prose is weak context only; rendered experience details
   should prefer the strongest offer-aligned action/impact sentences
+- keep company-description filters narrow enough not to drop action bullets
+  that use an early colon or dash
 - pure offer-only terms belong in the natural positioning sentence only; do
   not present them elsewhere as proven facts unless profile evidence supports
   a coherent implicit inference

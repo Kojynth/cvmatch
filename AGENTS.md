@@ -97,7 +97,13 @@ and must stay usable on heterogeneous Windows/Linux machines.
     targeting sentence, then most recent experience or remaining complement;
   - a natural positioning sentence always present when company/offer signal is
     available and grounded;
-  - 3 to 5 credible technical skills (not a keyword dump);
+  - up to 10 compact, credible skill/tool chips when the layout can support
+    them (not a keyword dump);
+  - rendered experience order stays reverse-chronological; relevance ranking
+    may change detail budgets, not the visible role order;
+  - skill chips come from the profile `skills` pool first; experience/project
+    evidence may rank or rewrite those labels, but should not silently create
+    extra chips from narrative bullets;
   - asymmetric experience density: the most aligned experience keeps the
     richest detail budget, the most recent role may keep a secondary budget,
     and lower-priority roles compress first;
@@ -198,9 +204,26 @@ and must stay usable on heterogeneous Windows/Linux machines.
   roles. The anchor role may keep a richer sentence budget than the others
   when multiple roles compete for space, but all rendered details must still
   favor strong action verbs and explicit impact when available.
+  Rendered role order itself must remain reverse-chronological; use relevance
+  to allocate detail, not to reshuffle chronology.
   Company-description prose is supporting context only: it may inform weak
   sector inference or tie-breaking, but it must not outrank action/impact
   evidence and should usually be omitted from the rendered bullet list.
+- **Featured-skills ranking contract (MANDATORY)**: compact skill chips must
+  be ranked against the target offer, but their source pool remains the
+  profile `skills` JSON. Experience/project evidence may prove, reprioritize,
+  or compactly rewrite a skill label, but it must not silently mint new chips
+  from narrative bullets alone. When a vague comparative skill is backed by
+  explicit tool names in source evidence, prefer a compact comparative label
+  such as `Benchmark Playwright / Cypress / Selenium` over a vague wording or
+  an invented direct-usage claim. Do not backfill low-scoring/noisy skill
+  candidates just to reach a visual chip quota: a shorter credible skill list
+  is better than ten weak chips.
+- **Company-description filter contract (MANDATORY)**: renderer-side guards
+  that suppress employer-description prose must stay narrow. Reject true
+  intros such as `Company: filiale...` or `Employer - Groupe...`, but do not
+  drop action/impact bullets just because they contain an early colon or dash
+  (for example `Data platform: reduced latency...`).
 - **Sector/industry signal contract (MANDATORY)**: sector or industry context
   may be inferred softly from employer/context text and used only as a minor
   ranking or wording bonus. It must never be a hard gate, never override
