@@ -19,21 +19,28 @@ Checklist:
    instead of flattening to an `additional relevant details` blob, and verify
    the summary may keep one short natural positioning sentence while
    experience blocks prefer action/impact sentences over company-description
-   text.
+   text, and compact skill chips may stay visible up to roughly 10 items when
+   the row-wrap remains clean.
 6. If summary assembly is touched, verify the final rendered summary is built
    after retained blocks are selected, avoids repeating signals already
    visible in rendered experience bullets, and keeps the company-targeting
    sentence present.
 7. If experience rendering/selection is touched, verify the anchor experience
-   keeps the richest detail budget before lower-priority roles compress.
-8. If experience dedup is touched, verify duplicate retries/date-format
+   keeps the richest detail budget before lower-priority roles compress, while
+   visible role order itself stays reverse-chronological.
+8. If featured-skill ranking is touched, verify chips still come from the
+   profile `skills` pool first, experience/project evidence only reprioritizes
+   or compactly rewrites labels, and vague comparative skills can become
+   labels such as `Benchmark Playwright / Cypress / Selenium` when source
+   evidence names the tools.
+9. If experience dedup is touched, verify duplicate retries/date-format
    variants collapse while same company/title with conflicting periods stay
    distinct.
-9. If summary adaptation/positioning is touched, verify the phrase surfaces
+10. If summary adaptation/positioning is touched, verify the phrase surfaces
    profile-backed aligned skills/talents first, does not rely on
    `missing_summary_terms` alone, reads naturally in final render, and uses
    sector/industry only as a very weak bonus rather than a gate.
-10. If offer-keyword extraction or prompt preparation is touched, verify
+11. If offer-keyword extraction or prompt preparation is touched, verify
    requirement-heavy sections outrank marketing/culture/benefits/remote text,
    and verify pure offer-only vocabulary stays confined to the natural
    positioning sentence unless profile evidence supports a coherent implicit

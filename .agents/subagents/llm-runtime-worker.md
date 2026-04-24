@@ -56,8 +56,8 @@ risk.
   portfolio URL), placeholder labels like `Lien 1` / `Link 1` are forbidden,
   and the target subtitle must read as a candidature target
   (`Poste vise` / `Target role`) rather than an employer label
-- preserve one-page section allocation: summary (max 3 short lines), 3-5
-  credible technical skills, a natural grounded positioning sentence appended
+- preserve one-page section allocation: summary (max 3 short lines), up to 10
+  compact credible skill/tool chips when layout allows, a natural grounded positioning sentence appended
   to the summary when available, 2-3 concrete impacts per role chosen from
   the strongest action-led evidence, one featured project when present,
   compact certifications, and no fallback to a vague `additional relevant
@@ -69,6 +69,8 @@ risk.
 - when experience rendering is in scope, preserve asymmetric detail budgets:
   protect the most aligned anchor role first, then compress lower-priority
   roles
+- keep rendered role order reverse-chronological; relevance decides detail
+  density, not visible role order
 - do not rely on renderer-side sentence clipping with `...` / `…`; if output
   quality affects render density, prefer better sentence selection upstream
 - treat sector/industry hints only as minor ranking/vocabulary bonuses; they
@@ -81,6 +83,12 @@ risk.
   platforms/systems, prefer naming them explicitly over vague tooling wording
 - generic tool categories are fallback only; if named products are present in
   source evidence, surface the named products instead
+- featured skill chips must come from the profile `skills` pool first;
+  experience/project evidence may reprioritize or compactly rewrite those
+  labels, but must not create extra chips from narrative bullets alone
+- when a skill expresses benchmarking/exploration/comparison and source
+  evidence names concrete tools, use a compact comparative label such as
+  `Benchmark Playwright / Cypress / Selenium`
 - capitalization alone is not enough to treat a fragment as a tool; avoid
   leaking names, headings, companies, or locations into tool hints
 - offer-keyword extraction and prompt preparation must prioritize requirement-
