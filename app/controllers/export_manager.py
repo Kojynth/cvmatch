@@ -2092,6 +2092,15 @@ class ExportManager:
         existing = self._normalize_render_text(
             (formatted_data or {}).get("profile_positioning_sentence") or ""
         )
+        existing_key = self._normalize_text_key(existing)
+        if existing and existing_key and existing_key not in used_keys:
+            used_keys.add(existing_key)
+            return existing
+
+        max_total_terms = 6
+        max_common_terms = 4
+        max_profile_extra_terms = 3
+        max_offer_only_terms = 2
 
         try:
             from ..utils.cv_summary_adaptation import collect_targeted_offer_terms
@@ -2136,7 +2145,7 @@ class ExportManager:
             collect_targeted_offer_terms(
                 common_terms_input,
                 profile_json=formatted_data,
-                max_terms=max(1, len(common_terms_input)),
+                max_terms=min(max_common_terms, max_total_terms),
                 excluded_terms=excluded_terms,
                 job_title=job_title,
             )
@@ -2146,7 +2155,10 @@ class ExportManager:
 
         selected_norms = {self._normalize_text_key(item) for item in common_terms}
         profile_extra_terms: List[str] = []
+        remaining_budget = max(0, max_total_terms - len(common_terms))
         for item in profile_terms:
+            if remaining_budget <= 0 or len(profile_extra_terms) >= max_profile_extra_terms:
+                break
             text = self._normalize_render_text(item)
             norm = self._normalize_text_key(text)
             if not text or not norm or norm in selected_norms or norm in used_keys:
@@ -2157,16 +2169,22 @@ class ExportManager:
                 continue
             selected_norms.add(norm)
             profile_extra_terms.append(text)
+            remaining_budget -= 1
+
+        offer_only_budget = min(
+            max_offer_only_terms,
+            max(0, max_total_terms - len(common_terms) - len(profile_extra_terms)),
+        )
 
         offer_only_terms = (
             collect_targeted_offer_terms(
                 offer_only_input,
                 profile_json=formatted_data,
-                max_terms=max(1, len(offer_only_input)),
+                max_terms=max(1, offer_only_budget),
                 excluded_terms=excluded_terms + common_terms + profile_extra_terms,
                 job_title=job_title,
             )
-            if collect_targeted_offer_terms and offer_only_input
+            if collect_targeted_offer_terms and offer_only_input and offer_only_budget > 0
             else []
         )
 
