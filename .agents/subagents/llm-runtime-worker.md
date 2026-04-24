@@ -65,7 +65,9 @@ risk.
 - when summary assembly is in scope, build the final rendered summary after
   retained experience/project/certification blocks are selected, avoid
   repeating the same signals already visible in rendered experience bullets,
-  and keep the natural company-targeting sentence present
+  and keep the natural company-targeting sentence present; preserve an
+  existing sentence only when it still beats or matches the recomputed
+  candidate in alignment quality
 - when experience rendering is in scope, preserve asymmetric detail budgets:
   protect the most aligned anchor role first, then compress lower-priority
   roles
@@ -87,6 +89,8 @@ risk.
   experience/project evidence may reprioritize or compactly rewrite those
   labels, but must not create extra chips from narrative bullets alone
 - do not backfill weak/noisy skill chips purely to hit the visible chip cap
+- when the profile exposes only a small already-clean skill pool that fits in
+  the chip budget, keep that compact pool instead of over-pruning it
 - when a skill expresses benchmarking/exploration/comparison and source
   evidence names concrete tools, use a compact comparative label such as
   `Benchmark Playwright / Cypress / Selenium`

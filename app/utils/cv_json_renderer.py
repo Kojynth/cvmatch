@@ -40,6 +40,18 @@ _RENDER_POSITIONING_PATTERNS = {
 }
 
 
+def _restore_display_acronyms(value: Any) -> str:
+    text = re.sub(r"\s+", " ", str(value or "").strip()).strip()
+    if not text:
+        return ""
+    return re.sub(
+        r"\b(ai|ml|api|qa|sql|ui|ux|bi|it)\b",
+        lambda match: str(match.group(1) or "").upper(),
+        text,
+        flags=re.IGNORECASE,
+    )
+
+
 def _normalize_description_line(value: Any) -> str:
     text = str(value or "").strip().lower()
     if not text:
@@ -127,7 +139,7 @@ def _build_render_positioning_sentence(
     language_code: str = "fr",
 ) -> str:
     cleaned_terms = re.sub(r"\s+", " ", str(terms or "").strip(" ,;:-"))
-    company_name = re.sub(r"\s+", " ", str(company or "").strip(" ,;:-"))
+    company_name = _restore_display_acronyms(str(company or "").strip(" ,;:-"))
     if not cleaned_terms:
         return ""
     is_en = str(language_code or "").lower().startswith("en")
@@ -136,8 +148,8 @@ def _build_render_positioning_sentence(
             return f"Profile aligned with {company_name} through {cleaned_terms}."
         return f"Profile aligned through {cleaned_terms}."
     if company_name:
-        return f"Profil pertinent pour {company_name} grace a {cleaned_terms}."
-    return f"Profil pertinent grace a {cleaned_terms}."
+        return f"Profil pertinent pour {company_name} grâce à {cleaned_terms}."
+    return f"Profil pertinent grâce à {cleaned_terms}."
 
 
 def _extract_render_positioning_sentence(value: Any, *, language_code: str) -> str:
@@ -175,14 +187,16 @@ def _dedupe_description_lines(lines: List[str]) -> List[str]:
         if not norm:
             continue
         duplicate = False
-        for seen in seen_norms:
+        for idx, seen in enumerate(seen_norms):
             if norm == seen:
                 duplicate = True
                 break
-            if len(norm) >= 40 and norm in seen:
+            if len(norm) >= 24 and norm in seen:
                 duplicate = True
                 break
-            if len(seen) >= 40 and seen in norm:
+            if len(seen) >= 24 and seen in norm:
+                deduped[idx] = text
+                seen_norms[idx] = norm
                 duplicate = True
                 break
         if duplicate:
@@ -353,7 +367,7 @@ def _build_target_role_line(
     *,
     is_en: bool,
 ) -> str:
-    parts = [str(part or "").strip() for part in (job_title, company)]
+    parts = [_restore_display_acronyms(str(part or "").strip()) for part in (job_title, company)]
     parts = [part for part in parts if part]
     if not parts:
         return ""
@@ -722,7 +736,7 @@ def cv_json_to_cv_data(
         is_en=is_en,
     )
     job_title = cv_json.get("target_job_title") or ""
-    company = cv_json.get("target_company") or ""
+    company = _restore_display_acronyms(cv_json.get("target_company") or "")
     target_role_line = _build_target_role_line(job_title, company, is_en=is_en)
 
     return {

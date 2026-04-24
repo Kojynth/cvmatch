@@ -29,7 +29,8 @@ Current render/export contracts to preserve across agent runs:
 - final rendered sentences must stay whole: no `...` / `…` truncation in the
   one-page HTML/PDF path; select better sentences instead of clipping them
 - when a grounding-safe positioning sentence exists, keep it visible in the
-  rendered summary
+  rendered summary, but do not preserve a stale/noisy stored sentence when a
+  recomputed candidate is clearly better aligned
 - build the rendered summary after retained blocks are selected so it does not
   repeat the same signals already visible in rendered experience bullets
 - protect the most aligned experience first; lower-priority roles compress
@@ -42,7 +43,8 @@ Current render/export contracts to preserve across agent runs:
   experience/project evidence to reprioritize or compactly rewrite labels, but
   do not mint extra chips directly from narrative bullets
 - do not backfill weak/noisy skill chips just to reach a visual max; fewer
-  credible chips are better than filler
+  credible chips are better than filler, except when the profile only exposes
+  a small compact skill pool that already fits the visible budget
 - when a comparative skill is grounded by named tools, prefer a compact label
   such as `Benchmark Playwright / Cypress / Selenium`
 - company-description prose is weak context only; rendered experience details

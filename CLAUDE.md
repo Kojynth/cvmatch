@@ -38,7 +38,9 @@
     pool first; experience/project evidence may reprioritize or compactly
     rewrite labels, but must not mint extra chips from narrative bullets
   - skill-list credibility contract: do not backfill weak/noisy skill chips
-    just to hit a display quota; fewer credible chips are better than filler
+    just to hit a display quota; fewer credible chips are better than filler,
+    except when the profile only exposes a small compact skill pool that
+    already fits within budget
   - comparative-skill wording contract: if source evidence names concrete
     tools for a benchmark/exploration skill, prefer a compact label such as
     `Benchmark Playwright / Cypress / Selenium`
@@ -88,7 +90,9 @@
   they must not evict better grounded aligned signal
 - positioning render contract: when present, the positioning sentence stays
   visible in the final rendered summary and should read
-  naturally, not as a raw keyword dump
+  naturally, not as a raw keyword dump; preserve an existing sentence only
+  if it remains competitive with the renderer's recomputed candidate terms,
+  otherwise normalize and rebuild it
 - offer-only term placement contract: pure offer-only vocabulary belongs only
   in the natural positioning sentence; do not surface unsupported offer-only
   terms as proven skills or experience facts unless profile evidence supports

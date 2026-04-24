@@ -149,6 +149,10 @@ and must stay usable on heterogeneous Windows/Linux machines.
   instead of stripping it from HTML/PDF output. The sentence should read
   naturally, echo the target company/offer, and remain grounded in
   profile-backed or offer-backed terms selected by the hierarchy above.
+  Existing positioning text may be preserved only if it remains competitive
+  against the renderer's recomputed candidate terms; if the stored sentence is
+  weaker, noisier, or less aligned than the recomputed offer/profile mix, the
+  renderer must normalize casing/accents and rebuild it.
 - **Offer-only term placement contract (MANDATORY)**: pure offer-only terms
   (supported by the offer but not directly evidenced in the profile) may
   appear only inside the natural positioning sentence of the profile block.
@@ -218,7 +222,9 @@ and must stay usable on heterogeneous Windows/Linux machines.
   such as `Benchmark Playwright / Cypress / Selenium` over a vague wording or
   an invented direct-usage claim. Do not backfill low-scoring/noisy skill
   candidates just to reach a visual chip quota: a shorter credible skill list
-  is better than ten weak chips.
+  is better than ten weak chips. Exception: when the profile only exposes a
+  small compact skill pool that already fits within the chip budget, keep that
+  clean pool instead of over-pruning it just because one term is less aligned.
 - **Company-description filter contract (MANDATORY)**: renderer-side guards
   that suppress employer-description prose must stay narrow. Reject true
   intros such as `Company: filiale...` or `Employer - Groupe...`, but do not

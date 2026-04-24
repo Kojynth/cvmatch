@@ -33,14 +33,17 @@ Checklist:
    or compactly rewrites labels, and vague comparative skills can become
    labels such as `Benchmark Playwright / Cypress / Selenium` when source
    evidence names the tools. Do not backfill weak/noisy chips just to reach
-   the visible cap.
+   the visible cap, but preserve a small already-clean skill pool when it
+   still fits within the visible budget.
 9. If experience dedup is touched, verify duplicate retries/date-format
    variants collapse while same company/title with conflicting periods stay
    distinct.
 10. If summary adaptation/positioning is touched, verify the phrase surfaces
    profile-backed aligned skills/talents first, does not rely on
-   `missing_summary_terms` alone, reads naturally in final render, and uses
-   sector/industry only as a very weak bonus rather than a gate.
+   `missing_summary_terms` alone, reads naturally in final render, uses
+   sector/industry only as a very weak bonus rather than a gate, and does not
+   blindly preserve a worse stored positioning sentence when the recomputed
+   candidate is more aligned.
 11. If offer-keyword extraction or prompt preparation is touched, verify
    requirement-heavy sections outrank marketing/culture/benefits/remote text,
    and verify pure offer-only vocabulary stays confined to the natural
