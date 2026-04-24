@@ -61,9 +61,14 @@ history, and `mass_apply`.
 - when summary adaptation/positioning is touched, verify the candidate pool
   uses profile-backed aligned skills/talents first; cross-domain offer-only
   terms may remain, but must not evict better grounded aligned signal
+- when summary assembly is touched, verify the final rendered summary is built
+  after retained blocks are selected, avoids repeating signals already visible
+  in experience bullets, and keeps the natural company-targeting sentence
+  present
 - when experience rendering/selection is touched, verify company-description
   prose is treated as weak context only and does not outrank stronger
-  action/impact sentences aligned with the offer
+  action/impact sentences aligned with the offer; also verify the anchor
+  experience keeps the richest detail budget before lower-priority roles
 - when offer-keyword extraction is touched, verify requirement-heavy sections
   outrank marketing/culture/benefits/remote-policy text in downstream terms
 - when offer-only targeting is touched, verify pure offer-only terms stay in

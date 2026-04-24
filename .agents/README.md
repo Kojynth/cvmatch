@@ -28,8 +28,12 @@ Current render/export contracts to preserve across agent runs:
   featured project, certifications) instead of flattening content into a blob
 - final rendered sentences must stay whole: no `...` / `…` truncation in the
   one-page HTML/PDF path; select better sentences instead of clipping them
-- when a grounding-safe positioning sentence exists, keep it as the closing
-  sentence of the rendered summary
+- when a grounding-safe positioning sentence exists, keep it visible in the
+  rendered summary
+- build the rendered summary after retained blocks are selected so it does not
+  repeat the same signals already visible in rendered experience bullets
+- protect the most aligned experience first; lower-priority roles compress
+  before the anchor role loses detail
 - company-description prose is weak context only; rendered experience details
   should prefer the strongest offer-aligned action/impact sentences
 - pure offer-only terms belong in the natural positioning sentence only; do

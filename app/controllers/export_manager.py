@@ -253,9 +253,6 @@ class ExportManager:
             formatted_data.get("soft_skills"),
             max_items=3,
         )
-        formatted_data["profile_summary_lines"] = self._build_render_summary_lines(
-            formatted_data
-        )
         formatted_data["featured_project"] = self._build_featured_project(
             formatted_data.get("projects"),
         )
@@ -288,6 +285,9 @@ class ExportManager:
             max_bullets=3,
         )
         formatted_data["experience_top_n"] = len(formatted_data["experience"])
+        formatted_data["profile_summary_lines"] = self._build_render_summary_lines(
+            formatted_data
+        )
 
         try:
             education_data = formatted_data.get("education")
@@ -1659,21 +1659,101 @@ class ExportManager:
             "strengths",
         }
 
+    def _score_featured_skill_candidate(self, value: Any) -> float:
+        text = self._normalize_render_text(value)
+        if not text:
+            return -100.0
+
+        norm = self._normalize_text_key(text)
+        tokens = [token for token in norm.split() if token]
+        if not tokens:
+            return -100.0
+
+        action_starters = {
+            "analyse",
+            "analyser",
+            "build",
+            "building",
+            "collaborate",
+            "collaborating",
+            "concevoir",
+            "contribute",
+            "contributing",
+            "deliver",
+            "delivering",
+            "develop",
+            "developing",
+            "driving",
+            "ensure",
+            "ensuring",
+            "execute",
+            "executing",
+            "improve",
+            "improving",
+            "implement",
+            "implementing",
+            "integrate",
+            "integrating",
+            "lead",
+            "leading",
+            "manage",
+            "managing",
+            "piloter",
+            "support",
+            "supporting",
+            "suivre",
+            "test",
+            "testing",
+            "use",
+            "using",
+            "validate",
+            "validating",
+        }
+        short_allowed = {"ai", "ml", "qa", "ui", "ux", "bi", "ci", "cd", "db", "sql", "api", "erp", "crm"}
+
+        score = 0.0
+        if len(tokens) == 1:
+            score += 1.5
+        elif len(tokens) <= 3:
+            score += 1.0
+        elif len(tokens) <= 5:
+            score += 0.2
+        else:
+            score -= 2.5
+
+        if len(text) > 42:
+            score -= 1.2
+        if text.endswith((".", "!", "?")):
+            score -= 2.0
+        if re.search(r"[+#./0-9]", text) or re.search(r"[A-Z]", text[1:]) or re.fullmatch(r"[A-Z0-9]{2,8}", text):
+            score += 1.2
+        if any(token in short_allowed for token in tokens):
+            score += 1.0
+        if tokens[0] in action_starters:
+            score -= 4.0
+        if any(token in {"with", "through", "using"} for token in tokens[:2]):
+            score -= 1.0
+
+        return score
+
     def _select_featured_skills(self, skills: Any, *, max_items: int = 5) -> List[str]:
         if not isinstance(skills, list):
             return []
 
-        primary: List[str] = []
-        fallback: List[str] = []
+        primary: List[Tuple[int, str]] = []
+        fallback: List[Tuple[int, str]] = []
         seen: set[str] = set()
 
-        def _append(target: List[str], value: Any) -> None:
+        def _append(target: List[Tuple[int, str]], value: Any, order: int) -> int:
             name = str(value or "").strip()
             key = self._normalize_text_key(name)
             if not name or not key or key in seen:
-                return
+                return order
             seen.add(key)
-            target.append(name)
+            target.append((order, name))
+            return order + 1
+
+        order = 0
 
         for block in skills:
             if isinstance(block, dict):
@@ -1683,14 +1763,31 @@ class ExportManager:
                     continue
                 for item in items:
                     if isinstance(item, dict):
-                        _append(bucket, item.get("name") or item.get("skill") or "")
+                        order = _append(bucket, item.get("name") or item.get("skill") or "", order)
                     else:
-                        _append(bucket, item)
+                        order = _append(bucket, item, order)
             elif isinstance(block, str):
-                _append(primary, block)
+                order = _append(primary, block, order)
 
-        combined = primary or fallback
-        return combined[: max(1, int(max_items or 1))]
+        candidates = primary or fallback
+        if not candidates:
+            return []
+
+        ranked = sorted(
+            (
+                (
+                    self._score_featured_skill_candidate(name) + (0.8 if (order, name) in primary else 0.0),
+                    order,
+                    name,
+                )
+                for order, name in candidates
+            ),
+            key=lambda row: (-row[0], row[1]),
+        )
+        selected = [name for score, _order, name in ranked if score > -2.5]
+        if not selected:
+            selected = [name for _score, _order, name in ranked]
+        return selected[: max(1, int(max_items or 1))]
 
     def _select_featured_soft_skills(self, soft_skills: Any, *, max_items: int = 3) -> List[str]:
         if not isinstance(soft_skills, list):
@@ -1710,6 +1807,507 @@ class ExportManager:
             if len(selected) >= max(1, int(max_items or 1)):
                 break
         return selected
+
+    def _summary_text_signature(self, value: Any) -> frozenset[str]:
+        short_allowed = {"ai", "ml", "qa", "ui", "ux", "bi", "ci", "cd", "db", "sql", "api", "erp", "crm"}
+        tokens = [
+            token
+            for token in self._normalize_text_key(value).split()
+            if len(token) >= 3 or token in short_allowed
+        ]
+        return frozenset(tokens)
+
+    def _collect_rendered_summary_signatures(
+        self,
+        formatted_data: Dict[str, Any],
+    ) -> List[frozenset[str]]:
+        signatures: List[frozenset[str]] = []
+
+        def _append(value: Any) -> None:
+            signature = self._summary_text_signature(value)
+            if len(signature) >= 2:
+                signatures.append(signature)
+
+        for exp in (formatted_data or {}).get("experience") or []:
+            if not isinstance(exp, dict):
+                continue
+            _append(exp.get("title"))
+            _append(exp.get("company"))
+            for line in exp.get("description") or []:
+                _append(line)
+
+        project = (formatted_data or {}).get("featured_project")
+        if isinstance(project, dict):
+            _append(project.get("name"))
+            for line in project.get("description_lines") or []:
+                _append(line)
+
+        for cert in (formatted_data or {}).get("featured_certifications") or []:
+            if isinstance(cert, dict):
+                _append(cert.get("name"))
+
+        return signatures
+
+    def _sentence_overlaps_rendered_content(
+        self,
+        value: Any,
+        signatures: List[frozenset[str]],
+    ) -> bool:
+        probe = self._summary_text_signature(value)
+        if len(probe) < 2:
+            return False
+        for signature in signatures:
+            if not signature:
+                continue
+            intersection = len(probe & signature)
+            if intersection >= max(2, int(len(probe) * 0.7)):
+                return True
+        return False
+
+    def _group_summary_sentences(self, sentences: List[str]) -> List[str]:
+        cleaned: List[str] = []
+        seen: set[str] = set()
+        for item in sentences or []:
+            text = self._normalize_render_text(item)
+            key = self._normalize_text_key(text)
+            if not text or not key or key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(text)
+
+        if len(cleaned) <= 2:
+            return cleaned
+        if len(cleaned) == 3:
+            return [" ".join(cleaned[:2]), cleaned[2]]
+        return [" ".join(cleaned[:2]), " ".join(cleaned[2:4])]
+
+    def _collect_profile_summary_terms(self, formatted_data: Dict[str, Any]) -> List[str]:
+        terms: List[str] = []
+        seen: set[str] = set()
+
+        def _append(value: Any) -> None:
+            text = self._normalize_render_text(value)
+            key = self._normalize_text_key(text)
+            if not text or not key or key in seen:
+                return
+            seen.add(key)
+            terms.append(text)
+
+        for item in self._collect_skill_names_for_compact_summary((formatted_data or {}).get("skills")):
+            _append(item)
+        for item in (formatted_data or {}).get("featured_skills") or []:
+            _append(item)
+
+        for cert in (formatted_data or {}).get("featured_certifications") or []:
+            if isinstance(cert, dict):
+                _append(cert.get("name"))
+
+        return terms
+
+    def _pick_distinct_summary_candidate(
+        self,
+        candidates: List[str],
+        *,
+        rendered_signatures: List[frozenset[str]],
+        used_keys: set[str],
+    ) -> str:
+        while candidates:
+            text = self._normalize_render_text(candidates.pop(0))
+            key = self._normalize_text_key(text)
+            if not text or not key or key in used_keys:
+                continue
+            if self._sentence_overlaps_rendered_content(text, rendered_signatures):
+                continue
+            used_keys.add(key)
+            return text
+        return ""
+
+    def _build_summary_profile_sentence(
+        self,
+        formatted_data: Dict[str, Any],
+        *,
+        rendered_signatures: List[frozenset[str]],
+        used_keys: set[str],
+        summary_candidates: List[str],
+    ) -> str:
+        candidate = self._pick_distinct_summary_candidate(
+            summary_candidates,
+            rendered_signatures=rendered_signatures,
+            used_keys=used_keys,
+        )
+        if candidate:
+            return candidate
+
+        is_en = str((formatted_data or {}).get("language") or "").lower().startswith("en")
+        role = (
+            str((formatted_data or {}).get("job_title") or "").strip()
+            or str((((formatted_data or {}).get("experience") or [{}])[0]).get("title") or "").strip()
+        )
+        skills = [
+            skill
+            for skill in ((formatted_data or {}).get("featured_skills") or [])
+            if not self._sentence_overlaps_rendered_content(skill, rendered_signatures)
+        ]
+        if not skills:
+            skills = list((formatted_data or {}).get("featured_skills") or [])
+        skills_text = self._human_join(skills[:4], is_en=is_en)
+        if role and skills_text:
+            sentence = (
+                f"{role} with experience in {skills_text}."
+                if is_en
+                else f"{role} avec experience en {skills_text}."
+            )
+        elif role:
+            sentence = role if role.endswith((".", "!", "?")) else f"{role}."
+        else:
+            sentence = ""
+        if sentence:
+            used_keys.add(self._normalize_text_key(sentence))
+        return sentence
+
+    def _collect_matched_offer_terms_for_experience(
+        self,
+        exp: Dict[str, Any],
+        *,
+        offer_terms: List[str],
+        excluded_terms: List[str],
+    ) -> List[str]:
+        if not isinstance(exp, dict):
+            return []
+
+        try:
+            from ..utils.keyword_alignment import (
+                normalize_keyword_for_match,
+                normalized_term_in_probe as normalized_term_present,
+            )
+        except Exception:
+            def normalize_keyword_for_match(value):
+                return self._normalize_text_key(value)
+
+            def normalized_term_present(probe, term):
+                return str(term or "") in str(probe or "")
+
+        parts: List[str] = []
+        for key in ("title", "company", "summary", "location"):
+            value = exp.get(key)
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip())
+        for line in exp.get("_render_source_description") or []:
+            if isinstance(line, str) and line.strip():
+                parts.append(line.strip())
+        for tech in exp.get("technologies") or []:
+            if isinstance(tech, str) and tech.strip():
+                parts.append(tech.strip())
+
+        blob_norm = normalize_keyword_for_match(" ".join(parts))
+        rendered_norm = normalize_keyword_for_match(" ".join(exp.get("description") or []))
+        if not blob_norm:
+            return []
+
+        excluded_norms = {
+            normalize_keyword_for_match(item)
+            for item in (excluded_terms or [])
+            if normalize_keyword_for_match(item)
+        }
+        selected: List[str] = []
+        seen: set[str] = set()
+        for term in offer_terms or []:
+            text = self._normalize_render_text(term)
+            norm = normalize_keyword_for_match(text)
+            if not text or not norm or norm in seen or norm in excluded_norms:
+                continue
+            if not normalized_term_present(blob_norm, norm):
+                continue
+            if rendered_norm and normalized_term_present(rendered_norm, norm):
+                continue
+            seen.add(norm)
+            selected.append(text)
+        return selected
+
+    def _build_experience_focus_sentence(
+        self,
+        exp: Dict[str, Any],
+        *,
+        label: str,
+        offer_terms: List[str],
+        rendered_signatures: List[frozenset[str]],
+        used_keys: set[str],
+        language_code: str,
+    ) -> str:
+        if not isinstance(exp, dict):
+            return ""
+
+        is_en = str(language_code or "").lower().startswith("en")
+        title = str(exp.get("title") or "").strip()
+        company = str(exp.get("company") or "").strip()
+        matched_terms = self._collect_matched_offer_terms_for_experience(
+            exp,
+            offer_terms=offer_terms,
+            excluded_terms=list(used_keys),
+        )
+        matched_terms = [
+            term
+            for term in matched_terms
+            if not self._sentence_overlaps_rendered_content(term, rendered_signatures)
+        ]
+        terms_text = self._human_join(matched_terms[:4], is_en=is_en)
+
+        if label == "recent":
+            prefix = "Recent complementary experience" if is_en else "Experience recente complementaire"
+        else:
+            prefix = "Core experience anchor" if is_en else "Point d'appui principal"
+
+        head = title
+        if company:
+            head = f"{title} at {company}" if is_en and title else f"{title} chez {company}" if title else company
+
+        if not head:
+            return ""
+
+        if terms_text:
+            sentence = (
+                f"{prefix}: {head}, centered on {terms_text}."
+                if is_en
+                else f"{prefix} : {head}, avec un positionnement sur {terms_text}."
+            )
+        else:
+            sentence = f"{prefix}: {head}." if is_en else f"{prefix} : {head}."
+
+        key = self._normalize_text_key(sentence)
+        if not key or key in used_keys:
+            return ""
+        used_keys.add(key)
+        return sentence
+
+    def _build_targeted_summary_sentence(
+        self,
+        formatted_data: Dict[str, Any],
+        *,
+        rendered_signatures: List[frozenset[str]],
+        used_keys: set[str],
+    ) -> str:
+        is_en = str((formatted_data or {}).get("language") or "").lower().startswith("en")
+        company = str((formatted_data or {}).get("company") or "").strip()
+        job_title = str((formatted_data or {}).get("job_title") or "").strip()
+        existing = self._normalize_render_text(
+            (formatted_data or {}).get("profile_positioning_sentence") or ""
+        )
+        existing_key = self._normalize_text_key(existing)
+        if existing and existing_key and existing_key not in used_keys:
+            used_keys.add(existing_key)
+            return existing
+
+        max_total_terms = 6
+        max_common_terms = 4
+        max_profile_extra_terms = 3
+        max_offer_only_terms = 2
+
+        try:
+            from ..utils.cv_summary_adaptation import collect_targeted_offer_terms
+        except Exception:
+            collect_targeted_offer_terms = None
+
+        offer_terms = self._collect_offer_terms_for_render(formatted_data)
+        profile_terms = self._collect_profile_summary_terms(formatted_data)
+        profile_norms = [self._normalize_text_key(item) for item in profile_terms if self._normalize_text_key(item)]
+
+        rendered_probe_parts: List[str] = []
+        for exp in (formatted_data or {}).get("experience") or []:
+            if not isinstance(exp, dict):
+                continue
+            rendered_probe_parts.extend(
+                [
+                    str(exp.get("title") or "").strip(),
+                    str(exp.get("company") or "").strip(),
+                    " ".join(str(line) for line in (exp.get("description") or []) if isinstance(line, str)),
+                ]
+            )
+        rendered_probe = self._normalize_text_key(" ".join(rendered_probe_parts))
+
+        common_terms_input: List[str] = []
+        offer_only_input: List[str] = []
+        seen_offer: set[str] = set()
+        for term in offer_terms:
+            text = self._normalize_render_text(term)
+            norm = self._normalize_text_key(text)
+            if not text or not norm or norm in seen_offer:
+                continue
+            seen_offer.add(norm)
+            if rendered_probe and norm in rendered_probe:
+                continue
+            if any(norm == item or norm in item or item in norm for item in profile_norms):
+                common_terms_input.append(text)
+            else:
+                offer_only_input.append(text)
+
+        excluded_terms = list(used_keys)
+        common_terms = (
+            collect_targeted_offer_terms(
+                common_terms_input,
+                profile_json=formatted_data,
+                max_terms=min(max_common_terms, max_total_terms),
+                excluded_terms=excluded_terms,
+                job_title=job_title,
+            )
+            if collect_targeted_offer_terms and common_terms_input
+            else []
+        )
+
+        selected_norms = {self._normalize_text_key(item) for item in common_terms}
+        profile_extra_terms: List[str] = []
+        remaining_budget = max(0, max_total_terms - len(common_terms))
+        for item in profile_terms:
+            if remaining_budget <= 0 or len(profile_extra_terms) >= max_profile_extra_terms:
+                break
+            text = self._normalize_render_text(item)
+            norm = self._normalize_text_key(text)
+            if not text or not norm or norm in selected_norms or norm in used_keys:
+                continue
+            if rendered_probe and norm in rendered_probe:
+                continue
+            if self._sentence_overlaps_rendered_content(text, rendered_signatures):
+                continue
+            selected_norms.add(norm)
+            profile_extra_terms.append(text)
+            remaining_budget -= 1
+
+        offer_only_budget = min(
+            max_offer_only_terms,
+            max(0, max_total_terms - len(common_terms) - len(profile_extra_terms)),
+        )
+
+        offer_only_terms = (
+            collect_targeted_offer_terms(
+                offer_only_input,
+                profile_json=formatted_data,
+                max_terms=max(1, offer_only_budget),
+                excluded_terms=excluded_terms + common_terms + profile_extra_terms,
+                job_title=job_title,
+            )
+            if collect_targeted_offer_terms and offer_only_input and offer_only_budget > 0
+            else []
+        )
+
+        clauses: List[str] = []
+        if common_terms:
+            clauses.append(", ".join(common_terms))
+        if profile_extra_terms:
+            clauses.append(", ".join(profile_extra_terms))
+        if offer_only_terms:
+            clauses.append(
+                (
+                    f"clear proximity to {', '.join(offer_only_terms)}"
+                    if is_en
+                    else f"une proximite claire avec {', '.join(offer_only_terms)}"
+                )
+            )
+
+        if clauses and company:
+            sentence = (
+                f"Profile aligned with {company} through {'; '.join(clauses)}."
+                if is_en
+                else f"Profil pertinent pour {company} grace a {'; '.join(clauses)}."
+            )
+        elif clauses:
+            sentence = (
+                f"Profile aligned through {'; '.join(clauses)}."
+                if is_en
+                else f"Profil pertinent grace a {'; '.join(clauses)}."
+            )
+        elif existing:
+            sentence = existing
+        elif company and job_title:
+            sentence = (
+                f"Profile aligned with {company} for a {job_title} role."
+                if is_en
+                else f"Profil pertinent pour {company} pour un poste de {job_title}."
+            )
+        else:
+            sentence = existing
+
+        key = self._normalize_text_key(sentence)
+        if sentence and key and key not in used_keys:
+            used_keys.add(key)
+            return sentence
+        return ""
+
+    def _build_summary_complement_sentence(
+        self,
+        formatted_data: Dict[str, Any],
+        *,
+        rendered_signatures: List[frozenset[str]],
+        used_keys: set[str],
+        summary_candidates: List[str],
+    ) -> str:
+        candidate = self._pick_distinct_summary_candidate(
+            summary_candidates,
+            rendered_signatures=rendered_signatures,
+            used_keys=used_keys,
+        )
+        if candidate:
+            return candidate
+
+        is_en = str((formatted_data or {}).get("language") or "").lower().startswith("en")
+        certifications = [
+            str(cert.get("name") or "").strip()
+            for cert in ((formatted_data or {}).get("featured_certifications") or [])
+            if isinstance(cert, dict) and str(cert.get("name") or "").strip()
+        ]
+        certifications = [
+            item
+            for item in certifications
+            if not self._sentence_overlaps_rendered_content(item, rendered_signatures)
+        ]
+        if certifications:
+            joined = self._human_join(certifications[:3], is_en=is_en)
+            sentence = (
+                f"Additional credentials include {joined}."
+                if is_en
+                else f"Reperes complementaires : {joined}."
+            )
+            used_keys.add(self._normalize_text_key(sentence))
+            return sentence
+
+        project = (formatted_data or {}).get("featured_project")
+        if isinstance(project, dict) and str(project.get("name") or "").strip():
+            name = str(project.get("name") or "").strip()
+            techs = [
+                tech
+                for tech in (project.get("technologies") or [])
+                if not self._sentence_overlaps_rendered_content(tech, rendered_signatures)
+            ]
+            if techs:
+                tech_text = self._human_join(techs[:4], is_en=is_en)
+                sentence = (
+                    f"Highlighted project: {name}, with {tech_text}."
+                    if is_en
+                    else f"Projet mis en avant : {name}, avec {tech_text}."
+                )
+            else:
+                sentence = (
+                    f"Highlighted project: {name}."
+                    if is_en
+                    else f"Projet mis en avant : {name}."
+                )
+            used_keys.add(self._normalize_text_key(sentence))
+            return sentence
+
+        soft_skills = [
+            item
+            for item in ((formatted_data or {}).get("featured_soft_skills") or [])
+            if not self._sentence_overlaps_rendered_content(item, rendered_signatures)
+        ]
+        if soft_skills:
+            joined = self._human_join(soft_skills[:3], is_en=is_en)
+            sentence = (
+                f"Working strengths include {joined}."
+                if is_en
+                else f"Atouts de fonctionnement : {joined}."
+            )
+            used_keys.add(self._normalize_text_key(sentence))
+            return sentence
+
+        return ""
 
     def _build_summary_fallback_lines(self, formatted_data: Dict[str, Any]) -> List[str]:
         is_en = str((formatted_data or {}).get("language") or "").lower().startswith("en")
@@ -1749,36 +2347,88 @@ class ExportManager:
         return lines[:2]
 
     def _build_render_summary_lines(self, formatted_data: Dict[str, Any]) -> List[str]:
-        is_en = str((formatted_data or {}).get("language") or "").lower().startswith("en")
+        language_code = str((formatted_data or {}).get("language") or "fr")
+        is_en = language_code.lower().startswith("en")
         summary = str((formatted_data or {}).get("profile_summary") or "").strip()
-        positioning = str((formatted_data or {}).get("profile_positioning_sentence") or "").strip()
         summary_sentences = [
             sentence
             for sentence in self._split_sentences(summary)
             if not self._is_positioning_sentence(sentence, is_en=is_en)
         ]
-        lines = self._select_whole_sentences(
-            summary_sentences,
-            max_items=3,
-            char_budget=360,
-            preferred_tail=positioning,
+        rendered_signatures = self._collect_rendered_summary_signatures(formatted_data)
+        used_keys: set[str] = set()
+        lines: List[str] = []
+
+        profile_sentence = self._build_summary_profile_sentence(
+            formatted_data,
+            rendered_signatures=rendered_signatures,
+            used_keys=used_keys,
+            summary_candidates=summary_sentences,
         )
+        if profile_sentence:
+            lines.append(profile_sentence)
 
-        if lines:
-            return lines
+        experience_entries = [
+            item
+            for item in ((formatted_data or {}).get("experience") or [])
+            if isinstance(item, dict)
+        ]
+        offer_terms = self._collect_offer_terms_for_render(formatted_data)
+        anchor_exp = experience_entries[0] if experience_entries else None
+        recent_exp = None
+        if experience_entries:
+            recent_exp = sorted(
+                experience_entries,
+                key=self._experience_recency_rank,
+                reverse=True,
+            )[0]
 
-        fallback = self._build_summary_fallback_lines(formatted_data)
-        if positioning and not any(
-            self._normalize_text_key(item) == self._normalize_text_key(positioning)
-            for item in fallback
-        ):
-            fallback = self._select_whole_sentences(
-                fallback,
-                max_items=3,
-                char_budget=360,
-                preferred_tail=positioning,
+        anchor_sentence = self._build_experience_focus_sentence(
+            anchor_exp,
+            label="anchor",
+            offer_terms=offer_terms,
+            rendered_signatures=rendered_signatures,
+            used_keys=used_keys,
+            language_code=language_code,
+        )
+        if anchor_sentence:
+            lines.append(anchor_sentence)
+
+        targeted_sentence = self._build_targeted_summary_sentence(
+            formatted_data,
+            rendered_signatures=rendered_signatures,
+            used_keys=used_keys,
+        )
+        if targeted_sentence:
+            lines.append(targeted_sentence)
+
+        if recent_exp is not None and recent_exp is not anchor_exp:
+            recent_sentence = self._build_experience_focus_sentence(
+                recent_exp,
+                label="recent",
+                offer_terms=offer_terms,
+                rendered_signatures=rendered_signatures,
+                used_keys=used_keys,
+                language_code=language_code,
             )
-        return fallback
+            if recent_sentence:
+                lines.append(recent_sentence)
+
+        if len(lines) < 4:
+            complement = self._build_summary_complement_sentence(
+                formatted_data,
+                rendered_signatures=rendered_signatures,
+                used_keys=used_keys,
+                summary_candidates=summary_sentences,
+            )
+            if complement:
+                lines.append(complement)
+
+        grouped = self._group_summary_sentences(lines[:4])
+        if grouped:
+            return grouped
+
+        return self._build_summary_fallback_lines(formatted_data)
 
     def _split_technologies(self, value: Any, *, max_items: int = 4) -> List[str]:
         raw = str(value or "").strip()
@@ -1868,19 +2518,80 @@ class ExportManager:
     ) -> List[Dict[str, Any]]:
         if not isinstance(experiences, list):
             return []
+        ranked_experiences, _scored_rows = self._rank_experiences_for_render(
+            [item for item in experiences if isinstance(item, dict)],
+            job_title=job_title,
+            offer_terms=offer_terms,
+        )
+        ranked_keys = [
+            self._normalize_text_key(
+                "::".join(
+                    [
+                        str(item.get("title") or "").strip(),
+                        str(item.get("company") or "").strip(),
+                        str(item.get("start_date") or "").strip(),
+                        str(item.get("end_date") or "").strip(),
+                    ]
+                )
+            )
+            for item in ranked_experiences
+        ]
+        most_recent_key = ""
+        if ranked_experiences:
+            most_recent_exp = sorted(
+                ranked_experiences,
+                key=self._experience_recency_rank,
+                reverse=True,
+            )[0]
+            most_recent_key = self._normalize_text_key(
+                "::".join(
+                    [
+                        str(most_recent_exp.get("title") or "").strip(),
+                        str(most_recent_exp.get("company") or "").strip(),
+                        str(most_recent_exp.get("start_date") or "").strip(),
+                        str(most_recent_exp.get("end_date") or "").strip(),
+                    ]
+                )
+            )
         compacted: List[Dict[str, Any]] = []
         for exp in experiences:
             if not isinstance(exp, dict):
                 continue
             entry = dict(exp)
+            exp_key = self._normalize_text_key(
+                "::".join(
+                    [
+                        str(entry.get("title") or "").strip(),
+                        str(entry.get("company") or "").strip(),
+                        str(entry.get("start_date") or "").strip(),
+                        str(entry.get("end_date") or "").strip(),
+                    ]
+                )
+            )
+            source_description = [
+                self._normalize_render_text(item)
+                for item in (entry.get("description") or [])
+                if self._normalize_render_text(item)
+            ]
+            entry["_render_source_description"] = source_description
+
+            role_budget = max(1, int(max_bullets or 1))
+            if ranked_keys and exp_key == ranked_keys[0] and len(ranked_keys) > 1:
+                role_budget = max(role_budget + 1, 4)
+            elif most_recent_key and exp_key == most_recent_key:
+                role_budget = max(role_budget, 3)
+            elif len(compacted) >= 2:
+                role_budget = max(1, role_budget - 1)
+
             entry["description"] = self._select_experience_render_lines(
                 entry.get("description") or [],
                 company=str(entry.get("company") or "").strip(),
                 job_title=job_title,
                 offer_terms=offer_terms,
                 language_code=language_code,
-                max_items=max(1, int(max_bullets or 1)),
+                max_items=role_budget,
             )
+            entry["render_detail_budget"] = role_budget
             compacted.append(entry)
             if len(compacted) >= max(1, int(max_roles or 1)):
                 break
