@@ -80,6 +80,9 @@
   facturation"
 - vague tooling phrase contract: generic tool categories are fallback context
   only; if named products exist in the source, surface the named products
+- named-tool detection contract: capitalization alone is not sufficient to
+  classify a fragment as a tool; scan tool-relevant fields only and keep
+  names/locations/companies/headings out of the tool-hint budget
 - High-risk files:
   - `app/workers/llm_worker.py`
   - `app/workers/qwen_manager.py`

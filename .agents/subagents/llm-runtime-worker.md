@@ -74,6 +74,8 @@ risk.
   platforms/systems, prefer naming them explicitly over vague tooling wording
 - generic tool categories are fallback only; if named products are present in
   source evidence, surface the named products instead
+- capitalization alone is not enough to treat a fragment as a tool; avoid
+  leaking names, headings, companies, or locations into tool hints
 - offer-keyword extraction and prompt preparation must prioritize requirement-
   heavy offer sections over company marketing, benefits, remote policy, or
   hiring-process copy

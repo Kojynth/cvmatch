@@ -213,6 +213,12 @@ and must stay usable on heterogeneous Windows/Linux machines.
   acceptable only when no concrete named product is available in the source.
   If named products exist in the profile or offer, the generator must prefer
   those names and treat the vague category as fallback context only.
+- **Named-tool detection contract (MANDATORY)**: capitalization alone is not
+  enough to classify a fragment as a tool. Tool detection must favor
+  tool-shaped tokens (acronyms, product names, symbolic tokens like
+  `llama.cpp`, `C#`, `dbt`, `open-webui`) and scan only tool-relevant fields;
+  names, locations, company labels, and headings must not consume the
+  `PROFILE_TOOL_HINTS` budget.
 
 ## Additional CV Contracts
 - **Final experience dedup contract (MANDATORY)**: every final CV payload path
