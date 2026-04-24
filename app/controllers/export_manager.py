@@ -3223,6 +3223,7 @@ class ExportManager:
             for _score, _recency, _position, info_units, item in scored_rows
             if isinstance(item, dict)
         }
+        max_roles_limit = max(1, int(max_roles or 1))
         most_recent_key = ""
         if ranked_experiences:
             most_recent_exp = sorted(
@@ -3231,8 +3232,46 @@ class ExportManager:
                 reverse=True,
             )[0]
             most_recent_key = self._experience_identity_key(most_recent_exp)
+        anchor_key = ranked_keys[0] if ranked_keys else ""
+
+        render_candidates = [item for item in experiences if isinstance(item, dict)]
+        if len(render_candidates) > max_roles_limit:
+            selected_candidates = list(render_candidates[:max_roles_limit])
+            selected_keys = [self._experience_identity_key(item) for item in selected_candidates]
+            if anchor_key and anchor_key not in selected_keys:
+                drop_index = len(selected_candidates) - 1
+                for idx in range(len(selected_candidates) - 1, -1, -1):
+                    candidate_key = selected_keys[idx]
+                    if candidate_key != anchor_key:
+                        drop_index = idx
+                        if candidate_key != most_recent_key:
+                            break
+                selected_candidates.pop(drop_index)
+                anchor_candidate = next(
+                    (
+                        item
+                        for item in render_candidates
+                        if self._experience_identity_key(item) == anchor_key
+                    ),
+                    None,
+                )
+                if anchor_candidate is not None:
+                    selected_candidates.append(anchor_candidate)
+                selected_key_set = {
+                    self._experience_identity_key(item)
+                    for item in selected_candidates
+                    if isinstance(item, dict)
+                }
+                render_candidates = [
+                    item
+                    for item in render_candidates
+                    if self._experience_identity_key(item) in selected_key_set
+                ]
+            else:
+                render_candidates = selected_candidates
+
         compacted: List[Dict[str, Any]] = []
-        for exp in experiences:
+        for exp in render_candidates:
             if not isinstance(exp, dict):
                 continue
             entry = dict(exp)
@@ -3277,8 +3316,6 @@ class ExportManager:
             )
             entry["render_detail_budget"] = role_budget
             compacted.append(entry)
-            if len(compacted) >= max(1, int(max_roles or 1)):
-                break
         return compacted
 
     def _compact_education_entries(
