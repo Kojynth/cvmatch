@@ -86,11 +86,14 @@ risk.
 - featured skill chips must come from the profile `skills` pool first;
   experience/project evidence may reprioritize or compactly rewrite those
   labels, but must not create extra chips from narrative bullets alone
+- do not backfill weak/noisy skill chips purely to hit the visible chip cap
 - when a skill expresses benchmarking/exploration/comparison and source
   evidence names concrete tools, use a compact comparative label such as
   `Benchmark Playwright / Cypress / Selenium`
 - capitalization alone is not enough to treat a fragment as a tool; avoid
   leaking names, headings, companies, or locations into tool hints
+- keep employer-description suppression narrow; bullets with early colon/dash
+  and real action/impact content must survive
 - offer-keyword extraction and prompt preparation must prioritize requirement-
   heavy offer sections over company marketing, benefits, remote policy, or
   hiring-process copy

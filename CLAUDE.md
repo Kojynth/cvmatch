@@ -37,9 +37,14 @@
   - featured-skills contract: compact chips come from the profile `skills`
     pool first; experience/project evidence may reprioritize or compactly
     rewrite labels, but must not mint extra chips from narrative bullets
+  - skill-list credibility contract: do not backfill weak/noisy skill chips
+    just to hit a display quota; fewer credible chips are better than filler
   - comparative-skill wording contract: if source evidence names concrete
     tools for a benchmark/exploration skill, prefer a compact label such as
     `Benchmark Playwright / Cypress / Selenium`
+  - company-description filter contract: suppress true employer-description
+    intros, but do not drop action/impact bullets merely because they use an
+    early colon or dash
   - positioning-sentence word-sourcing hierarchy:
   - render-summary assembly contract: build the summary after experience /
     project / certification selection, avoid repeating the same signal already

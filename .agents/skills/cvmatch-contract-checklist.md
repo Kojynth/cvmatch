@@ -32,7 +32,8 @@ Checklist:
    profile `skills` pool first, experience/project evidence only reprioritizes
    or compactly rewrites labels, and vague comparative skills can become
    labels such as `Benchmark Playwright / Cypress / Selenium` when source
-   evidence names the tools.
+   evidence names the tools. Do not backfill weak/noisy chips just to reach
+   the visible cap.
 9. If experience dedup is touched, verify duplicate retries/date-format
    variants collapse while same company/title with conflicting periods stay
    distinct.
@@ -45,6 +46,9 @@ Checklist:
    and verify pure offer-only vocabulary stays confined to the natural
    positioning sentence unless profile evidence supports a coherent implicit
    inference elsewhere.
+12. If company-description suppression is touched, verify true employer-intro
+   lines are filtered while action/impact bullets with early colon or dash
+   remain eligible for rendering.
 11. If tooling wording is touched, verify named products/platforms from the
    source outrank vague categories like `automation tools` or
    `outils de facturation`.

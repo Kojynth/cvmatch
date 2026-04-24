@@ -216,7 +216,14 @@ and must stay usable on heterogeneous Windows/Linux machines.
   from narrative bullets alone. When a vague comparative skill is backed by
   explicit tool names in source evidence, prefer a compact comparative label
   such as `Benchmark Playwright / Cypress / Selenium` over a vague wording or
-  an invented direct-usage claim.
+  an invented direct-usage claim. Do not backfill low-scoring/noisy skill
+  candidates just to reach a visual chip quota: a shorter credible skill list
+  is better than ten weak chips.
+- **Company-description filter contract (MANDATORY)**: renderer-side guards
+  that suppress employer-description prose must stay narrow. Reject true
+  intros such as `Company: filiale...` or `Employer - Groupe...`, but do not
+  drop action/impact bullets just because they contain an early colon or dash
+  (for example `Data platform: reduced latency...`).
 - **Sector/industry signal contract (MANDATORY)**: sector or industry context
   may be inferred softly from employer/context text and used only as a minor
   ranking or wording bonus. It must never be a hard gate, never override

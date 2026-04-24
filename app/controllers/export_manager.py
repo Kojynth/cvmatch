@@ -1569,24 +1569,30 @@ class ExportManager:
         if not normalized_text:
             return -100.0
 
-        if (
-            ":" in text[:80]
-            and any(
-                token in normalized_text
-                for token in (
-                    "filiale",
-                    "specialisee",
-                    "specialized",
-                    "groupe",
-                    "group",
-                    "plateforme",
-                    "platform",
-                    "company",
-                    "societe",
-                )
+        company_desc_match = re.match(
+            r"^\s*(?P<head>[^:]{1,60})\s*:\s*(?P<tail>.+)$",
+            text,
+        ) or re.match(
+            r"^\s*(?P<head>.+?)\s+[-–—]\s+(?P<tail>.+)$",
+            text,
+        )
+        if company_desc_match:
+            tail_norm = normalize_keyword_for_match(company_desc_match.group("tail") or "")
+            company_descriptor_starts = (
+                "filiale",
+                "specialisee",
+                "specialisee",
+                "specialized",
+                "specialised",
+                "groupe",
+                "group",
+                "plateforme",
+                "platform",
+                "company",
+                "societe",
             )
-        ):
-            return -100.0
+            if any(tail_norm.startswith(prefix) for prefix in company_descriptor_starts):
+                return -100.0
 
         score = 0.0
         if _starts_with_action_phrase(text, language_code=language_code):
@@ -2453,13 +2459,6 @@ class ExportManager:
             key=lambda row: (-row[0], row[1]),
         )
         selected = [name for score, _order, name, _source in ranked if score > -2.5]
-        if len(selected) < max(1, int(max_items or 1)):
-            for _score, _order, name, _source in ranked:
-                if name in selected:
-                    continue
-                selected.append(name)
-                if len(selected) >= max(1, int(max_items or 1)):
-                    break
         deduped: List[str] = []
         seen_selected: set[str] = set()
         for item in selected:

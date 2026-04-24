@@ -41,10 +41,14 @@ Current render/export contracts to preserve across agent runs:
 - featured skill chips come from the profile `skills` pool first; use
   experience/project evidence to reprioritize or compactly rewrite labels, but
   do not mint extra chips directly from narrative bullets
+- do not backfill weak/noisy skill chips just to reach a visual max; fewer
+  credible chips are better than filler
 - when a comparative skill is grounded by named tools, prefer a compact label
   such as `Benchmark Playwright / Cypress / Selenium`
 - company-description prose is weak context only; rendered experience details
   should prefer the strongest offer-aligned action/impact sentences
+- keep company-description filters narrow enough not to drop action bullets
+  that use an early colon or dash
 - pure offer-only terms belong in the natural positioning sentence only; do
   not present them elsewhere as proven facts unless profile evidence supports
   a coherent implicit inference
