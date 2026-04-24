@@ -773,18 +773,7 @@ class ExportManager:
                 else:
                     compact_lines.extend(description_lines[:6])
 
-                dedup_seen = set()
-                dedup_desc: List[str] = []
-                for line in compact_lines:
-                    key = line.lower()
-                    if key in dedup_seen:
-                        continue
-                    dedup_seen.add(key)
-                    dedup_desc.append(line)
-                    if len(dedup_desc) >= 6:
-                        break
-
-                entry["description"] = dedup_desc
+                entry["description"] = self._dedupe_render_lines_fuzzy(compact_lines)[:6]
                 normalized.append(entry)
 
             return normalized
@@ -1415,6 +1404,35 @@ class ExportManager:
         glue = "and" if is_en else "et"
         return ", ".join(cleaned[:-1]) + f", {glue} {cleaned[-1]}"
 
+    def _restore_display_acronyms(self, value: Any) -> str:
+        text = re.sub(r"\s+", " ", str(value or "").strip()).strip()
+        if not text:
+            return ""
+        replacements = {
+            "ai": "AI",
+            "api": "API",
+            "bi": "BI",
+            "ci": "CI",
+            "cd": "CD",
+            "crm": "CRM",
+            "erp": "ERP",
+            "it": "IT",
+            "llm": "LLM",
+            "ml": "ML",
+            "qa": "QA",
+            "rgpd": "RGPD",
+            "sql": "SQL",
+            "ui": "UI",
+            "ux": "UX",
+        }
+        pattern = r"\b(" + "|".join(re.escape(item) for item in replacements) + r")\b"
+        return re.sub(
+            pattern,
+            lambda match: replacements.get(str(match.group(1) or "").casefold(), str(match.group(1) or "")),
+            text,
+            flags=re.IGNORECASE,
+        )
+
     def _split_sentences(self, value: Any) -> List[str]:
         raw = str(value or "").strip()
         if not raw:
@@ -1432,6 +1450,33 @@ class ExportManager:
     def _word_count(self, value: Any) -> int:
         return len(re.findall(r"\b\S+\b", str(value or "").strip(), flags=re.UNICODE))
 
+    def _dedupe_render_lines_fuzzy(self, lines: Any) -> List[str]:
+        deduped: List[str] = []
+        seen_norms: List[str] = []
+        for raw in lines or []:
+            text = self._normalize_render_text(raw)
+            norm = self._normalize_text_key(text)
+            if not text or not norm:
+                continue
+            duplicate = False
+            for idx, seen in enumerate(seen_norms):
+                if norm == seen:
+                    duplicate = True
+                    break
+                if len(norm) >= 24 and norm in seen:
+                    duplicate = True
+                    break
+                if len(seen) >= 24 and seen in norm:
+                    deduped[idx] = text
+                    seen_norms[idx] = norm
+                    duplicate = True
+                    break
+            if duplicate:
+                continue
+            deduped.append(text)
+            seen_norms.append(norm)
+        return deduped
+
     def _is_positioning_sentence(self, value: Any, *, is_en: bool) -> bool:
         text = self._normalize_render_text(value)
         if not text:
@@ -1439,7 +1484,7 @@ class ExportManager:
         patterns = (
             (
                 re.compile(r"^Atouts\s+pertinents(?:\s+pour\s+[^.:]{1,80})?\s*[:\-]\s*.+\.$", re.IGNORECASE),
-                re.compile(r"^Profil\s+pertinent(?:\s+pour\s+[^.]{1,80}?)?\s+grace\s+a\s+.+\.$", re.IGNORECASE),
+                re.compile(r"^Profil\s+pertinent(?:\s+pour\s+[^.]{1,80}?)?\s+gr(?:a|â)ce\s+[aà]\s+.+\.$", re.IGNORECASE),
             )
             if not is_en
             else (
@@ -1455,6 +1500,100 @@ class ExportManager:
         )
         return any(pattern.match(text) for pattern in patterns)
 
+    def _parse_positioning_sentence(
+        self,
+        value: Any,
+        *,
+        is_en: bool,
+    ) -> Tuple[str, List[str]]:
+        text = self._normalize_render_text(value)
+        if not text:
+            return "", []
+        patterns = (
+            (
+                re.compile(
+                    r"^Atouts\s+pertinents(?:\s+pour\s+(?P<company>.+?))?\s*[:\-]\s*(?P<terms>.+?)\.\s*$",
+                    re.IGNORECASE,
+                ),
+                re.compile(
+                    r"^Profil\s+pertinent(?:\s+pour\s+(?P<company>.+?))?\s+gr(?:a|â)ce\s+[aà]\s+(?P<terms>.+?)\.\s*$",
+                    re.IGNORECASE,
+                ),
+            )
+            if not is_en
+            else (
+                re.compile(
+                    r"^Relevant\s+strengths(?:\s+for\s+(?P<company>.+?))?\s+include\s+(?P<terms>.+?)\.\s*$",
+                    re.IGNORECASE,
+                ),
+                re.compile(
+                    r"^Profile\s+aligned(?:\s+with\s+(?P<company>.+?))?\s+through\s+(?P<terms>.+?)\.\s*$",
+                    re.IGNORECASE,
+                ),
+            )
+        )
+        for pattern in patterns:
+            match = pattern.match(text)
+            if not match:
+                continue
+            company = self._restore_display_acronyms(match.groupdict().get("company") or "")
+            raw_terms = str(match.groupdict().get("terms") or "").strip()
+            items: List[str] = []
+            seen: set[str] = set()
+            for chunk in re.split(r"\s*;\s*", raw_terms):
+                cleaned_chunk = self._normalize_render_text(chunk)
+                if not cleaned_chunk:
+                    continue
+                lowered_chunk = self._normalize_text_key(cleaned_chunk)
+                if not is_en and lowered_chunk.startswith("une proximite claire avec "):
+                    cleaned_chunk = cleaned_chunk[len("une proximité claire avec ") :]
+                elif is_en and lowered_chunk.startswith("clear proximity to "):
+                    cleaned_chunk = cleaned_chunk[len("clear proximity to ") :]
+                for item in re.split(r"\s*,\s*", cleaned_chunk):
+                    cleaned_item = self._restore_display_acronyms(self._normalize_render_text(item))
+                    key = self._normalize_text_key(cleaned_item)
+                    if not cleaned_item or not key or key in seen:
+                        continue
+                    seen.add(key)
+                    items.append(cleaned_item)
+            return company, items
+        return "", []
+
+    def _score_positioning_terms(
+        self,
+        terms: List[str],
+        *,
+        offer_terms: List[str],
+        profile_terms: List[str],
+        rendered_signatures: List[frozenset[str]],
+    ) -> float:
+        score = 0.0
+        seen: set[str] = set()
+        low_signal_singletons = {"ai", "api", "bi", "it", "ml", "qa", "sql", "ui", "ux"}
+        for raw in terms or []:
+            text = self._restore_display_acronyms(self._normalize_render_text(raw))
+            key = self._normalize_text_key(text)
+            if not text or not key or key in seen:
+                continue
+            seen.add(key)
+            offer_match = any(self._match_probe_overlaps_term(text, item) for item in (offer_terms or []))
+            profile_match = any(self._match_probe_overlaps_term(text, item) for item in (profile_terms or []))
+            if offer_match and profile_match:
+                score += 3.0
+            elif offer_match:
+                score += 1.9
+            elif profile_match:
+                score += 1.0
+            if len(key.split()) >= 2:
+                score += 0.4
+            if re.search(r"[A-Z0-9+/#.-]", text):
+                score += 0.3
+            if self._sentence_overlaps_rendered_content(text, rendered_signatures):
+                score -= 1.2
+            if len(key.split()) == 1 and key in low_signal_singletons and not (offer_match and profile_match):
+                score -= 0.8
+        return score
+
     def _select_whole_sentences(
         self,
         sentences: Any,
@@ -1466,7 +1605,7 @@ class ExportManager:
         cleaned: List[str] = []
         seen: set[str] = set()
         for item in sentences or []:
-            text = self._normalize_render_text(item)
+            text = self._restore_display_acronyms(self._normalize_render_text(item))
             key = self._normalize_text_key(text)
             if not text or not key or key in seen:
                 continue
@@ -1653,15 +1792,7 @@ class ExportManager:
                 for item in lines
                 if self._normalize_render_text(item)
             ]
-            deduped: List[str] = []
-            seen: set[str] = set()
-            for item in fallback:
-                key = self._normalize_text_key(item)
-                if not key or key in seen:
-                    continue
-                seen.add(key)
-                deduped.append(item)
-            return deduped[: max(1, int(max_items or 1))]
+            return self._dedupe_render_lines_fuzzy(fallback)[: max(1, int(max_items or 1))]
 
         scored.sort(key=lambda row: (-row[0], row[1]))
         selected_idx = sorted(row[1] for row in scored[: max(1, int(max_items or 1))])
@@ -1674,7 +1805,7 @@ class ExportManager:
                 continue
             seen.add(key)
             selected.append(item)
-        return selected
+        return self._dedupe_render_lines_fuzzy(selected)[: max(1, int(max_items or 1))]
 
     def _trim_render_text(self, value: Any, max_chars: int) -> str:
         text = str(value or "").strip()
@@ -2028,6 +2159,9 @@ class ExportManager:
             normalize_keyword_for_match(term),
         )
 
+    def _match_probe_overlaps_term(self, left: Any, right: Any) -> bool:
+        return self._match_probe_contains_term(left, right) or self._match_probe_contains_term(right, left)
+
     def _collect_skill_proof_tools(
         self,
         skill_name: Any,
@@ -2090,6 +2224,14 @@ class ExportManager:
                         if isinstance(item, str) and item.strip()
                     )
             for key in ("highlights",):
+                value = block.get(key)
+                if isinstance(value, list):
+                    candidates.extend(
+                        str(item).strip()
+                        for item in value
+                        if isinstance(item, str) and item.strip()
+                    )
+            for key in ("_render_source_description",):
                 value = block.get(key)
                 if isinstance(value, list):
                     candidates.extend(
@@ -2187,6 +2329,28 @@ class ExportManager:
             return ""
 
         normalized = self._normalize_text_key(text)
+        context_probe = self._normalize_match_probe(
+            " ".join(
+                [
+                    str(block.get("title") or "").strip()
+                    for block in (experience_entries or [])
+                    if isinstance(block, dict) and str(block.get("title") or "").strip()
+                ]
+                + [
+                    str(item).strip()
+                    for block in list(experience_entries or []) + list(projects or [])
+                    if isinstance(block, dict)
+                    for key in ("summary", "description", "_render_source_description")
+                    for value in (
+                        [block.get(key)]
+                        if isinstance(block.get(key), str)
+                        else list(block.get(key) or [])
+                    )
+                    for item in [value]
+                    if isinstance(item, str) and str(item).strip()
+                ]
+            )
+        )
         proof_tools = self._collect_skill_proof_tools(
             text,
             experience_entries=experience_entries,
@@ -2194,14 +2358,46 @@ class ExportManager:
             max_items=8,
         )
         compact_tools = [tool for tool in proof_tools if self._normalize_render_text(tool)]
-        if not compact_tools:
-            return text
+
+        if "tests d acceptance" in normalized or "tests d acceptation" in normalized or "acceptance" in normalized:
+            if "explor" in normalized:
+                return "Tests d'acceptation et exploratoires"
+            return "Tests d'acceptation"
+        if "plan de test" in normalized or "plans de test" in normalized:
+            return "Plans de test"
+        if "anomal" in normalized:
+            return "Suivi d'anomalies"
+        if "regress" in normalized:
+            if compact_tools:
+                return self._restore_display_acronyms(
+                    f"Tests de non-régression {' / '.join(compact_tools)}"
+                )
+            return "Tests de non-régression"
+        if normalized in {"api", "apis"}:
+            if any(
+                self._match_probe_contains_term(context_probe, marker)
+                for marker in ("api testing", "test api", "postman", "tests", "qa")
+            ):
+                return "Tests API"
+            return "API"
+        if normalized == "qa":
+            return "QA"
+        if "bilan de recette" in normalized or "bilans de recettes" in normalized or "recette" in normalized:
+            return "Bilans de recette"
+        if "dev back" in normalized or "back end" in normalized or "backend" in normalized:
+            return "Back-end"
+        if any(token in normalized for token in ("tableau", "powerbi", "power bi", "looker")):
+            return "Tableau / Power BI / Looker"
 
         if any(marker in normalized for marker in ("benchmark", "benchmarker", "compar", "evaluation", "evaluer")):
-            return f"Benchmark {' / '.join(compact_tools)}"
+            if compact_tools:
+                return self._restore_display_acronyms(f"Benchmark {' / '.join(compact_tools)}")
+            return "Benchmark d'outils d'automatisation"
         if any(marker in normalized for marker in ("explor", "research", "veille")):
-            return f"Exploration {' / '.join(compact_tools)}"
-        return text
+            if compact_tools:
+                return self._restore_display_acronyms(f"Exploration {' / '.join(compact_tools)}")
+            return "Exploration d'outils"
+        return self._restore_display_acronyms(text)
 
     def _score_featured_skill_relevance(
         self,
@@ -2313,23 +2509,29 @@ class ExportManager:
         ]
 
         offer_hits = 0.0
+        offer_match_count = 0
         for term in offer_terms or []:
             term_text = self._normalize_render_text(term)
             if not term_text:
                 continue
-            if any(self._match_probe_contains_term(candidate, term_text) for candidate in evidence_terms):
+            if any(self._match_probe_overlaps_term(candidate, term_text) for candidate in evidence_terms):
+                offer_match_count += 1
                 offer_hits += 2.1 if " " in self._normalize_match_probe(term_text) else 1.1
         score += min(5.5, offer_hits)
 
-        if job_title and any(self._match_probe_contains_term(candidate, job_title) for candidate in evidence_terms):
+        job_title_hit = bool(
+            job_title and any(self._match_probe_overlaps_term(candidate, job_title) for candidate in evidence_terms)
+        )
+        if job_title_hit:
             score += 1.8
 
+        direct_alignment_signal = offer_match_count > 0 or job_title_hit
         if anchor_probe and any(self._match_probe_contains_term(anchor_probe, candidate) for candidate in evidence_terms):
-            score += 2.2
+            score += 2.2 if direct_alignment_signal else 0.6
         if recent_probe and any(self._match_probe_contains_term(recent_probe, candidate) for candidate in evidence_terms):
-            score += 1.6
+            score += 1.6 if direct_alignment_signal else 0.4
         if all_experience_probe and any(self._match_probe_contains_term(all_experience_probe, candidate) for candidate in evidence_terms):
-            score += 1.0
+            score += 1.0 if direct_alignment_signal else 0.2
         if project_probe and any(self._match_probe_contains_term(project_probe, candidate) for candidate in evidence_terms):
             score += 0.8
 
@@ -2365,6 +2567,169 @@ class ExportManager:
         )
         if rendered_probe and self._match_probe_contains_term(rendered_probe, display_text):
             score -= 0.8
+
+        offer_probe = self._normalize_match_probe(" ".join([job_title, *(offer_terms or [])]))
+        skill_probe = self._normalize_match_probe(" ".join(evidence_terms + [display_text, original_text]))
+        qa_offer_markers = (
+            "qa",
+            "test",
+            "testing",
+            "quality",
+            "automation",
+            "api",
+            "playwright",
+            "postman",
+            "regression",
+            "exploratory",
+            "debug",
+        )
+        qa_skill_markers = (
+            "qa",
+            "test",
+            "tests",
+            "testing",
+            "acceptation",
+            "acceptance",
+            "explor",
+            "regression",
+            "anomal",
+            "recette",
+            "plan de test",
+            "plans de test",
+            "automation",
+            "automatisation",
+            "api",
+            "playwright",
+            "postman",
+            "cypress",
+            "selenium",
+            "xray",
+            "jira",
+            "quality",
+            "benchmark",
+        )
+        bi_skill_markers = (
+            "tableau",
+            "power bi",
+            "powerbi",
+            "looker",
+            "reporting",
+            "dashboard",
+            "business intelligence",
+            "bi",
+        )
+        bi_offer_markers = (
+            "tableau",
+            "power bi",
+            "powerbi",
+            "looker",
+            "reporting",
+            "dashboard",
+            "analytics",
+            "business intelligence",
+            "bi",
+            "data visualization",
+        )
+        db_skill_markers = (
+            "sql",
+            "database",
+            "postgresql",
+            "mongodb",
+            "mysql",
+            "sql server",
+        )
+        db_offer_markers = (
+            "sql",
+            "database",
+            "databases",
+            "postgresql",
+            "mongodb",
+            "mysql",
+            "backend",
+            "back end",
+            "data",
+            "warehouse",
+            "etl",
+        )
+        programming_skill_markers = (
+            "python",
+            "typescript",
+            "javascript",
+            "backend",
+            "back end",
+            "pytest",
+        )
+        programming_offer_markers = (
+            "python",
+            "typescript",
+            "javascript",
+            "backend",
+            "back end",
+            "developer",
+            "engineering",
+            "software engineer",
+            "scripting",
+        )
+        qa_offer_active = any(
+            self._match_probe_contains_term(offer_probe, marker)
+            for marker in qa_offer_markers
+        )
+        bi_offer_active = any(
+            self._match_probe_contains_term(offer_probe, marker)
+            for marker in bi_offer_markers
+        )
+        db_offer_active = any(
+            self._match_probe_contains_term(offer_probe, marker)
+            for marker in db_offer_markers
+        )
+        programming_offer_active = any(
+            self._match_probe_contains_term(offer_probe, marker)
+            for marker in programming_offer_markers
+        )
+        qa_skill_match = any(self._match_probe_contains_term(skill_probe, marker) for marker in qa_skill_markers)
+        bi_skill_match = any(self._match_probe_contains_term(skill_probe, marker) for marker in bi_skill_markers)
+        db_skill_match = any(self._match_probe_contains_term(skill_probe, marker) for marker in db_skill_markers)
+        programming_skill_match = any(
+            self._match_probe_contains_term(skill_probe, marker)
+            for marker in programming_skill_markers
+        )
+
+        if qa_offer_active:
+            if qa_skill_match:
+                score += 3.0
+            if any(self._match_probe_contains_term(skill_probe, marker) for marker in ("playwright", "postman", "cypress", "selenium", "api")):
+                score += 1.3
+            if any(self._match_probe_contains_term(skill_probe, marker) for marker in ("plans de test", "plan de test", "anomal", "regression", "explor", "acceptance", "acceptation")):
+                score += 2.4
+            if normalized_display in {
+                "tests api",
+                "tests d acceptation",
+                "tests d acceptation et exploratoires",
+                "plans de test",
+            }:
+                score += 2.4
+            if normalized_display in {"suivi d anomalies"}:
+                score += 1.2
+            if normalized_display.startswith("tests de non regression"):
+                score += 2.0
+            if bi_skill_match and not bi_offer_active:
+                score -= 8.0
+            if db_skill_match and not db_offer_active:
+                score -= 8.2
+            if any(self._match_probe_contains_term(skill_probe, marker) for marker in ("back end", "backend")) and not programming_offer_active:
+                score -= 2.4
+
+        if bi_skill_match and bi_offer_active:
+            score += 1.6
+        if db_skill_match and db_offer_active:
+            score += 1.4
+        if programming_skill_match and programming_offer_active:
+            score += 1.0
+
+        if db_skill_match and len(normalized_display.split()) == 1 and not db_offer_active:
+            score -= 5.0
+        if len(normalized_display.split()) == 1 and offer_match_count <= 0 and not qa_skill_match and not programming_skill_match:
+            score -= 1.4
 
         return score
 
@@ -2458,7 +2823,15 @@ class ExportManager:
             ),
             key=lambda row: (-row[0], row[1]),
         )
-        selected = [name for score, _order, name, _source in ranked if score > -2.5]
+        selection_floor = -2.5 if len(ranked) <= max(1, int(max_items or 1)) else 0.0
+        selected = [name for score, _order, name, _source in ranked if score >= selection_floor]
+        if len(ranked) <= max(1, int(max_items or 1)) and len(selected) < len(ranked):
+            for _score, _order, name, _source in ranked:
+                if name in selected:
+                    continue
+                if self._score_featured_skill_candidate(name, source="skill") < 0.0:
+                    continue
+                selected.append(name)
         deduped: List[str] = []
         seen_selected: set[str] = set()
         for item in selected:
@@ -2564,19 +2937,33 @@ class ExportManager:
     def _collect_profile_summary_terms(self, formatted_data: Dict[str, Any]) -> List[str]:
         terms: List[str] = []
         seen: set[str] = set()
+        offer_terms = self._collect_offer_terms_for_render(formatted_data)
+        featured_terms = list((formatted_data or {}).get("featured_skills") or [])
 
         def _append(value: Any) -> None:
-            text = self._normalize_render_text(value)
+            text = self._restore_display_acronyms(self._normalize_render_text(value))
             key = self._normalize_text_key(text)
             if not text or not key or key in seen:
                 return
             seen.add(key)
             terms.append(text)
 
-        for item in (formatted_data or {}).get("featured_skills") or []:
+        for item in featured_terms:
             _append(item)
+        raw_skill_budget = 2 if featured_terms else 6
+        raw_skill_reference = featured_terms or self._collect_skill_names_for_compact_summary((formatted_data or {}).get("skills"))
         for item in self._collect_skill_names_for_compact_summary((formatted_data or {}).get("skills")):
+            if raw_skill_budget <= 0:
+                break
+            if self._score_positioning_terms(
+                [item],
+                offer_terms=offer_terms,
+                profile_terms=raw_skill_reference,
+                rendered_signatures=[],
+            ) < 1.6:
+                continue
             _append(item)
+            raw_skill_budget -= 1
 
         for cert in (formatted_data or {}).get("featured_certifications") or []:
             if isinstance(cert, dict):
@@ -2767,15 +3154,11 @@ class ExportManager:
         used_keys: set[str],
     ) -> str:
         is_en = str((formatted_data or {}).get("language") or "").lower().startswith("en")
-        company = str((formatted_data or {}).get("company") or "").strip()
+        company = self._restore_display_acronyms((formatted_data or {}).get("company") or "")
         job_title = str((formatted_data or {}).get("job_title") or "").strip()
         existing = self._normalize_render_text(
             (formatted_data or {}).get("profile_positioning_sentence") or ""
         )
-        existing_key = self._normalize_text_key(existing)
-        if existing and existing_key and existing_key not in used_keys:
-            used_keys.add(existing_key)
-            return existing
 
         max_total_terms = 6
         max_common_terms = 4
@@ -2867,6 +3250,17 @@ class ExportManager:
             if collect_targeted_offer_terms and offer_only_input and offer_only_budget > 0
             else []
         )
+        common_terms = [self._restore_display_acronyms(item) for item in common_terms if self._normalize_render_text(item)]
+        profile_extra_terms = [
+            self._restore_display_acronyms(item)
+            for item in profile_extra_terms
+            if self._normalize_render_text(item)
+        ]
+        offer_only_terms = [
+            self._restore_display_acronyms(item)
+            for item in offer_only_terms
+            if self._normalize_render_text(item)
+        ]
 
         clauses: List[str] = []
         if common_terms:
@@ -2878,32 +3272,75 @@ class ExportManager:
                 (
                     f"clear proximity to {', '.join(offer_only_terms)}"
                     if is_en
-                    else f"une proximite claire avec {', '.join(offer_only_terms)}"
+                    else f"une proximité claire avec {', '.join(offer_only_terms)}"
                 )
             )
 
         if clauses and company:
-            sentence = (
+            candidate_sentence = (
                 f"Profile aligned with {company} through {'; '.join(clauses)}."
                 if is_en
-                else f"Profil pertinent pour {company} grace a {'; '.join(clauses)}."
+                else f"Profil pertinent pour {company} grâce à {'; '.join(clauses)}."
             )
         elif clauses:
-            sentence = (
+            candidate_sentence = (
                 f"Profile aligned through {'; '.join(clauses)}."
                 if is_en
-                else f"Profil pertinent grace a {'; '.join(clauses)}."
+                else f"Profil pertinent grâce à {'; '.join(clauses)}."
             )
-        elif existing:
-            sentence = existing
+        else:
+            candidate_sentence = ""
+
+        candidate_terms = common_terms + profile_extra_terms + offer_only_terms
+        sentence = ""
+        if existing:
+            existing_company, existing_terms = self._parse_positioning_sentence(existing, is_en=is_en)
+            if existing_terms:
+                normalized_existing = (
+                    f"Profile aligned with {existing_company or company} through {', '.join(existing_terms)}."
+                    if is_en and (existing_company or company)
+                    else f"Profile aligned through {', '.join(existing_terms)}."
+                    if is_en
+                    else f"Profil pertinent pour {existing_company or company} grâce à {', '.join(existing_terms)}."
+                    if (existing_company or company)
+                    else f"Profil pertinent grâce à {', '.join(existing_terms)}."
+                )
+                existing_score = self._score_positioning_terms(
+                    existing_terms,
+                    offer_terms=offer_terms,
+                    profile_terms=profile_terms,
+                    rendered_signatures=rendered_signatures,
+                )
+                candidate_score = self._score_positioning_terms(
+                    candidate_terms,
+                    offer_terms=offer_terms,
+                    profile_terms=profile_terms,
+                    rendered_signatures=rendered_signatures,
+                )
+                overlap = len(
+                    {
+                        self._normalize_text_key(item)
+                        for item in existing_terms
+                        if self._normalize_text_key(item)
+                    }
+                    & {
+                        self._normalize_text_key(item)
+                        for item in candidate_terms
+                        if self._normalize_text_key(item)
+                    }
+                )
+                if not candidate_terms or existing_score >= candidate_score or (
+                    overlap >= 1 and existing_score >= (candidate_score - 0.6)
+                ):
+                    sentence = normalized_existing
+        if not sentence and candidate_sentence:
+            sentence = candidate_sentence
         elif company and job_title:
             sentence = (
                 f"Profile aligned with {company} for a {job_title} role."
                 if is_en
                 else f"Profil pertinent pour {company} pour un poste de {job_title}."
             )
-        else:
-            sentence = existing
 
         key = self._normalize_text_key(sentence)
         if sentence and key and key not in used_keys:
