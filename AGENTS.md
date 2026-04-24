@@ -90,11 +90,18 @@ and must stay usable on heterogeneous Windows/Linux machines.
 - **Content allocation contract (MANDATORY)**: final one-page rendering must
   actively exploit the CV JSON instead of flattening it to a few generic
   sections. The default one-page layout must prioritize:
-  - a real summary capped to 3 short lines;
-  - a natural positioning sentence appended to the summary when offer/company
-    signal is available and grounded;
+  - a summary built LAST from the blocks actually retained in the CV, so it
+    avoids repeating the same signals already visible in rendered experiences;
+  - up to 4 summary sentences grouped into compact paragraphs when needed:
+    profile/value proposition, strongest aligned experience, natural company
+    targeting sentence, then most recent experience or remaining complement;
+  - a natural positioning sentence always present when company/offer signal is
+    available and grounded;
   - 3 to 5 credible technical skills (not a keyword dump);
-  - 2 to 3 concrete impacts per experience, prioritizing the strongest
+  - asymmetric experience density: the most aligned experience keeps the
+    richest detail budget, the most recent role may keep a secondary budget,
+    and lower-priority roles compress first;
+  - 2 to 4 concrete impacts per experience, prioritizing the strongest
     action-led and quantified evidence when available;
   - one featured project when available;
   - a compact certifications block when available;
@@ -132,9 +139,9 @@ and must stay usable on heterogeneous Windows/Linux machines.
   length/stopword filters only (no skill-shape check, no profile ranking,
   no deduplication against an existing positioning sentence).
 - **Positioning render contract (MANDATORY)**: when a positioning sentence is
-  present, final rendering must preserve it as the final sentence of the
-  summary instead of stripping it from HTML/PDF output. The sentence should
-  read naturally, echo the target company/offer, and remain grounded in
+  present, final rendering must preserve it visibly inside the final summary
+  instead of stripping it from HTML/PDF output. The sentence should read
+  naturally, echo the target company/offer, and remain grounded in
   profile-backed or offer-backed terms selected by the hierarchy above.
 - **Offer-only term placement contract (MANDATORY)**: pure offer-only terms
   (supported by the offer but not directly evidenced in the profile) may
@@ -187,8 +194,10 @@ and must stay usable on heterogeneous Windows/Linux machines.
   didn't strip the ellipsis on entry, so clipped fragments re-entered
   merge paths where fuzzy dedup couldn't match them.
 - **Experience render-selection contract (MANDATORY)**: final CV rendering
-  must prefer the 2 to 3 experience sentences most aligned to the target
-  offer, with strong action verbs and explicit impact when available.
+  must protect the most aligned experience first, then compress lower-priority
+  roles. The anchor role may keep a richer sentence budget than the others
+  when multiple roles compete for space, but all rendered details must still
+  favor strong action verbs and explicit impact when available.
   Company-description prose is supporting context only: it may inform weak
   sector inference or tie-breaking, but it must not outrank action/impact
   evidence and should usually be omitted from the rendered bullet list.

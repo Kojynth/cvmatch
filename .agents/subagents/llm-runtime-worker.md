@@ -62,6 +62,13 @@ risk.
   the strongest action-led evidence, one featured project when present,
   compact certifications, and no fallback to a vague `additional relevant
   details` blob when structured data exists
+- when summary assembly is in scope, build the final rendered summary after
+  retained experience/project/certification blocks are selected, avoid
+  repeating the same signals already visible in rendered experience bullets,
+  and keep the natural company-targeting sentence present
+- when experience rendering is in scope, preserve asymmetric detail budgets:
+  protect the most aligned anchor role first, then compress lower-priority
+  roles
 - do not rely on renderer-side sentence clipping with `...` / `…`; if output
   quality affects render density, prefer better sentence selection upstream
 - treat sector/industry hints only as minor ranking/vocabulary bonuses; they

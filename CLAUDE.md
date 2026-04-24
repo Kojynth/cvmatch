@@ -23,15 +23,21 @@
     like `Lien 1` are forbidden, and the target subtitle must read as a
     candidature target (`Poste vise` / `Target role`) rather than an
     employer label
-  - one-page content allocation contract: real summary (max 3 short lines),
+  - one-page content allocation contract: structured summary assembled from retained blocks,
     3-5 credible technical skills, a natural positioning sentence appended
-    to the summary when grounded offer/company signal exists, 2-3 impacts
-    per role chosen from the strongest action-led evidence, one featured
+    to the summary when grounded offer/company signal exists, 2-4 impacts
+    per role chosen from the strongest action-led evidence, with the anchor
+    role protected before lower-priority roles, one featured
     project, compact certifications, and no fallback to a vague
     `additional relevant details` blob when structured sections exist;
     never truncate final rendered sentences with `...` / `…`, select whole
     grounded sentences instead
   - positioning-sentence word-sourcing hierarchy:
+  - render-summary assembly contract: build the summary after experience /
+    project / certification selection, avoid repeating the same signal already
+    visible in retained experience bullets, keep the natural company-targeting
+    sentence present, and allow an asymmetric experience budget where the
+    strongest aligned role keeps more detail than lower-priority roles
     **Generation > Offer-skill > Profile-verbatim**, with hard-reject of
     verbs, prepositions, adverbs, and generic field nouns (see
     `collect_targeted_offer_terms` + `_skillish_score` in
@@ -68,15 +74,17 @@
   `missing_summary_terms`; cross-domain offer-only terms are allowed, but
   they must not evict better grounded aligned signal
 - positioning render contract: when present, the positioning sentence stays
-  in the final rendered summary as its closing sentence and should read
+  visible in the final rendered summary and should read
   naturally, not as a raw keyword dump
 - offer-only term placement contract: pure offer-only vocabulary belongs only
   in the natural positioning sentence; do not surface unsupported offer-only
   terms as proven skills or experience facts unless profile evidence supports
   a coherent implicit inference
 - experience render-selection contract: rendered experience details prefer
-  the 2-3 most offer-aligned action/impact sentences; company-description
-  prose is only weak sector context and usually should not appear in the CV
+  the strongest offer-aligned action/impact sentences with an asymmetric
+  budget: protect the anchor experience first, then compress lower-priority
+  roles; company-description prose is only weak sector context and usually
+  should not appear in the CV
 - sector/industry signal contract: sector hints are allowed only as a minor
   ranking/vocabulary bonus, never as a hard gate and never over stronger
   offer-skill/profile evidence

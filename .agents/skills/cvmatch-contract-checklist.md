@@ -20,20 +20,26 @@ Checklist:
    the summary may keep one short natural positioning sentence while
    experience blocks prefer action/impact sentences over company-description
    text.
-6. If experience dedup is touched, verify duplicate retries/date-format
+6. If summary assembly is touched, verify the final rendered summary is built
+   after retained blocks are selected, avoids repeating signals already
+   visible in rendered experience bullets, and keeps the company-targeting
+   sentence present.
+7. If experience rendering/selection is touched, verify the anchor experience
+   keeps the richest detail budget before lower-priority roles compress.
+8. If experience dedup is touched, verify duplicate retries/date-format
    variants collapse while same company/title with conflicting periods stay
    distinct.
-7. If summary adaptation/positioning is touched, verify the phrase surfaces
+9. If summary adaptation/positioning is touched, verify the phrase surfaces
    profile-backed aligned skills/talents first, does not rely on
    `missing_summary_terms` alone, reads naturally in final render, and uses
    sector/industry only as a very weak bonus rather than a gate.
-8. If offer-keyword extraction or prompt preparation is touched, verify
+10. If offer-keyword extraction or prompt preparation is touched, verify
    requirement-heavy sections outrank marketing/culture/benefits/remote text,
    and verify pure offer-only vocabulary stays confined to the natural
    positioning sentence unless profile evidence supports a coherent implicit
    inference elsewhere.
-9. If tooling wording is touched, verify named products/platforms from the
+11. If tooling wording is touched, verify named products/platforms from the
    source outrank vague categories like `automation tools` or
    `outils de facturation`.
-10. Run `tests/contracts` plus the smallest targeted rendering/export scope.
-11. Record skipped scope explicitly.
+12. Run `tests/contracts` plus the smallest targeted rendering/export scope.
+13. Record skipped scope explicitly.
