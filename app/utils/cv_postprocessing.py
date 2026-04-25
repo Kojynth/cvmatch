@@ -1041,7 +1041,10 @@ _CORPORATE_DESCRIPTION_HINTS = (
     "company",
     "filiale",
     "subsidiary",
+    "spécialisée",
+    "spécialisé",
     "specialisee",
+    "specialise",
     "specialized",
     "digitalisation",
     "digitalization",
@@ -1307,14 +1310,22 @@ _COMPANY_DESCRIPTOR_PHRASES = (
     "filiale de",
     "filiale du",
     "filiale numerique",
+    "filiale numérique",
     "filiale digitale",
     "filiale specialisee",
+    "filiale spécialisée",
     "specialisee dans",
     "specialise dans",
+    "spécialisée dans",
+    "spécialisé dans",
     "specialisee en",
     "specialise en",
+    "spécialisée en",
+    "spécialisé en",
     "entreprise specialisee",
+    "entreprise spécialisée",
     "societe specialisee",
+    "société spécialisée",
     "subsidiary of",
     "branch of",
     "est un leader",
@@ -1955,6 +1966,11 @@ def _reconcile_experience_section(
             ),
             "highlights": [],
         }
+        entry["description"] = _collect_experience_source_candidates(
+            raw_entry.get("description"),
+            company=entry.get("company") or "",
+            language_code=language_code,
+        )
 
         highlights: List[str] = []
         for value in raw_entry.get("highlights") or []:
@@ -1995,6 +2011,16 @@ def _reconcile_experience_section(
                     entry[field] = matched_profile[field]
 
         if expected_description:
+            profile_candidates = _collect_experience_source_candidates(
+                expected_description,
+                company=entry.get("company") or "",
+                language_code=language_code,
+            )
+            if profile_candidates:
+                entry["description"] = _dedup_fuzzy_highlights(
+                    _dedup_preserve([*entry.get("description", []), *profile_candidates])
+                )[:12]
+
             if not entry["summary"]:
                 entry["summary"] = _select_action_summary(
                     "",
@@ -2641,6 +2667,11 @@ def _seed_experience_from_profile(
     seeded: List[Dict[str, Any]] = []
     for item in profile_experiences[:4]:
         fallback_description = item.get("description") or ""
+        description_candidates = _collect_experience_source_candidates(
+            fallback_description,
+            company=item.get("company") or "",
+            language_code=language_code,
+        )
         summary = _select_action_summary(
             "",
             highlights=[],
@@ -2676,6 +2707,7 @@ def _seed_experience_from_profile(
                 "location": item.get("location") or "",
                 "summary": _trim_text(summary, 280),
                 "highlights": highlights[:4],
+                "description": description_candidates,
             }
         )
 
@@ -2781,6 +2813,24 @@ def rebalance_cv_narrative(
             if isinstance(matched_profile, dict)
             else ""
         )
+        description_candidates = _collect_experience_source_candidates(
+            entry.get("description"),
+            company=str(entry.get("company") or ""),
+            language_code=language_code,
+        )
+        if profile_description:
+            description_candidates = _dedup_fuzzy_highlights(
+                _dedup_preserve(
+                    [
+                        *description_candidates,
+                        *_collect_experience_source_candidates(
+                            profile_description,
+                            company=str(entry.get("company") or ""),
+                            language_code=language_code,
+                        ),
+                    ]
+                )
+            )[:12]
 
         if not entry_summary and profile_description:
             entry_summary = _select_action_summary(
@@ -2858,6 +2908,8 @@ def rebalance_cv_narrative(
 
         entry["summary"] = _trim_text(entry_summary, 280)
         entry["highlights"] = _dedup_fuzzy_highlights(highlights)[:4]
+        if description_candidates:
+            entry["description"] = description_candidates
 
         if isinstance(matched_profile, dict):
             for field in ("title", "company", "start_date", "end_date", "location"):
@@ -3694,6 +3746,7 @@ def extract_experience_highlights(
     *,
     company: str = "",
     language_code: str = "fr",
+    max_items: int = 4,
 ) -> List[str]:
     """Extract bullet-point highlights from experience description.
 
@@ -3722,7 +3775,36 @@ def extract_experience_highlights(
         if cleaned:
             highlights.append(cleaned)
 
-    return _dedup_preserve(highlights)[:4]
+    return _dedup_preserve(highlights)[: max(1, int(max_items or 1))]
+
+
+def _collect_experience_source_candidates(
+    description: Any,
+    *,
+    company: str = "",
+    language_code: str = "fr",
+    max_items: int = 12,
+) -> List[str]:
+    if isinstance(description, str):
+        raw_items = [description] if description.strip() else []
+    elif isinstance(description, list):
+        raw_items = [
+            item for item in description if isinstance(item, str) and item.strip()
+        ]
+    else:
+        raw_items = []
+
+    candidates: List[str] = []
+    for raw in raw_items:
+        candidates.extend(
+            extract_experience_highlights(
+                raw,
+                company=company,
+                language_code=language_code,
+                max_items=max_items,
+            )
+        )
+    return _dedup_fuzzy_highlights(_dedup_preserve(candidates))[:max_items]
 
 
 def rank_experiences_by_relevance(

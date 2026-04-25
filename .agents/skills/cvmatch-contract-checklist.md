@@ -27,7 +27,9 @@ Checklist:
    sentence present.
 7. If experience rendering/selection is touched, verify the anchor experience
    keeps the richest detail budget before lower-priority roles compress, while
-   visible role order itself stays reverse-chronological.
+   visible role order itself stays reverse-chronological. Also verify source
+   extraction keeps a rich candidate pool before scoring instead of dropping
+   late profile evidence with an early 4-6 sentence cap.
 8. If featured-skill ranking is touched, verify chips still come from the
    profile `skills` pool first, experience/project evidence only reprioritizes
    or compactly rewrites labels, and vague comparative skills can become
