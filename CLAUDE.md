@@ -29,7 +29,8 @@
     up to 10 compact credible skill/tool chips when layout allows, a natural positioning sentence appended
     to the summary when grounded offer/company signal exists, 2-4 impacts
     per role chosen from the strongest action-led evidence, with the anchor
-    role protected before lower-priority roles, one featured
+    role protected before lower-priority roles; dense source evidence should
+    be fused into coherent bullets instead of dropped, one featured
     project, compact certifications, and no fallback to a vague
     `additional relevant details` blob when structured sections exist;
     never truncate final rendered sentences with `...` / `…`, select whole
@@ -40,9 +41,10 @@
     explicit profile evidence (`skills`, projects, education/formations,
     certifications, experience text) when the extracted label is compact,
     skill-shaped, source-backed, and offer-aligned; never render raw narrative
-    fragments as chips. Keep soft skills in a dedicated `Savoir-être` /
-    `Soft skills` section, not mixed into hard skill chips unless the profile
-    has no hard skill pool.
+    fragments as chips. Prefer compact grouped chips for strongly targeted
+    offers when grouping improves hierarchy/proof. Keep soft skills out of
+    hard skill chips and render a separate `Savoir-être` / `Soft skills`
+    section only when they are not already proved inside experience bullets.
   - skill-list credibility contract: do not backfill weak/noisy skill chips
     just to hit a display quota; fewer credible chips are better than filler,
     except when the profile only exposes a small compact skill pool that

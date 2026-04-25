@@ -72,15 +72,17 @@ history, and `mass_apply`.
   action/impact sentences aligned with the offer; also verify the anchor
   experience keeps the richest detail budget before lower-priority roles and
   that profile-derived source extraction keeps enough late candidate sentences
-  before ranking instead of applying an early 4-6 sentence cap
+  before ranking instead of applying an early 4-6 sentence cap; dense evidence
+  should be fused into 2-4 coherent bullets instead of dropped
 - when offer-keyword extraction is touched, verify requirement-heavy sections
   outrank marketing/culture/benefits/remote-policy text in downstream terms
 - when featured-skill ranking is touched, verify hard skill/tool chips can
   come from explicit profile evidence (`skills`, projects,
   education/formations, certifications, experience text) only when compact,
   skill-shaped, source-backed, and offer-aligned; soft skills must stay in a
-  dedicated `Savoir-être` / `Soft skills` section unless no hard skill pool
-  exists
+  dedicated `Savoir-être` / `Soft skills` section only when not already proved
+  inside experience bullets; strongly targeted offers may use compact grouped
+  chips when that improves hierarchy/proof
 - when offer-only targeting is touched, verify pure offer-only terms stay in
   the natural positioning sentence unless profile evidence supports a
   coherent implicit inference elsewhere

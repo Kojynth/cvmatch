@@ -71,7 +71,8 @@ risk.
   candidate in alignment quality
 - when experience rendering is in scope, preserve asymmetric detail budgets:
   protect the most aligned anchor role first, then compress lower-priority
-  roles
+  roles; fuse dense source evidence into 2-4 coherent bullets instead of
+  dropping useful proof or rendering too many bullets
 - keep rendered role order reverse-chronological; relevance decides detail
   density, not visible role order
 - do not rely on renderer-side sentence clipping with `...` / `…`; if output
@@ -88,7 +89,9 @@ risk.
   source evidence, surface the named products instead
 - featured skill chips must come from the profile `skills` pool first;
   experience/project evidence may reprioritize or compactly rewrite those
-  labels, but must not create extra chips from narrative bullets alone
+  labels, but must not create extra chips from narrative bullets alone; compact
+  grouped chips are acceptable for strongly targeted offers when they clarify
+  hierarchy/proof
 - do not backfill weak/noisy skill chips purely to hit the visible chip cap
 - when the profile exposes only a small already-clean skill pool that fits in
   the chip budget, keep that compact pool instead of over-pruning it

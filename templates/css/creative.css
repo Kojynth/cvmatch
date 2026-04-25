@@ -128,6 +128,15 @@ body {
   color: var(--text);
 }
 
+.experience-highlights {
+  margin: 6px 0 12px;
+}
+
+.experience-highlight {
+  margin: 0 0 6px;
+  padding-left: 14px;
+}
+
 @media (max-width: 720px) {
   body {
     padding: 16px;

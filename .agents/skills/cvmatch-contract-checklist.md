@@ -31,16 +31,20 @@ Checklist:
    keeps the richest detail budget before lower-priority roles compress, while
    visible role order itself stays reverse-chronological. Also verify source
    extraction keeps a rich candidate pool before scoring instead of dropping
-   late profile evidence with an early 4-6 sentence cap.
+   late profile evidence with an early 4-6 sentence cap, and that dense source
+   evidence is fused into 2-4 coherent bullets rather than expanded into too
+   many bullets.
 8. If featured-skill ranking is touched, verify hard skill/tool chips may come
    from explicit profile evidence (`skills`, projects, education/formations,
    certifications, experience text) only when the extracted label is compact,
    skill-shaped, source-backed, and offer-aligned. Keep soft skills in a
-   dedicated `Savoir-être` / `Soft skills` section, not mixed into hard skill
-   chips unless there is no hard skill pool.
+   dedicated `Savoir-être` / `Soft skills` section only when those behaviours
+   are not already proved inside experience bullets.
    Vague comparative skills can become labels such as
    `Benchmark Playwright / Cypress / Selenium` when source evidence names the
-   tools. Do not backfill weak/noisy chips just to reach the visible cap.
+   tools. Prefer compact grouped chips for strongly targeted offers when they
+   clarify hierarchy/proof. Do not backfill weak/noisy chips just to reach the
+   visible cap.
 9. If experience dedup is touched, verify duplicate retries/date-format
    variants collapse while same company/title with conflicting periods stay
    distinct.

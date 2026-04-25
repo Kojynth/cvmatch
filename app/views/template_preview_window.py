@@ -108,7 +108,11 @@ CV_BASE_LAYOUT_CSS = """
 .experience-highlights,
 .certification-list {
   margin: 6px 0 0;
-  padding-left: 18px;
+  padding-left: 0;
+}
+.experience-highlight {
+  margin: 0 0 5px;
+  padding-left: 14px;
 }
 .entry,
 .experience-entry,
@@ -138,6 +142,9 @@ CV_BASE_LAYOUT_CSS = """
 :root[data-page-fit="compact"] .certification-list,
 :root[data-page-fit="compact"] ul {
   margin-top: 4px !important;
+}
+:root[data-page-fit="compact"] .experience-highlight {
+  margin-bottom: 3px !important;
 }
 :root[data-page-fit="tight"] .cv-section {
   margin-top: 9px !important;
@@ -204,6 +211,9 @@ CV_BASE_LAYOUT_CSS = """
 :root[data-page-fit="ultra"] ul {
   margin-top: 3px !important;
   margin-bottom: 3px !important;
+}
+:root[data-page-fit="ultra"] .experience-highlight {
+  margin-bottom: 1px !important;
 }
 :root[data-page-fit="ultra"] .skill-chip {
   padding: 1px 6px !important;
@@ -319,6 +329,13 @@ ONE_PAGE_PRINT_CSS = """
   ul {
     margin-top: 3px !important;
     margin-bottom: 3px !important;
+    padding-left: 13px !important;
+  }
+  .experience-highlights {
+    padding-left: 0 !important;
+  }
+  .experience-highlight {
+    margin: 0 0 1px !important;
     padding-left: 13px !important;
   }
   li {
