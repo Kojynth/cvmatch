@@ -30,13 +30,13 @@ Checklist:
    visible role order itself stays reverse-chronological. Also verify source
    extraction keeps a rich candidate pool before scoring instead of dropping
    late profile evidence with an early 4-6 sentence cap.
-8. If featured-skill ranking is touched, verify chips still come from the
-   profile `skills` pool first, experience/project evidence only reprioritizes
-   or compactly rewrites labels, and vague comparative skills can become
-   labels such as `Benchmark Playwright / Cypress / Selenium` when source
-   evidence names the tools. Do not backfill weak/noisy chips just to reach
-   the visible cap, but preserve a small already-clean skill pool when it
-   still fits within the visible budget.
+8. If featured-skill ranking is touched, verify chips may come from any
+   explicit profile source (`skills`, `soft_skills`, projects,
+   education/formations, certifications, experience text) only when the
+   extracted label is compact, skill-shaped, source-backed, and offer-aligned.
+   Vague comparative skills can become labels such as
+   `Benchmark Playwright / Cypress / Selenium` when source evidence names the
+   tools. Do not backfill weak/noisy chips just to reach the visible cap.
 9. If experience dedup is touched, verify duplicate retries/date-format
    variants collapse while same company/title with conflicting periods stay
    distinct.
