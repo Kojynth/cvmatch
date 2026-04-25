@@ -2371,8 +2371,18 @@ OUTPUT RULES:
 - sentence 2 is optional and may be a short natural positioning sentence that
   mentions TARGET_COMPANY and offer vocabulary, including offer-only terms,
   but only as positioning/relevance, not as a claimed past responsibility.
+- When TARGET_COMPANY is provided, keep it visible in the summary, but do not
+  use a formulaic keyword dump such as "Profil pertinent pour COMPANY grace a
+  A, B, C" or "Atouts pertinents pour COMPANY : A, B, C".
+- Use TARGET_JOB_TITLE and requirement-heavy offer terms to decide what makes
+  the profile relevant. Keep the rule generic for any profession or sector; do
+  not hardcode one employer, one user profile, or a tech/QA-only taxonomy.
 - Do not describe employer history, mission, culture, benefits, or marketing copy.
 - Reuse PROFILE-backed PRIORITY_OFFER_TERMS directly in sentence 1.
+- Preserve high-signal profile-backed keywords, named tools, and role-specific
+  offer vocabulary when rewriting the summary. Do not paraphrase away terms
+  that carry ATS/recruiter alignment, but integrate them naturally instead of
+  producing a keyword list.
 - Sentence 2 may reuse offer-only PRIORITY_OFFER_TERMS as positioning language
   when they fit TARGET_COMPANY, but must not turn them into unsupported facts.
 - If PROFILE_JSON evidences concrete named tools, software, platforms,

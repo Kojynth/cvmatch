@@ -32,14 +32,18 @@ Current render/export contracts to preserve across agent runs:
 - final rendered sentences must stay whole: no `...` / `…` truncation in the
   one-page HTML/PDF path; select better sentences instead of clipping them
 - when a grounding-safe positioning sentence exists, keep it visible in the
-  rendered summary, but do not preserve a stale/noisy stored sentence when a
-  recomputed candidate is clearly better aligned
+  rendered summary with `{company}` visible in a natural `{job_title}`
+  relevance statement; do not preserve a stale/noisy stored sentence or a
+  formulaic keyword dump when a recomputed candidate is clearly better aligned
 - build the rendered summary after retained blocks are selected so it does not
   repeat the same signals already visible in rendered experience bullets
 - protect the most aligned experience first; lower-priority roles compress
   before the anchor role loses detail
-- dense experience evidence should be fused into 2-4 coherent bullets instead
-  of being dropped or expanded into too many bullets
+- dense experience evidence should be rewritten by the LLM into 2-4 new
+  coherent bullets instead of being dropped, copied verbatim, expanded into too
+  many bullets, or mechanically joined by the renderer with semicolons; keep
+  high-signal keywords, named tools, and role vocabulary inside the rewritten
+  bullets when they carry offer/profile alignment
 - keep rendered experience order reverse-chronological; use relevance only to
   allocate detail, not to reshuffle the visible role order
 - "Visualiser les détails" / profile detail editing must show tense guidance:
@@ -49,7 +53,9 @@ Current render/export contracts to preserve across agent runs:
 - compact skill chips may extend to roughly 10 visible items when the row-wrap
   stays clean; do not artificially collapse to 3-5 if the layout remains readable
 - compact grouped skill chips are preferred for strongly targeted offers when
-  they make the proof hierarchy clearer than flat keyword chips
+  they make the proof hierarchy clearer than flat keyword chips, but grouping
+  must be driven by `{job_title}` and requirement-heavy offer evidence for any
+  profession/sector, not by a hardcoded company/profile/tech-only taxonomy
 - featured skill chips come from the profile `skills` pool first; use
   experience/project evidence to reprioritize or compactly rewrite labels, but
   do not mint extra chips directly from narrative bullets

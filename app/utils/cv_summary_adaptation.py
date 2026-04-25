@@ -896,11 +896,11 @@ def build_targeted_summary_focus_sentence(
 
 _POSITIONING_SENTENCE_PATTERNS = {
     "fr": re.compile(
-        r"\s*Atouts\s+pertinents(?:\s+pour\s+[^.:]{1,80})?\s*[:\-]\s*[^.]*\.",
+        r"\s*(?:Atouts\s+pertinents(?:\s+pour\s+[^.:]{1,80})?\s*[:\-]\s*[^.]*|Pour\s+[^.]{1,100},\s+ce\s+profil\s+(?:met\s+en\s+avant\s+un\s+positionnement\s+pertinent\s+autour\s+de|cible\s+le\s+poste\s+de\s+[^.]+?\s+avec\s+un\s+positionnement\s+autour\s+de)\s+[^.]*|Ce\s+profil\s+met\s+en\s+avant\s+un\s+positionnement\s+pertinent\s+autour\s+de\s+[^.]*)\.",
         re.IGNORECASE,
     ),
     "en": re.compile(
-        r"\s*Relevant\s+strengths(?:\s+for\s+[^.:]{1,80})?\s+include\s+[^.]*\.",
+        r"\s*(?:Relevant\s+strengths(?:\s+for\s+[^.:]{1,80})?\s+include\s+[^.]*|For\s+[^.]{1,100},\s+this\s+profile\s+(?:highlights\s+relevant\s+positioning\s+around|targets\s+the\s+[^.]+?\s+role\s+with\s+positioning\s+around)\s+[^.]*|This\s+profile\s+highlights\s+relevant\s+positioning\s+around\s+[^.]*)\.",
         re.IGNORECASE,
     ),
 }

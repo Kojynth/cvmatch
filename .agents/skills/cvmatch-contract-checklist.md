@@ -25,15 +25,18 @@ Checklist:
    the row-wrap remains clean.
 6. If summary assembly is touched, verify the final rendered summary is built
    after retained blocks are selected, avoids repeating signals already
-   visible in rendered experience bullets, and keeps the company-targeting
-   sentence present.
+   visible in rendered experience bullets, and keeps `{company}` visible in a
+   natural `{job_title}` relevance sentence instead of a keyword dump.
 7. If experience rendering/selection is touched, verify the anchor experience
    keeps the richest detail budget before lower-priority roles compress, while
    visible role order itself stays reverse-chronological. Also verify source
    extraction keeps a rich candidate pool before scoring instead of dropping
    late profile evidence with an early 4-6 sentence cap, and that dense source
-   evidence is fused into 2-4 coherent bullets rather than expanded into too
-   many bullets. If profile detail feedback is touched, verify "Visualiser les
+   evidence is rewritten by the LLM into 2-4 new coherent bullets rather than
+   expanded into too many bullets, copied, or mechanically joined by the
+   renderer. Verify high-signal keywords, named tools, and role vocabulary
+   that carry offer/profile alignment survive the rewrite naturally. If profile
+   detail feedback is touched, verify "Visualiser les
    détails" shows tense guidance from dates: present-tense action verbs for
    current roles, past-tense action verbs for ended roles, without adding
    renderer-side language-wide verb replacement lists.
@@ -46,8 +49,9 @@ Checklist:
    Vague comparative skills can become labels such as
    `Benchmark Playwright / Cypress / Selenium` when source evidence names the
    tools. Prefer compact grouped chips for strongly targeted offers when they
-   clarify hierarchy/proof. Do not backfill weak/noisy chips just to reach the
-   visible cap.
+   clarify hierarchy/proof, but grouping must be driven by `{job_title}` plus
+   requirement-heavy offer evidence for any profession/sector. Do not backfill
+   weak/noisy chips just to reach the visible cap.
 9. If experience dedup is touched, verify duplicate retries/date-format
    variants collapse while same company/title with conflicting periods stay
    distinct.

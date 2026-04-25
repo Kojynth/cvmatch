@@ -99,9 +99,13 @@ and must stay usable on heterogeneous Windows/Linux machines.
     profile/value proposition, strongest aligned experience, natural company
     targeting sentence, then most recent experience or remaining complement;
   - a natural positioning sentence always present when company/offer signal is
-    available and grounded;
+    available and grounded; keep `{company}` visible, but phrase it as a
+    natural relevance statement for the `{job_title}` instead of a keyword
+    dump like `Profil pertinent pour {Company} grâce à A, B, C`;
   - up to 10 compact, credible skill/tool chips when the layout can support
-    them (not a keyword dump);
+    them (not a keyword dump); skill grouping and ordering must be driven by
+    `{job_title}` plus requirement-heavy offer evidence for any profession or
+    sector, never by a hardcoded company/profile/tech-only taxonomy;
   - rendered experience order stays reverse-chronological; relevance ranking
     may change detail budgets, not the visible role order;
   - hard skill/tool chips may come from explicit user-profile evidence:
@@ -114,7 +118,11 @@ and must stay usable on heterogeneous Windows/Linux machines.
     and lower-priority roles compress first;
   - 2 to 4 concrete impacts per experience, prioritizing the strongest
     action-led and quantified evidence when available; dense source evidence
-    should be fused into longer coherent bullets rather than dropped;
+    should be rewritten by the LLM into new coherent bullets rather than
+    dropped, copied verbatim, or mechanically concatenated; these rewrites
+    must preserve high-signal keywords, named tools, and role vocabulary that
+    carry offer/profile alignment, integrated naturally rather than as a
+    keyword list;
   - one featured project when available;
   - a compact certifications block when available;
   - soft skills only as a compact supporting signal, never as filler; when
@@ -124,7 +132,10 @@ and must stay usable on heterogeneous Windows/Linux machines.
   but it must not collapse useful structured content into a vague
   `additional relevant details` blob, and it must not truncate rendered
   sentences with `...` / `…`. When content does not fit, select or reorder
-  whole grounded sentences; do not crop mid-sentence.
+  whole grounded sentences; do not crop mid-sentence. The renderer is not a
+  prose generator: it must not fabricate fused bullets by joining source
+  fragments with semicolons. Rich bullets belong in the LLM generation/final
+  rewrite stage and must remain sourced.
 - **Positioning-sentence word-sourcing hierarchy (MANDATORY)**: when a
   generator selects a small set of keywords to surface in a positioning
   sentence (for example a natural summary tail such as `Profil pertinent pour
@@ -244,10 +255,11 @@ and must stay usable on heterogeneous Windows/Linux machines.
   source evidence, prefer a compact comparative label such as
   `Benchmark Playwright / Cypress / Selenium` over a vague wording or an
   invented direct-usage claim. For strongly targeted offers, prefer compact
-  grouped chips (`QA & stratégie de test`, `API/data`, `Automatisation`,
-  `Tooling`, etc.) over flat keyword lists when this improves proof and
-  hierarchy. Soft skills must not compete with hard skill chips; render them
-  only when not already proved inside experience bullets. Do not backfill
+  grouped chips over flat keyword lists when this improves proof and
+  hierarchy, but derive group labels from `{job_title}` and requirement-heavy
+  offer evidence for the current profession/sector. Soft skills must not
+  compete with hard skill chips; render them only when not already proved
+  inside experience bullets. Do not backfill
   low-scoring/noisy skill candidates just to reach a visual chip quota: a
   shorter credible skill list is better than ten weak chips.
 - **Company-description filter contract (MANDATORY)**: renderer-side guards

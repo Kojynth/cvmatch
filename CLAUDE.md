@@ -27,10 +27,14 @@
     employer label
   - one-page content allocation contract: structured summary assembled from retained blocks,
     up to 10 compact credible skill/tool chips when layout allows, a natural positioning sentence appended
-    to the summary when grounded offer/company signal exists, 2-4 impacts
+    to the summary when grounded offer/company signal exists, with `{company}`
+    visible in a natural `{job_title}` relevance statement rather than a
+    keyword dump, 2-4 impacts
     per role chosen from the strongest action-led evidence, with the anchor
     role protected before lower-priority roles; dense source evidence should
-    be fused into coherent bullets instead of dropped, one featured
+    be rewritten by the LLM into new coherent bullets instead of dropped,
+    copied, or mechanically joined by the renderer, while preserving the
+    high-signal keywords/tools/role vocabulary that carry alignment, one featured
     project, compact certifications, and no fallback to a vague
     `additional relevant details` blob when structured sections exist;
     never truncate final rendered sentences with `...` / `…`, select whole
@@ -42,7 +46,9 @@
     certifications, experience text) when the extracted label is compact,
     skill-shaped, source-backed, and offer-aligned; never render raw narrative
     fragments as chips. Prefer compact grouped chips for strongly targeted
-    offers when grouping improves hierarchy/proof. Keep soft skills out of
+    offers when grouping improves hierarchy/proof, but grouping must be driven
+    by `{job_title}` and offer requirements for any profession/sector, not by
+    a hardcoded company/profile/tech-only taxonomy. Keep soft skills out of
     hard skill chips and render a separate `Savoir-être` / `Soft skills`
     section only when they are not already proved inside experience bullets.
   - skill-list credibility contract: do not backfill weak/noisy skill chips
@@ -58,9 +64,10 @@
   - positioning-sentence word-sourcing hierarchy:
   - render-summary assembly contract: build the summary after experience /
     project / certification selection, avoid repeating the same signal already
-    visible in retained experience bullets, keep the natural company-targeting
-    sentence present, and allow an asymmetric experience budget where the
-    strongest aligned role keeps more detail than lower-priority roles
+    visible in retained experience bullets, keep `{company}` visible in a
+    natural `{job_title}` relevance sentence, and allow an asymmetric
+    experience budget where the strongest aligned role keeps more detail than
+    lower-priority roles
     **Generation > Offer-skill > Profile-verbatim**, with hard-reject of
     verbs, prepositions, adverbs, and generic field nouns (see
     `collect_targeted_offer_terms` + `_skillish_score` in

@@ -66,13 +66,16 @@ risk.
 - when summary assembly is in scope, build the final rendered summary after
   retained experience/project/certification blocks are selected, avoid
   repeating the same signals already visible in rendered experience bullets,
-  and keep the natural company-targeting sentence present; preserve an
+  and keep `{company}` visible in a natural `{job_title}` relevance sentence;
+  preserve an
   existing sentence only when it still beats or matches the recomputed
   candidate in alignment quality
 - when experience rendering is in scope, preserve asymmetric detail budgets:
   protect the most aligned anchor role first, then compress lower-priority
-  roles; fuse dense source evidence into 2-4 coherent bullets instead of
-  dropping useful proof or rendering too many bullets
+  roles; have the LLM rewrite dense source evidence into 2-4 new coherent
+  bullets instead of dropping useful proof, copying source fragments, or
+  mechanically joining them in the renderer; preserve high-signal keywords,
+  named tools, and role vocabulary that carry offer/profile alignment
 - when profile detail feedback / "Visualiser les détails" is in scope, keep
   date-driven tense guidance visible: present-tense action verbs for current
   roles, past-tense action verbs for ended roles, without renderer-side
@@ -87,6 +90,9 @@ risk.
 - pure offer-only vocabulary may appear in the summary's natural positioning
   sentence, but must not be emitted elsewhere as proven skill/experience fact
   unless the profile supports a coherent implicit inference
+- company targeting must keep `{company}` visible in a natural `{job_title}`
+  relevance sentence; avoid keyword-dump patterns like "Profil pertinent pour
+  COMPANY grace a A, B, C"
 - if profile or offer evidence includes concrete named tools/software/
   platforms/systems, prefer naming them explicitly over vague tooling wording
 - generic tool categories are fallback only; if named products are present in
@@ -95,7 +101,8 @@ risk.
   experience/project evidence may reprioritize or compactly rewrite those
   labels, but must not create extra chips from narrative bullets alone; compact
   grouped chips are acceptable for strongly targeted offers when they clarify
-  hierarchy/proof
+  hierarchy/proof and are driven by `{job_title}` plus requirement-heavy offer
+  evidence, not by a hardcoded company/profile/tech-only taxonomy
 - do not backfill weak/noisy skill chips purely to hit the visible chip cap
 - when the profile exposes only a small already-clean skill pool that fits in
   the chip budget, keep that compact pool instead of over-pruning it

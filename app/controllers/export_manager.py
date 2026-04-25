@@ -457,7 +457,7 @@ class ExportManager:
             formatted_data,
             offer_terms=offer_terms,
             job_title=str(job_title_hint).strip(),
-            language_code=str(formatted_data.get("language") or "fr"),
+            language_code=language_code,
             max_items=max_skill_items,
         )
         formatted_data["profile_summary_lines"] = self._build_render_summary_lines(
@@ -1918,6 +1918,14 @@ class ExportManager:
                     r"^Profil\s+pertinent(?:\s+pour\s+[^.]{1,80}?)?\s+gr(?:a|â)ce\s+[aà]\s+.+\.$",
                     re.IGNORECASE,
                 ),
+                re.compile(
+                    r"^Pour\s+[^.]{1,100},\s+ce\s+profil\s+(?:met\s+en\s+avant\s+un\s+positionnement\s+pertinent\s+autour\s+de|cible\s+le\s+poste\s+de\s+.+?\s+avec\s+un\s+positionnement\s+autour\s+de)\s+.+\.$",
+                    re.IGNORECASE,
+                ),
+                re.compile(
+                    r"^Ce\s+profil\s+met\s+en\s+avant\s+un\s+positionnement\s+pertinent\s+autour\s+de\s+.+\.$",
+                    re.IGNORECASE,
+                ),
             )
             if not is_en
             else (
@@ -1927,6 +1935,14 @@ class ExportManager:
                 ),
                 re.compile(
                     r"^Profile\s+aligned(?:\s+with\s+[^.]{1,80}?)?\s+through\s+.+\.$",
+                    re.IGNORECASE,
+                ),
+                re.compile(
+                    r"^For\s+[^.]{1,100},\s+this\s+profile\s+(?:highlights\s+relevant\s+positioning\s+around|targets\s+the\s+.+?\s+role\s+with\s+positioning\s+around)\s+.+\.$",
+                    re.IGNORECASE,
+                ),
+                re.compile(
+                    r"^This\s+profile\s+highlights\s+relevant\s+positioning\s+around\s+.+\.$",
                     re.IGNORECASE,
                 ),
             )
@@ -1952,6 +1968,14 @@ class ExportManager:
                     r"^Profil\s+pertinent(?:\s+pour\s+(?P<company>.+?))?\s+gr(?:a|â)ce\s+[aà]\s+(?P<terms>.+?)\.\s*$",
                     re.IGNORECASE,
                 ),
+                re.compile(
+                    r"^Pour\s+(?P<company>.+?),\s+ce\s+profil\s+(?:met\s+en\s+avant\s+un\s+positionnement\s+pertinent\s+autour\s+de|cible\s+le\s+poste\s+de\s+.+?\s+avec\s+un\s+positionnement\s+autour\s+de)\s+(?P<terms>.+?)\.\s*$",
+                    re.IGNORECASE,
+                ),
+                re.compile(
+                    r"^Ce\s+profil\s+met\s+en\s+avant\s+un\s+positionnement\s+pertinent\s+autour\s+de\s+(?P<terms>.+?)\.\s*$",
+                    re.IGNORECASE,
+                ),
             )
             if not is_en
             else (
@@ -1961,6 +1985,14 @@ class ExportManager:
                 ),
                 re.compile(
                     r"^Profile\s+aligned(?:\s+with\s+(?P<company>.+?))?\s+through\s+(?P<terms>.+?)\.\s*$",
+                    re.IGNORECASE,
+                ),
+                re.compile(
+                    r"^For\s+(?P<company>.+?),\s+this\s+profile\s+(?:highlights\s+relevant\s+positioning\s+around|targets\s+the\s+.+?\s+role\s+with\s+positioning\s+around)\s+(?P<terms>.+?)\.\s*$",
+                    re.IGNORECASE,
+                ),
+                re.compile(
+                    r"^This\s+profile\s+highlights\s+relevant\s+positioning\s+around\s+(?P<terms>.+?)\.\s*$",
                     re.IGNORECASE,
                 ),
             )
@@ -2413,18 +2445,10 @@ class ExportManager:
                 break
         if not cleaned:
             return ""
-        if len(cleaned) == 1:
-            return cleaned[0]
-
-        def lower_continuation(item: str) -> str:
-            first = item.split(" ", 1)[0]
-            if self._is_display_token_protected(first):
-                return item
-            return item[:1].lower() + item[1:]
-
-        return "; ".join(
-            [cleaned[0], *[lower_continuation(item) for item in cleaned[1:]]]
-        )
+        # The renderer is a layout/safety layer, not a prose generator. Rich
+        # fused bullets must be authored by the LLM from source evidence; do
+        # not mechanically concatenate fragments with semicolons here.
+        return cleaned[0]
 
     def _merge_experience_lines_by_signal(
         self,
@@ -3875,7 +3899,13 @@ class ExportManager:
             if self._normalize_render_text(item)
         ]
 
-        is_en = str(language_code or "").lower().startswith("en")
+        normalized_language = str(language_code or "").strip().lower()
+        base_language = re.split(r"[-_]", normalized_language, maxsplit=1)[0]
+        is_en = base_language == "en"
+        is_fr = base_language == "fr" or not base_language
+        if not (is_en or is_fr):
+            return raw_selected[: max(1, int(max_items or 1))]
+
         offer_probe = self._normalize_match_probe(" ".join([job_title, *(offer_terms or [])]))
         qa_offer_active = any(
             self._match_probe_contains_term(offer_probe, marker)
@@ -3895,6 +3925,9 @@ class ExportManager:
         if not qa_offer_active:
             return raw_selected[: max(1, int(max_items or 1))]
 
+        # This deterministic regrouping is only a QA/test-specific fallback.
+        # Other professions must keep the LLM's job-title/offer-driven skill
+        # wording instead of being forced into a tech taxonomy.
         evidence_parts: List[str] = []
         for skill in self._collect_hard_skill_names_for_compact_summary(
             (formatted_data or {}).get("skills")
@@ -3936,12 +3969,17 @@ class ExportManager:
                 for marker in markers
             )
 
-        def append_group(label_fr: str, label_en: str, values: List[Tuple[str, Tuple[str, ...]]]) -> None:
+        def append_group(
+            label_fr: str,
+            label_en: str,
+            values: List[Tuple[str, str, Tuple[str, ...]]],
+        ) -> None:
             items: List[str] = []
             seen_items: set[str] = set()
-            for display, markers in values:
+            for display_fr, display_en, markers in values:
                 if not has_any(*markers):
                     continue
+                display = display_en if is_en else display_fr
                 key = self._normalize_text_key(display)
                 if not key or key in seen_items:
                     continue
@@ -3958,46 +3996,46 @@ class ExportManager:
             "QA & stratégie de test",
             "QA & test strategy",
             [
-                ("Plans de test", ("plan de test", "plans de test")),
-                ("Tests fonctionnels", ("test fonctionnel", "tests fonctionnels", "fonctionnel")),
-                ("Tests exploratoires", ("exploratoire", "exploratoires", "exploratory")),
-                ("Non-régression", ("non regression", "non-regression", "xray")),
-                ("Analyse des risques", ("risque", "risques", "ambiguite", "incoherence")),
+                ("Plans de test", "Test plans", ("plan de test", "plans de test")),
+                ("Tests fonctionnels", "Functional testing", ("test fonctionnel", "tests fonctionnels", "fonctionnel")),
+                ("Tests exploratoires", "Exploratory testing", ("exploratoire", "exploratoires", "exploratory")),
+                ("Non-régression", "Regression testing", ("non regression", "non-regression", "xray")),
+                ("Analyse des risques", "Risk analysis", ("risque", "risques", "ambiguite", "incoherence")),
             ],
         )
         append_group(
             "API, data & debug",
             "API, data & debugging",
             [
-                ("Tests API", ("api", "api testing")),
-                ("Postman", ("postman",)),
-                ("SQL", ("sql",)),
-                ("PostgreSQL", ("postgresql",)),
-                ("MongoDB", ("mongodb",)),
-                ("SQL Server", ("sql server", "microsoft sql server")),
-                ("Analyse d'anomalies", ("anomalie", "anomalies", "debug")),
+                ("Tests API", "API testing", ("api", "api testing")),
+                ("Postman", "Postman", ("postman",)),
+                ("SQL", "SQL", ("sql",)),
+                ("PostgreSQL", "PostgreSQL", ("postgresql",)),
+                ("MongoDB", "MongoDB", ("mongodb",)),
+                ("SQL Server", "SQL Server", ("sql server", "microsoft sql server")),
+                ("Analyse d'anomalies", "Defect analysis", ("anomalie", "anomalies", "debug")),
             ],
         )
         append_group(
             "Automatisation & scripting",
             "Automation & scripting",
             [
-                ("Python", ("python",)),
-                ("Playwright", ("playwright",)),
-                ("Cypress", ("cypress",)),
-                ("Selenium", ("selenium",)),
-                ("Agilitest", ("agilitest",)),
+                ("Python", "Python", ("python",)),
+                ("Playwright", "Playwright", ("playwright",)),
+                ("Cypress", "Cypress", ("cypress",)),
+                ("Selenium", "Selenium", ("selenium",)),
+                ("Agilitest", "Agilitest", ("agilitest",)),
             ],
         )
         append_group(
             "Tooling & delivery QA",
             "QA tooling & delivery",
             [
-                ("Jira", ("jira",)),
-                ("Xray", ("xray",)),
-                ("Gherkin", ("gherkin",)),
-                ("Agile/Scrum", ("agile", "scrum")),
-                ("Documentation QA", ("documentation", "livrable", "livrables")),
+                ("Jira", "Jira", ("jira",)),
+                ("Xray", "Xray", ("xray",)),
+                ("Gherkin", "Gherkin", ("gherkin",)),
+                ("Agile/Scrum", "Agile/Scrum", ("agile", "scrum")),
+                ("Documentation QA", "QA documentation", ("documentation", "livrable", "livrables")),
             ],
         )
         ai_offer_active = any(
@@ -4009,10 +4047,10 @@ class ExportManager:
                 "Qualité produit IA",
                 "AI product quality",
                 [
-                    ("POC IA", ("poc", "ia", "ai")),
-                    ("Agents IA", ("agent ia", "agents ia", "agent", "agents")),
-                    ("Génération de données de test", ("generation de donnees de test", "donnees de test")),
-                    ("Benchmark d'outils QA", ("benchmark", "outils", "automation", "automatisation")),
+                    ("POC IA", "AI POC", ("poc", "ia", "ai")),
+                    ("Agents IA", "AI agents", ("agent ia", "agents ia", "agent", "agents")),
+                    ("Génération de données de test", "Test data generation", ("generation de donnees de test", "donnees de test")),
+                    ("Benchmark d'outils QA", "QA tool benchmarking", ("benchmark", "outils", "automation", "automatisation")),
                 ],
             )
 
@@ -4897,54 +4935,79 @@ class ExportManager:
             item for item in offer_only_terms if keep_positioning_term(item)
         ]
 
-        clauses: List[str] = []
-        if common_terms:
-            clauses.append(", ".join(common_terms))
-        if profile_extra_terms:
-            clauses.append(", ".join(profile_extra_terms))
-        if offer_only_terms:
-            clauses.append(
-                (
-                    f"clear proximity to {', '.join(offer_only_terms)}"
-                    if is_en
-                    else f"une proximité claire avec {', '.join(offer_only_terms)}"
+        def join_positioning_terms(values: List[str]) -> str:
+            cleaned_values: List[str] = []
+            seen_values: set[str] = set()
+            for value in values or []:
+                text = self._restore_display_acronyms(
+                    self._normalize_render_text(value)
                 )
+                key = self._normalize_text_key(text)
+                if not text or not key or key in seen_values:
+                    continue
+                seen_values.add(key)
+                cleaned_values.append(text)
+            if not cleaned_values:
+                return ""
+            if len(cleaned_values) == 1:
+                return cleaned_values[0]
+            return ", ".join(cleaned_values[:-1]) + (
+                f" and {cleaned_values[-1]}" if is_en else f" et {cleaned_values[-1]}"
             )
 
-        if clauses and company:
-            candidate_sentence = (
-                f"Profile aligned with {company} through {'; '.join(clauses)}."
-                if is_en
-                else f"Profil pertinent pour {company} grâce à {'; '.join(clauses)}."
+        def natural_positioning_sentence(
+            values: List[str],
+            *,
+            company_name: str = "",
+            role_name: str = "",
+        ) -> str:
+            terms_text = join_positioning_terms(values)
+            if not terms_text:
+                return ""
+            if is_en:
+                if company_name and role_name:
+                    return (
+                        f"For {company_name}, this profile targets the {role_name} "
+                        f"role with positioning around {terms_text}."
+                    )
+                if company_name:
+                    return (
+                        f"For {company_name}, this profile highlights relevant "
+                        f"positioning around {terms_text}."
+                    )
+                return f"This profile highlights relevant positioning around {terms_text}."
+            if company_name and role_name:
+                return (
+                    f"Pour {company_name}, ce profil cible le poste de {role_name} "
+                    f"avec un positionnement autour de {terms_text}."
+                )
+            if company_name:
+                return (
+                    f"Pour {company_name}, ce profil met en avant un positionnement "
+                    f"pertinent autour de {terms_text}."
+                )
+            return (
+                f"Ce profil met en avant un positionnement pertinent autour de "
+                f"{terms_text}."
             )
-        elif clauses:
-            candidate_sentence = (
-                f"Profile aligned through {'; '.join(clauses)}."
-                if is_en
-                else f"Profil pertinent grâce à {'; '.join(clauses)}."
-            )
-        else:
-            candidate_sentence = ""
 
         candidate_terms = common_terms + profile_extra_terms + offer_only_terms
+        candidate_sentence = natural_positioning_sentence(
+            candidate_terms,
+            company_name=company,
+            role_name=job_title,
+        )
+
         sentence = ""
         if existing:
             existing_company, existing_terms = self._parse_positioning_sentence(
                 existing, is_en=is_en
             )
             if existing_terms:
-                normalized_existing = (
-                    f"Profile aligned with {existing_company or company} through {', '.join(existing_terms)}."
-                    if is_en and (existing_company or company)
-                    else (
-                        f"Profile aligned through {', '.join(existing_terms)}."
-                        if is_en
-                        else (
-                            f"Profil pertinent pour {existing_company or company} grâce à {', '.join(existing_terms)}."
-                            if (existing_company or company)
-                            else f"Profil pertinent grâce à {', '.join(existing_terms)}."
-                        )
-                    )
+                normalized_existing = natural_positioning_sentence(
+                    existing_terms,
+                    company_name=existing_company or company,
+                    role_name=job_title,
                 )
                 existing_score = self._score_positioning_terms(
                     existing_terms,
@@ -4980,9 +5043,9 @@ class ExportManager:
             sentence = candidate_sentence
         elif not sentence and company and job_title:
             sentence = (
-                f"Profile aligned with {company} for a {job_title} role."
+                f"For {company}, this profile targets the {job_title} role."
                 if is_en
-                else f"Profil pertinent pour {company} pour un poste de {job_title}."
+                else f"Pour {company}, ce profil cible le poste de {job_title}."
             )
 
         key = self._normalize_text_key(sentence)
