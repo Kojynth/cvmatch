@@ -381,6 +381,15 @@ def resolve_offer_language(
     detect_fn = detect_language_from_text or detect_language_from_text_default
     data = offer_data if isinstance(offer_data, dict) else {}
     analysis = data.get("analysis") if isinstance(data.get("analysis"), dict) else None
+    for key in ("cv_language", "target_language", "language_code"):
+        explicit_language = data.get(key)
+        if explicit_language and normalize_fn(explicit_language):
+            return normalize_fn(explicit_language)
+    if isinstance(analysis, dict):
+        for key in ("cv_language", "target_language"):
+            explicit_language = analysis.get(key)
+            if explicit_language and normalize_fn(explicit_language):
+                return normalize_fn(explicit_language)
     analysis_language = analysis.get("language") if isinstance(analysis, dict) else None
     offer_text = data.get("text")
     detected = detect_fn(offer_text)

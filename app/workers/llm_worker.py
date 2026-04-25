@@ -571,8 +571,16 @@ def _resolve_offer_language_code(
     preferred_language: Optional[str] = None,
 ) -> str:
     offer_payload = offer_data if isinstance(offer_data, dict) else {}
+    for key in ("cv_language", "target_language", "language_code"):
+        explicit_language = offer_payload.get(key)
+        if isinstance(explicit_language, str) and explicit_language.strip():
+            return _normalize_language(explicit_language)
     analysis = offer_payload.get("analysis")
     analysis = analysis if isinstance(analysis, dict) else {}
+    for key in ("cv_language", "target_language"):
+        explicit_language = analysis.get(key)
+        if isinstance(explicit_language, str) and explicit_language.strip():
+            return _normalize_language(explicit_language)
     analysis_language = analysis.get("language")
     if isinstance(analysis_language, str) and analysis_language.strip():
         return _normalize_language(analysis_language)
@@ -3516,8 +3524,17 @@ OUTPUT RULES:
                 else None
             )
             if isinstance(offer_data, dict):
+                for key in ("cv_language", "target_language", "language_code"):
+                    raw_target_language = str(offer_data.get(key) or "").strip()
+                    if raw_target_language:
+                        break
                 analysis = offer_data.get("analysis")
-                if isinstance(analysis, dict):
+                if not raw_target_language and isinstance(analysis, dict):
+                    for key in ("cv_language", "target_language"):
+                        raw_target_language = str(analysis.get(key) or "").strip()
+                        if raw_target_language:
+                            break
+                if not raw_target_language and isinstance(analysis, dict):
                     raw_target_language = str(analysis.get("language") or "").strip()
             if not raw_target_language:
                 profile_data = getattr(self, "profile_data", None)
@@ -5777,6 +5794,8 @@ OUTPUT RULES:
             "critic_json": getattr(state, "critic_json", {}),
             "profile_json": getattr(state, "profile_json", {}),
             "template": self.template,
+            "language": getattr(state, "language_code", None)
+            or self._resolve_language_code(),
             "model_version": self.profile_data.model_version,
             "model_used": getattr(self.qwen_manager, "current_model_id", "unknown"),
             "gpu_used": gpu_manager.gpu_info["available"],

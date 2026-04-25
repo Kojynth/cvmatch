@@ -253,14 +253,65 @@ def _build_date_feedback(start_date: Any, end_date: Any) -> str:
     return "Dates: " + " ".join(notes) if notes else ""
 
 
-_PAST_ROLE_END_TOKENS = {"", "present", "présent", "en cours", "aujourd'hui", "current"}
+_CURRENT_ROLE_END_TOKENS = {
+    "present",
+    "présent",
+    "en cours",
+    "aujourd'hui",
+    "current",
+    "actuel",
+    "actuellement",
+    "ongoing",
+    "now",
+    "today",
+    "à ce jour",
+    "a ce jour",
+}
 
 
 def _is_past_role(end_date: Any) -> bool:
     token = str(end_date or "").strip().lower()
     if not token:
         return False
-    return token not in _PAST_ROLE_END_TOKENS
+    return token not in _CURRENT_ROLE_END_TOKENS
+
+
+def _is_current_role(end_date: Any) -> bool:
+    token = str(end_date or "").strip().lower()
+    return bool(token and token in _CURRENT_ROLE_END_TOKENS)
+
+
+def _build_tense_style_feedback(
+    *,
+    is_past_role: bool,
+    is_current_role: bool,
+    language_code: str,
+) -> str:
+    language = _normalize_language_code(language_code)
+    if language == "en":
+        if is_current_role:
+            return (
+                "Verb tense: current role, write actions in present tense "
+                "(e.g. “Analyzes”, “Structures”, “Automates”)."
+            )
+        if is_past_role:
+            return (
+                "Verb tense: past role, write actions in past tense "
+                "(e.g. “Analyzed”, “Structured”, “Automated”)."
+            )
+        return ""
+
+    if is_current_role:
+        return (
+            "Temps des verbes : poste en cours, rédigez les actions au présent "
+            "(ex. « Analyse », « Structure », « Automatise »), sans infinitif."
+        )
+    if is_past_role:
+        return (
+            "Temps des verbes : poste terminé, rédigez les actions au passé "
+            "(ex. « Analysé », « Structuré », « Automatisé »), sans infinitif."
+        )
+    return ""
 
 
 def _build_company_feedback(company: Any, *, language_code: str) -> str:
@@ -300,6 +351,7 @@ def build_experience_editor_feedback(
     entry = experience_data if isinstance(experience_data, dict) else {}
     description = str(entry.get("description") or "")
     is_past_role = _is_past_role(entry.get("end_date"))
+    is_current_role = _is_current_role(entry.get("end_date"))
 
     editorial = _build_editorial_feedback(description, language_code=language_code)
     quality = _build_quality_feedback(
@@ -314,6 +366,11 @@ def build_experience_editor_feedback(
         "date_feedback": _build_date_feedback(
             entry.get("start_date"),
             entry.get("end_date"),
+        ),
+        "tense_feedback": _build_tense_style_feedback(
+            is_past_role=is_past_role,
+            is_current_role=is_current_role,
+            language_code=language_code,
         ),
         "company_feedback": _build_company_feedback(
             entry.get("company"),

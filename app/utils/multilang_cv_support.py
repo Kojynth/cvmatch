@@ -237,6 +237,8 @@ def _language_name_to_iso(name: str) -> Optional[str]:
 
 def extract_profile_language_options(
     profile_json: Dict[str, Any],
+    *,
+    fallback: bool = True,
 ) -> List[Tuple[str, str]]:
     """Build a combo list from profile_json["languages"].
 
@@ -246,15 +248,21 @@ def extract_profile_language_options(
 
     Args:
         profile_json: The full profile dict (as returned by profile_json.py).
+        fallback: When False, return only languages explicitly declared in the
+            profile instead of adding the default FR/EN choices.
 
     Returns:
         List of (iso_code, display_label) tuples for use in a QComboBox.
     """
     if not isinstance(profile_json, dict):
+        if not fallback:
+            return []
         return _FALLBACK_LANGUAGES[:]
 
     languages_raw = profile_json.get("languages")
     if not isinstance(languages_raw, list) or not languages_raw:
+        if not fallback:
+            return []
         return _FALLBACK_LANGUAGES[:]
 
     seen: set = set()
@@ -263,7 +271,7 @@ def extract_profile_language_options(
     for item in languages_raw:
         # Support both dict items and bare strings
         if isinstance(item, dict):
-            lang_name = str(item.get("language") or "").strip()
+            lang_name = str(item.get("language") or item.get("name") or "").strip()
         elif isinstance(item, str):
             lang_name = item.strip()
         else:
@@ -284,7 +292,9 @@ def extract_profile_language_options(
         label = ISO_TO_DISPLAY_LABEL.get(iso, lang_name)
         result.append((iso, label))
 
-    return result if result else _FALLBACK_LANGUAGES[:]
+    if result:
+        return result
+    return _FALLBACK_LANGUAGES[:] if fallback else []
 
 
 # ---------------------------------------------------------------------------

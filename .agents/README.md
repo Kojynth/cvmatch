@@ -19,7 +19,7 @@ Current render/export contracts to preserve across agent runs:
 - one-page CVs use measured fit-to-page compression, not CSS clipping
 - final header contact methods are explicit links; placeholder link labels are forbidden
 - target subtitle semantics are explicit candidature semantics:
-  `Poste vise: {job_title} | {company}` / `Target role: {job_title} | {company}`,
+  `Poste visé: {job_title} | {company}` / `Target role: {job_title} | {company}`,
   not an employer-looking label
 - print/PDF contract = single canonical print block, A4 margins, no forced
   `body` A4 height, no `overflow: hidden`, and `break-inside: avoid` on
@@ -42,6 +42,10 @@ Current render/export contracts to preserve across agent runs:
   of being dropped or expanded into too many bullets
 - keep rendered experience order reverse-chronological; use relevance only to
   allocate detail, not to reshuffle the visible role order
+- "Visualiser les détails" / profile detail editing must show tense guidance:
+  present-tense action verbs for current roles, past-tense action verbs for
+  ended roles, based on role dates; do not add renderer-side language-wide
+  verb replacement lists
 - compact skill chips may extend to roughly 10 visible items when the row-wrap
   stays clean; do not artificially collapse to 3-5 if the layout remains readable
 - compact grouped skill chips are preferred for strongly targeted offers when
