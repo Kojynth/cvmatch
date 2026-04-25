@@ -17,6 +17,124 @@ from loguru import logger
 # WeasyPrint sera importé seulement quand nécessaire pour éviter les messages d'erreur multiples
 WEASYPRINT_AVAILABLE = None  # Sera déterminé lors du premier usage
 
+PDF_ONE_PAGE_FIT_CSS = """
+@page {
+  size: A4;
+  margin: 8mm;
+}
+@media print {
+  html,
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+  }
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .cv-container {
+    width: 194mm !important;
+    max-width: 194mm !important;
+    margin: 0 auto !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+  }
+  .cv-header,
+  .cv-body {
+    padding-left: 14px !important;
+    padding-right: 14px !important;
+  }
+  .cv-header {
+    padding-top: 12px !important;
+    padding-bottom: 8px !important;
+    margin-bottom: 10px !important;
+  }
+  .cv-body {
+    padding-top: 8px !important;
+    padding-bottom: 10px !important;
+  }
+  .cv-header .name {
+    font-size: 24px !important;
+    line-height: 1.05 !important;
+  }
+  .cv-header .title {
+    font-size: 11px !important;
+    line-height: 1.2 !important;
+    margin-top: 4px !important;
+  }
+  .contact-info {
+    margin-top: 6px !important;
+    gap: 5px 10px !important;
+  }
+  .contact-label,
+  .contact-value,
+  .contact-item {
+    font-size: 9px !important;
+    line-height: 1.15 !important;
+  }
+  .cv-section {
+    margin-top: 7px !important;
+  }
+  .section-title {
+    margin-top: 0 !important;
+    margin-bottom: 4px !important;
+    font-size: 9.5px !important;
+    line-height: 1.1 !important;
+  }
+  .section-content,
+  .dynamic-content {
+    font-size: 10.3px !important;
+    line-height: 1.18 !important;
+  }
+  .entry h3 {
+    margin-top: 6px !important;
+    margin-bottom: 2px !important;
+    font-size: 12px !important;
+    line-height: 1.18 !important;
+  }
+  .meta {
+    margin: 2px 0 3px !important;
+    font-size: 9.5px !important;
+    line-height: 1.15 !important;
+  }
+  .summary-content,
+  .skill-chip-list {
+    gap: 4px !important;
+  }
+  .skill-chip {
+    padding: 1px 6px !important;
+    font-size: 9.5px !important;
+    line-height: 1.1 !important;
+  }
+  .experience-highlights,
+  .certification-list,
+  ul {
+    margin-top: 3px !important;
+    margin-bottom: 3px !important;
+    padding-left: 13px !important;
+  }
+  li {
+    margin-bottom: 1px !important;
+  }
+  .cv-section,
+  .entry,
+  .experience-entry,
+  .education-entry,
+  .project-entry {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  a {
+    color: inherit !important;
+    text-decoration: none !important;
+  }
+}
+"""
+
 
 def _check_weasyprint():
     """Vérifie la disponibilité de WeasyPrint seulement quand nécessaire."""
@@ -173,14 +291,14 @@ class ExportManager:
         default_labels = {
             "contact": "Contact" if is_en else "Contact",
             "profile": "Profile" if is_en else "Profil",
-            "experience": "Experience" if is_en else "Experience",
+            "experience": "Experience" if is_en else "Expérience",
             "additional_relevant": (
                 "Additional relevant details"
                 if is_en
                 else "Éléments complémentaires pertinents"
             ),
             "skills": "Skills" if is_en else "Compétences",
-            "soft_skills": "Soft skills" if is_en else "Savoir-Ãªtre",
+            "soft_skills": "Soft skills" if is_en else "Savoir-être",
             "education": "Education" if is_en else "Formation",
             "projects": "Projects" if is_en else "Projets",
             "languages": "Languages" if is_en else "Langues",
@@ -723,6 +841,63 @@ class ExportManager:
                     or ""
                 ).strip()
 
+            def strip_role_context_prefix(text: Any) -> str:
+                value = str(text or "").strip()
+                if not value:
+                    return ""
+
+                action_heads = {
+                    "ajoute",
+                    "analyse",
+                    "analyser",
+                    "automatise",
+                    "concevoir",
+                    "contribue",
+                    "controle",
+                    "cree",
+                    "execute",
+                    "explore",
+                    "identifie",
+                    "mene",
+                    "prepare",
+                    "presente",
+                    "qualifie",
+                    "realise",
+                    "redige",
+                    "refondu",
+                    "relance",
+                    "repris",
+                    "structure",
+                    "teste",
+                }
+                role_markers = {
+                    "alternance",
+                    "apprenti",
+                    "business",
+                    "developer",
+                    "ingenieur",
+                    "manager",
+                    "qa",
+                    "sales",
+                    "stagiaire",
+                    "support",
+                }
+                tokens = re.findall(r"\S+", value, flags=re.UNICODE)
+                if len(tokens) < 4:
+                    return value
+                for idx in range(2, min(len(tokens), 10)):
+                    head = self._normalize_text_key(tokens[idx]).split(" ", 1)[0]
+                    if head not in action_heads:
+                        continue
+                    prefix = " ".join(tokens[:idx])
+                    prefix_tokens = set(self._normalize_text_key(prefix).split())
+                    if not (prefix_tokens & role_markers):
+                        continue
+                    tail = " ".join(tokens[idx:]).strip(" ,;:-")
+                    if tail:
+                        return tail[:1].upper() + tail[1:]
+                return value
+
             def collect_description_lines(text: Any, *, company: str) -> List[str]:
                 raw = str(text or "").strip()
                 if not raw:
@@ -740,6 +915,7 @@ class ExportManager:
                     )
                     if not cleaned:
                         continue
+                    cleaned = strip_role_context_prefix(cleaned)
                     cleaned_lines.append(cleaned)
                     if len(cleaned_lines) >= 12:
                         break
@@ -784,6 +960,7 @@ class ExportManager:
                                 company=company_name,
                                 prefer_articleless=True,
                             )
+                            cleaned = strip_role_context_prefix(cleaned)
                             if cleaned:
                                 cleaned_highlights.append(cleaned)
 
@@ -810,6 +987,7 @@ class ExportManager:
                             company=company_name,
                         )
                         if cleaned_summary:
+                            cleaned_summary = strip_role_context_prefix(cleaned_summary)
                             compact_lines.append(cleaned_summary)
                     elif not has_highlights:
                         cleaned_summary = polish_line(
@@ -817,6 +995,7 @@ class ExportManager:
                             company=company_name,
                         )
                         if cleaned_summary:
+                            cleaned_summary = strip_role_context_prefix(cleaned_summary)
                             description_lines.insert(0, cleaned_summary)
 
                 if has_highlights:
@@ -3720,7 +3899,7 @@ class ExportManager:
             sentence = (
                 f"{role} with experience in {skills_text}."
                 if is_en
-                else f"{role} avec experience en {skills_text}."
+                else f"{role} avec expérience en {skills_text}."
             )
         elif role:
             sentence = role if role.endswith((".", "!", "?")) else f"{role}."
@@ -3824,10 +4003,10 @@ class ExportManager:
             prefix = (
                 "Recent complementary experience"
                 if is_en
-                else "Experience recente complementaire"
+                else "Expérience récente complémentaire"
             )
         else:
-            prefix = "Core experience anchor" if is_en else "Point d'appui principal"
+            prefix = "Most aligned experience" if is_en else "Expérience la plus alignée"
 
         head = title
         if company:
@@ -4177,7 +4356,7 @@ class ExportManager:
                 if is_en:
                     lines.append(f"{role} with experience in {skills_text}.")
                 else:
-                    lines.append(f"{role} avec experience en {skills_text}.")
+                    lines.append(f"{role} avec expérience en {skills_text}.")
         elif role:
             lines.append(role if role.endswith((".", "!", "?")) else f"{role}.")
 
@@ -4597,6 +4776,7 @@ class ExportManager:
                 css_file = self.css_dir / f"{template}.css"
                 if css_file.exists():
                     css_objects.append(CSS(filename=str(css_file)))
+            css_objects.append(CSS(string=PDF_ONE_PAGE_FIT_CSS))
 
             # Générer le PDF
             html_doc.write_pdf(str(output_file), stylesheets=css_objects)

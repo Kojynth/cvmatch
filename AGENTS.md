@@ -74,9 +74,12 @@ and must stay usable on heterogeneous Windows/Linux machines.
   `height: 297mm` on `body`, no `overflow: hidden`, and `break-inside: avoid`
   on experience/project/education blocks. `_enforce_single_page_budget` in
   `app/utils/cv_postprocessing.py` remains the content-budget backstop for
-  excessive bullet density. Do NOT reintroduce CSS clipping, duplicate print
-  blocks, or silent crop-to-page behavior. Any PR touching that CSS, the
-  export templates, or the postprocess trimming logic must ship with a
+  excessive bullet density. Direct WeasyPrint exports must also apply
+  `PDF_ONE_PAGE_FIT_CSS` in `app/controllers/export_manager.py`; keep it
+  aligned with the same no-crop/no-overflow contract so exported PDFs do not
+  bypass the preview fit-to-page path. Do NOT reintroduce CSS clipping,
+  duplicate print blocks, or silent crop-to-page behavior. Any PR touching that
+  CSS, the export templates, or the postprocess trimming logic must ship with a
   regression test that pins both the print-fit invariant and the per-role /
   total-bullet budget. Regression tests live in
   `tests/test_one_page_invariant.py`.

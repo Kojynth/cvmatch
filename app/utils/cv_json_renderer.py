@@ -525,9 +525,9 @@ def cv_json_to_cv_data(
     labels = {
         "contact": "Contact" if is_en else "Contact",
         "profile": "Profile" if is_en else "Profil",
-        "experience": "Experience" if is_en else "Experience",
+        "experience": "Experience" if is_en else "Expérience",
         "skills": "Skills" if is_en else "Compétences",
-        "soft_skills": "Soft skills" if is_en else "Savoir-Ãªtre",
+        "soft_skills": "Soft skills" if is_en else "Savoir-être",
         "education": "Education" if is_en else "Formation",
         "projects": "Projects" if is_en else "Projets",
         "languages": "Languages" if is_en else "Langues",

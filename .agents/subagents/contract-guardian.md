@@ -49,6 +49,8 @@ history, and `mass_apply`.
 - when preview/export/rendering is touched, also verify the one-page render
   contract: measured fit-to-page compression (no `overflow: hidden` crop,
   no forced `body` A4 height), a single canonical print block with A4 margins,
+  direct WeasyPrint export CSS (`PDF_ONE_PAGE_FIT_CSS`) aligned with preview
+  fit rules,
   explicit clickable contact header links with smart labels (no `Lien 1` /
   `Link 1` placeholders), explicit candidature target subtitle semantics
   (`Poste vise` / `Target role`), and preservation of structured sections
