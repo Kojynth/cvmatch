@@ -113,10 +113,13 @@ and must stay usable on heterogeneous Windows/Linux machines.
     richest detail budget, the most recent role may keep a secondary budget,
     and lower-priority roles compress first;
   - 2 to 4 concrete impacts per experience, prioritizing the strongest
-    action-led and quantified evidence when available;
+    action-led and quantified evidence when available; dense source evidence
+    should be fused into longer coherent bullets rather than dropped;
   - one featured project when available;
   - a compact certifications block when available;
-  - soft skills only as a compact supporting signal, never as filler.
+  - soft skills only as a compact supporting signal, never as filler; when
+    behaviour evidence can be integrated into experience bullets, avoid a
+    separate generic soft-skill section.
   The renderer may hide lower-priority sections under measured compression,
   but it must not collapse useful structured content into a vague
   `additional relevant details` blob, and it must not truncate rendered
@@ -233,9 +236,11 @@ and must stay usable on heterogeneous Windows/Linux machines.
   chips. When a vague comparative skill is backed by explicit tool names in
   source evidence, prefer a compact comparative label such as
   `Benchmark Playwright / Cypress / Selenium` over a vague wording or an
-  invented direct-usage claim. Soft skills must stay in a dedicated
-  `Savoir-être` / `Soft skills` section and must not compete with hard skill
-  chips unless no hard skill pool exists for the profile. Do not backfill
+  invented direct-usage claim. For strongly targeted offers, prefer compact
+  grouped chips (`QA & stratégie de test`, `API/data`, `Automatisation`,
+  `Tooling`, etc.) over flat keyword lists when this improves proof and
+  hierarchy. Soft skills must not compete with hard skill chips; render them
+  only when not already proved inside experience bullets. Do not backfill
   low-scoring/noisy skill candidates just to reach a visual chip quota: a
   shorter credible skill list is better than ten weak chips.
 - **Company-description filter contract (MANDATORY)**: renderer-side guards
