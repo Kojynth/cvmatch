@@ -100,8 +100,9 @@
 - experience render-selection contract: rendered experience details prefer
   the strongest offer-aligned action/impact sentences with an asymmetric
   budget: protect the anchor experience first, then compress lower-priority
-  roles; company-description prose is only weak sector context and usually
-  should not appear in the CV
+  roles; keep a rich profile-derived source-candidate pool before scoring
+  instead of capping extraction to the first few sentences; company-description
+  prose is only weak sector context and usually should not appear in the CV
 - sector/industry signal contract: sector hints are allowed only as a minor
   ranking/vocabulary bonus, never as a hard gate and never over stronger
   offer-skill/profile evidence

@@ -68,7 +68,9 @@ history, and `mass_apply`.
 - when experience rendering/selection is touched, verify company-description
   prose is treated as weak context only and does not outrank stronger
   action/impact sentences aligned with the offer; also verify the anchor
-  experience keeps the richest detail budget before lower-priority roles
+  experience keeps the richest detail budget before lower-priority roles and
+  that profile-derived source extraction keeps enough late candidate sentences
+  before ranking instead of applying an early 4-6 sentence cap
 - when offer-keyword extraction is touched, verify requirement-heavy sections
   outrank marketing/culture/benefits/remote-policy text in downstream terms
 - when offer-only targeting is touched, verify pure offer-only terms stay in

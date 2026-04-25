@@ -612,7 +612,7 @@ def cv_json_to_cv_data(
             for value in raw_description:
                 if isinstance(value, str) and value.strip():
                     _append_experience_line(value)
-        description = _dedupe_description_lines(description)[:6]
+        description = _dedupe_description_lines(description)[:12]
         experience_section.append(
             {
                 "title": item.get("title") or "",

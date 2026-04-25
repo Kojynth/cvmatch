@@ -208,6 +208,12 @@ and must stay usable on heterogeneous Windows/Linux machines.
   roles. The anchor role may keep a richer sentence budget than the others
   when multiple roles compete for space, but all rendered details must still
   favor strong action verbs and explicit impact when available.
+  Profile-derived experience descriptions must remain available as a rich
+  internal candidate pool before offer-alignment scoring. Do not cap source
+  extraction to the first 4-6 sentences before ranking, because late sentences
+  often contain the strongest proof (named tools, QA deliverables, automation
+  benchmarks, quantified impact, AI/innovation work). Display budgets apply
+  after scoring/compaction, not during source-candidate extraction.
   Rendered role order itself must remain reverse-chronological; use relevance
   to allocate detail, not to reshuffle chronology.
   Company-description prose is supporting context only: it may inform weak

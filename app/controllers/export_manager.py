@@ -652,7 +652,7 @@ class ExportManager:
                     cleaned = re.sub(r"^[\s:;\-]+", "", part).strip(" ;:-")
                     if cleaned and re.search(r"\w", cleaned, re.UNICODE):
                         output.append(cleaned)
-                return output[:4]
+                return output[:12]
 
             def polish_line(
                 text: Any,
@@ -690,7 +690,7 @@ class ExportManager:
                     if not cleaned:
                         continue
                     cleaned_lines.append(cleaned)
-                    if len(cleaned_lines) >= 6:
+                    if len(cleaned_lines) >= 12:
                         break
                 return cleaned_lines
 
@@ -770,11 +770,13 @@ class ExportManager:
                             description_lines.insert(0, cleaned_summary)
 
                 if has_highlights:
-                    compact_lines.extend(cleaned_highlights[:6])
+                    compact_lines.extend(cleaned_highlights[:12])
                 else:
-                    compact_lines.extend(description_lines[:6])
+                    compact_lines.extend(description_lines[:12])
 
-                entry["description"] = self._dedupe_render_lines_fuzzy(compact_lines)[:6]
+                entry["description"] = self._dedupe_render_lines_fuzzy(compact_lines)[
+                    :12
+                ]
                 normalized.append(entry)
 
             return normalized
