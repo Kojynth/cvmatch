@@ -34,11 +34,13 @@
     grounded sentences instead
   - chronology/detail contract: keep rendered roles in reverse chronology and
     use relevance ranking only to allocate richer detail to the anchor role
-  - featured-skills contract: compact chips may come from any explicit
-    profile source (`skills`, `soft_skills`, projects, education/formations,
+  - featured-skills contract: compact hard skill/tool chips may come from
+    explicit profile evidence (`skills`, projects, education/formations,
     certifications, experience text) when the extracted label is compact,
     skill-shaped, source-backed, and offer-aligned; never render raw narrative
-    fragments as chips
+    fragments as chips. Keep soft skills in a dedicated `Savoir-être` /
+    `Soft skills` section, not mixed into hard skill chips unless the profile
+    has no hard skill pool.
   - skill-list credibility contract: do not backfill weak/noisy skill chips
     just to hit a display quota; fewer credible chips are better than filler,
     except when the profile only exposes a small compact skill pool that
@@ -188,6 +190,10 @@
     fallback, and the same minimum postprocess/quality gate as the main CV
     pipeline.
 - Pytest temp artifacts now live under `runtime/pytest_tmp/`.
+- Local Windows caveat: avoid running broad `python -m black ...` formatting
+  in this workspace until the formatter hang is investigated; it can leave a
+  long-running Python process. Prefer `py_compile`, `git diff --check`, and
+  targeted pytest validation unless formatting is explicitly requested.
 - Prefer wrappers and shims over large moves.
 - No destructive git commands. No secrets or user data in Git.
 - Be lenient when developing. Prefer additive, permissive fixes over new

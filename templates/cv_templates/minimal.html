@@ -47,19 +47,13 @@
     </header>
 
     <main class="cv-body">
-      {% if profile_summary_lines or featured_soft_skills %}
+      {% if profile_summary_lines %}
       <section class="cv-section">
         <h2 class="section-title">{{ labels.profile if labels is defined and labels.profile is defined else 'Profile' }}</h2>
         <div class="section-content summary-content">
           {% for line in profile_summary_lines %}
           <p class="summary-line{% if loop.index > 2 %} fit-tight-hide{% endif %}">{{ line }}</p>
           {% endfor %}
-          {% if featured_soft_skills %}
-          <p class="summary-strengths fit-compact-hide">
-            <span class="inline-label">{{ 'Strengths' if language == 'en' else 'Atouts' }}</span>
-            {{ featured_soft_skills | join(', ') }}
-          </p>
-          {% endif %}
         </div>
       </section>
       {% endif %}
@@ -71,6 +65,19 @@
           <div class="skill-chip-list">
             {% for skill in featured_skills %}
             <span class="skill-chip{% if loop.index > 10 %} fit-tight-hide{% endif %}">{{ skill }}</span>
+            {% endfor %}
+          </div>
+        </div>
+      </section>
+      {% endif %}
+
+      {% if featured_soft_skills %}
+      <section class="cv-section fit-compact-hide">
+        <h2 class="section-title">{{ labels.soft_skills if labels is defined and labels.soft_skills is defined else ('Soft skills' if language == 'en' else 'Savoir-être') }}</h2>
+        <div class="section-content">
+          <div class="skill-chip-list soft-skill-chip-list">
+            {% for skill in featured_soft_skills %}
+            <span class="skill-chip soft-skill-chip">{{ skill }}</span>
             {% endfor %}
           </div>
         </div>

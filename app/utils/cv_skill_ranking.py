@@ -27,13 +27,28 @@ def _score_skill_item(item_text: str, offer_terms: List[str]) -> float:
     item_tokens = {token for token in item_norm.split() if token}
     score = 0.0
     total_terms = max(1, len(offer_terms))
+    strong_ai_offer_markers = (
+        "ai",
+        "ia",
+        "ml",
+        "llm",
+        "machine learning",
+        "intelligence artificielle",
+    )
+    ai_offer_context = any(
+        _norm_contains_marker(term_norm, marker)
+        for term_norm in offer_terms
+        for marker in strong_ai_offer_markers
+    )
 
     for idx, term_norm in enumerate(offer_terms):
         priority = max(0.25, 1.0 - (idx / float(total_terms + 1)))
         if item_norm == term_norm:
             score += 8.0 + priority
             continue
-        if normalized_term_in_probe(item_norm, term_norm) or normalized_term_in_probe(term_norm, item_norm):
+        if normalized_term_in_probe(item_norm, term_norm) or normalized_term_in_probe(
+            term_norm, item_norm
+        ):
             score += 5.0 + priority
             continue
 
@@ -41,7 +56,50 @@ def _score_skill_item(item_text: str, offer_terms: List[str]) -> float:
         if overlap:
             score += min(3.0, float(overlap)) + priority
 
+        ai_offer_markers = strong_ai_offer_markers + (
+            "model",
+            "models",
+            "modele",
+            "modeles",
+            "inference",
+        )
+        ai_profile_markers = (
+            "ai",
+            "ia",
+            "ml",
+            "llm",
+            "llmops",
+            "mlops",
+            "machine learning",
+            "intelligence artificielle",
+            "ia avancee",
+            "ia avance",
+            "prompt engineering",
+            "rag",
+            "model",
+            "modele",
+            "benchmark",
+        )
+        if (
+            ai_offer_context
+            and any(
+                _norm_contains_marker(term_norm, marker) for marker in ai_offer_markers
+            )
+        ) and any(
+            _norm_contains_marker(item_norm, marker) for marker in ai_profile_markers
+        ):
+            score += 4.0 + priority
+
     return score
+
+
+def _norm_contains_marker(norm: str, marker: str) -> bool:
+    marker_norm = normalize_keyword_for_match(marker)
+    if not norm or not marker_norm:
+        return False
+    if len(marker_norm) <= 3 and marker_norm.isalnum():
+        return marker_norm in {token for token in norm.split() if token}
+    return normalized_term_in_probe(norm, marker_norm)
 
 
 def rank_skill_blocks_by_relevance(
@@ -63,7 +121,8 @@ def rank_skill_blocks_by_relevance(
             continue
 
         items = [
-            item for item in (block.get("items") or [])
+            item
+            for item in (block.get("items") or [])
             if isinstance(item, str) and item.strip()
         ]
         ranked_items: List[Tuple[float, int, str]] = []

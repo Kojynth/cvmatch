@@ -30,6 +30,20 @@ _GENERIC_SKILL_LABELS = {
     "language",
     "languages",
 }
+
+
+def _is_soft_skill_category_label(label: Any) -> bool:
+    return _normalize_marker(label) in {
+        "qualite",
+        "qualites",
+        "qualites personnelles",
+        "soft skill",
+        "soft skills",
+        "strength",
+        "strengths",
+    }
+
+
 _SKILL_NOISE_TOKENS = {
     "worked",
     "working",
@@ -86,19 +100,107 @@ _SUMMARY_INLINE_CONNECTOR_PATTERN = re.compile(
 
 _SUMMARY_FRAGMENT_STOPWORDS = {
     # English function words / pronouns that slip through as lone tokens.
-    "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
-    "he", "her", "here", "his", "if", "in", "is", "it", "its", "less",
-    "me", "more", "most", "my", "nor", "not", "of", "on", "or", "our",
-    "she", "so", "than", "the", "their", "them", "there", "they", "this",
-    "to", "too", "us", "we", "with", "you", "your",
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "but",
+    "by",
+    "for",
+    "from",
+    "he",
+    "her",
+    "here",
+    "his",
+    "if",
+    "in",
+    "is",
+    "it",
+    "its",
+    "less",
+    "me",
+    "more",
+    "most",
+    "my",
+    "nor",
+    "not",
+    "of",
+    "on",
+    "or",
+    "our",
+    "she",
+    "so",
+    "than",
+    "the",
+    "their",
+    "them",
+    "there",
+    "they",
+    "this",
+    "to",
+    "too",
+    "us",
+    "we",
+    "with",
+    "you",
+    "your",
     # French function words.
-    "au", "aux", "avec", "ce", "ces", "cet", "cette", "dans", "de", "des",
-    "du", "en", "est", "et", "la", "le", "les", "leur", "leurs", "ma",
-    "mes", "mon", "nos", "notre", "ou", "par", "pour", "sa", "sans", "se",
-    "ses", "son", "sur", "ta", "tes", "ton", "un", "une", "votre", "vos",
+    "au",
+    "aux",
+    "avec",
+    "ce",
+    "ces",
+    "cet",
+    "cette",
+    "dans",
+    "de",
+    "des",
+    "du",
+    "en",
+    "est",
+    "et",
+    "la",
+    "le",
+    "les",
+    "leur",
+    "leurs",
+    "ma",
+    "mes",
+    "mon",
+    "nos",
+    "notre",
+    "ou",
+    "par",
+    "pour",
+    "sa",
+    "sans",
+    "se",
+    "ses",
+    "son",
+    "sur",
+    "ta",
+    "tes",
+    "ton",
+    "un",
+    "une",
+    "votre",
+    "vos",
     # Generic English words that rarely stand alone as a real skill label.
-    "power", "people", "role", "roles", "skill", "skills", "team", "teams",
-    "value", "values", "work", "works",
+    "power",
+    "people",
+    "role",
+    "roles",
+    "skill",
+    "skills",
+    "team",
+    "teams",
+    "value",
+    "values",
+    "work",
+    "works",
 }
 
 
@@ -165,38 +267,148 @@ def _normalize_marker(text: Any) -> str:
     raw = str(text or "").strip().casefold()
     if not raw:
         return ""
-    folded = unicodedata.normalize("NFKD", raw).encode("ascii", "ignore").decode("ascii")
+    folded = (
+        unicodedata.normalize("NFKD", raw).encode("ascii", "ignore").decode("ascii")
+    )
     folded = re.sub(r"[^a-z0-9]+", " ", folded)
     return re.sub(r"\s+", " ", folded).strip()
 
 
-_POSITIONING_HARD_BLOCKLIST = frozenset({
-    "into", "onto", "with", "from", "about", "through", "within", "over",
-    "under", "across", "upon", "toward", "towards", "around",
-    "the", "a", "an", "les", "la", "le", "des", "du", "de", "and", "or", "but",
-    "et", "ou", "mais", "donc", "car",
-    "seamlessly", "easily", "simply", "really", "very", "just", "well",
-    "innovative", "cutting edge", "leading", "best", "top", "world class",
-    "technology", "solution", "approach", "field", "industry", "domain",
-    "experience", "knowledge", "background", "skills", "abilities", "power",
-    "our", "your", "their", "nos", "vos", "leurs",
-    "designed", "integrate", "integrated", "integrating",
-    "developed", "developing", "implemented", "implementing",
-    "conçu", "concu", "integre", "integrer",
-    # R2 — Mistral AI 2026-04-21 incident: bare verbs and generic
-    # task-shaped nouns slipped through. Single-token only — multi-word
-    # forms like "REST API" / "API design" / "team collaboration" still
-    # pass (see _is_positioning_blocked: len(tokens) == 1 branch).
-    "believe", "think", "understand", "know", "help", "work", "make",
-    "build", "create", "use", "provide", "ensure", "support", "manage",
-    "lead", "drive", "deliver", "enable", "take", "give", "get",
-    "croire", "penser", "comprendre", "aider", "travailler", "faire",
-    "creer", "utiliser", "fournir", "assurer", "gerer", "livrer",
-    "tasks", "things", "stuff", "items", "jobs", "task",
-    "tâches", "taches", "choses", "éléments", "elements",
-    "api",  # bare "api" too generic; "REST API" / "API design" (2-tok) pass
-    "us", "we", "them", "you", "us", "me", "him", "her",
-})
+_POSITIONING_HARD_BLOCKLIST = frozenset(
+    {
+        "into",
+        "onto",
+        "with",
+        "from",
+        "about",
+        "through",
+        "within",
+        "over",
+        "under",
+        "across",
+        "upon",
+        "toward",
+        "towards",
+        "around",
+        "the",
+        "a",
+        "an",
+        "les",
+        "la",
+        "le",
+        "des",
+        "du",
+        "de",
+        "and",
+        "or",
+        "but",
+        "et",
+        "ou",
+        "mais",
+        "donc",
+        "car",
+        "seamlessly",
+        "easily",
+        "simply",
+        "really",
+        "very",
+        "just",
+        "well",
+        "innovative",
+        "cutting edge",
+        "leading",
+        "best",
+        "top",
+        "world class",
+        "technology",
+        "solution",
+        "approach",
+        "field",
+        "industry",
+        "domain",
+        "experience",
+        "knowledge",
+        "background",
+        "skills",
+        "abilities",
+        "power",
+        "our",
+        "your",
+        "their",
+        "nos",
+        "vos",
+        "leurs",
+        "designed",
+        "integrate",
+        "integrated",
+        "integrating",
+        "developed",
+        "developing",
+        "implemented",
+        "implementing",
+        "conçu",
+        "concu",
+        "integre",
+        "integrer",
+        # R2 — Mistral AI 2026-04-21 incident: bare verbs and generic
+        # task-shaped nouns slipped through. Single-token only — multi-word
+        # forms like "REST API" / "API design" / "team collaboration" still
+        # pass (see _is_positioning_blocked: len(tokens) == 1 branch).
+        "believe",
+        "think",
+        "understand",
+        "know",
+        "help",
+        "work",
+        "make",
+        "build",
+        "create",
+        "use",
+        "provide",
+        "ensure",
+        "support",
+        "manage",
+        "lead",
+        "drive",
+        "deliver",
+        "enable",
+        "take",
+        "give",
+        "get",
+        "croire",
+        "penser",
+        "comprendre",
+        "aider",
+        "travailler",
+        "faire",
+        "creer",
+        "utiliser",
+        "fournir",
+        "assurer",
+        "gerer",
+        "livrer",
+        "tasks",
+        "things",
+        "stuff",
+        "items",
+        "jobs",
+        "task",
+        "tâches",
+        "taches",
+        "choses",
+        "éléments",
+        "elements",
+        "api",  # bare "api" too generic; "REST API" / "API design" (2-tok) pass
+        "us",
+        "we",
+        "them",
+        "you",
+        "us",
+        "me",
+        "him",
+        "her",
+    }
+)
 
 _POSITIONING_SCORE_VERB_SUFFIXES = ("ed", "ing", "ify", "ize", "ise")
 _POSITIONING_SCORE_ADVERB_SUFFIX = "ly"
@@ -245,7 +457,16 @@ def _profile_skill_vocabulary(profile_json: Dict[str, Any] | None) -> set[str]:
             for sub in value:
                 _collect(sub)
 
-    for key in ("skills", "soft_skills", "technologies", "tools"):
+    skill_items = profile_json.get("skills")
+    if isinstance(skill_items, list):
+        for item in skill_items:
+            if isinstance(item, dict) and _is_soft_skill_category_label(
+                item.get("category")
+            ):
+                continue
+            _collect(item)
+
+    for key in ("technologies", "tools"):
         _collect(profile_json.get(key))
 
     for key in ("experience", "experiences", "projects", "certifications"):
@@ -255,7 +476,15 @@ def _profile_skill_vocabulary(profile_json: Dict[str, Any] | None) -> set[str]:
         for entry in items:
             if not isinstance(entry, dict):
                 continue
-            for field in ("title", "role", "name", "technologies", "tools", "skills", "stack"):
+            for field in (
+                "title",
+                "role",
+                "name",
+                "technologies",
+                "tools",
+                "skills",
+                "stack",
+            ):
                 _collect(entry.get(field))
     return lemmas
 
@@ -287,11 +516,7 @@ def _skillish_score(
         # Extra bonus when any phrase token overlaps the profile vocabulary —
         # rewards Tier-1 "Generation" matches even when the full phrase isn't
         # a literal profile lemma.
-        if any(
-            token in profile_lemmas
-            for token in tokens
-            if len(token) >= 3
-        ):
+        if any(token in profile_lemmas for token in tokens if len(token) >= 3):
             score += 1
     if re.fullmatch(r"[A-Z0-9]{2,6}", term.strip() or ""):
         score += 1
@@ -379,6 +604,7 @@ def _iter_profile_skill_fallback(
     *,
     offer_terms: Iterable[Any] = (),
     job_title: str = "",
+    include_soft_skills: bool = False,
 ) -> List[str]:
     """Ordered profile skill labels for Tier-3 fallback when offer yields too few candidates.
 
@@ -391,11 +617,28 @@ def _iter_profile_skill_fallback(
     out: List[str] = []
     if not isinstance(profile_json, dict):
         return out
-    for key in ("skills", "soft_skills", "technologies", "tools"):
+    for key in ("skills", "technologies", "tools"):
         items = profile_json.get(key)
         if not isinstance(items, list):
             continue
         for item in items:
+            if isinstance(item, str) and item.strip():
+                out.append(item.strip())
+            elif isinstance(item, dict):
+                if key == "skills" and _is_soft_skill_category_label(
+                    item.get("category")
+                ):
+                    continue
+                label = item.get("name") or item.get("label") or item.get("title")
+                if isinstance(label, str) and label.strip():
+                    out.append(label.strip())
+                nested = item.get("items")
+                if isinstance(nested, list):
+                    for sub in nested:
+                        if isinstance(sub, str) and sub.strip():
+                            out.append(sub.strip())
+    if include_soft_skills and not out:
+        for item in profile_json.get("soft_skills") or []:
             if isinstance(item, str) and item.strip():
                 out.append(item.strip())
             elif isinstance(item, dict):
@@ -468,7 +711,9 @@ def strip_deterministic_summary_appendices(summary: str) -> str:
         if not clean_sentence:
             continue
         marker = _normalize_marker(clean_sentence)
-        if any(marker.startswith(prefix) for prefix in _DETERMINISTIC_APPENDIX_PREFIXES):
+        if any(
+            marker.startswith(prefix) for prefix in _DETERMINISTIC_APPENDIX_PREFIXES
+        ):
             continue
         kept.append(clean_sentence)
     return " ".join(kept).strip()
@@ -586,7 +831,9 @@ def collect_targeted_offer_terms(
             offer_only.append((order, text, norm))
 
     generation_scored.sort(key=lambda item: (-item[0], item[1]))
-    selected: List[str] = [text for _s, _o, text, _n in generation_scored[:target_count]]
+    selected: List[str] = [
+        text for _s, _o, text, _n in generation_scored[:target_count]
+    ]
     if len(selected) < target_count:
         selected_norms = {_normalize_marker(text) for text in selected}
         for _order, text, norm in offer_only:
@@ -603,6 +850,7 @@ def collect_targeted_offer_terms(
             profile_json,
             offer_terms=offer_terms_list,
             job_title=job_title,
+            include_soft_skills=not selected,
         ):
             if len(selected) >= target_count:
                 break
@@ -731,12 +979,12 @@ def _humanize_role_text(text: Any) -> str:
 
     letters = [char for char in role_text if char.isalpha()]
     if letters:
-        uppercase_ratio = sum(1 for char in letters if char.isupper()) / float(len(letters))
+        uppercase_ratio = sum(1 for char in letters if char.isupper()) / float(
+            len(letters)
+        )
         if uppercase_ratio >= 0.65:
             role_text = " ".join(
-                _humanize_role_token(part)
-                for part in role_text.split()
-                if part
+                _humanize_role_token(part) for part in role_text.split() if part
             )
 
     return role_text
@@ -764,7 +1012,10 @@ def _is_skill_summary_candidate(
     tokens = [token for token in normalized.split() if token]
     if not tokens or len(tokens) > 5:
         return False
-    if tokens[0] in _SUMMARY_ACTION_REJECTORS["fr"] or tokens[0] in _SUMMARY_ACTION_REJECTORS["en"]:
+    if (
+        tokens[0] in _SUMMARY_ACTION_REJECTORS["fr"]
+        or tokens[0] in _SUMMARY_ACTION_REJECTORS["en"]
+    ):
         return False
     if any(token in _SKILL_NOISE_TOKENS for token in tokens):
         return False
@@ -773,7 +1024,9 @@ def _is_skill_summary_candidate(
 
     compact = candidate.strip()
     if "." in compact:
-        dotted_tech = bool(re.fullmatch(r"(?:[A-Za-z0-9+#]+(?:\.[A-Za-z0-9+#]+)+)", compact))
+        dotted_tech = bool(
+            re.fullmatch(r"(?:[A-Za-z0-9+#]+(?:\.[A-Za-z0-9+#]+)+)", compact)
+        )
         if not dotted_tech and (re.search(r"\.\s", compact) or compact.endswith(".")):
             return False
 
