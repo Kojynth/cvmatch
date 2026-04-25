@@ -17,7 +17,9 @@
     must keep a single print block with A4 margins, no forced `body`
     height, no `overflow: hidden`, and `break-inside: avoid` on structured
     entries; `_enforce_single_page_budget` remains the experience-density
-    backstop in `cv_postprocessing.py`
+    backstop in `cv_postprocessing.py`; direct WeasyPrint exports must apply
+    `PDF_ONE_PAGE_FIT_CSS` in `app/controllers/export_manager.py` so the final
+    PDF cannot bypass the preview fit-to-page contract
   - header render contract: actionable contacts are explicit links
     (`mailto:`, `tel:`, LinkedIn, GitHub, portfolio), placeholder labels
     like `Lien 1` are forbidden, and the target subtitle must read as a

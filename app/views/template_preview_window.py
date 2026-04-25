@@ -116,62 +116,98 @@ CV_BASE_LAYOUT_CSS = """
 .project-entry {
   break-inside: avoid;
 }
-:root[data-page-fit="compact"] .fit-compact-hide,
-:root[data-page-fit="tight"] .fit-compact-hide,
-:root[data-page-fit="ultra"] .fit-compact-hide,
-:root[data-page-fit="tight"] .fit-tight-hide,
-:root[data-page-fit="ultra"] .fit-tight-hide,
 :root[data-page-fit="ultra"] .fit-ultra-hide {
   display: none !important;
 }
 :root[data-page-fit="compact"] .cv-section {
-  margin-top: 16px !important;
+  margin-top: 12px !important;
 }
 :root[data-page-fit="compact"] .cv-header {
-  padding-bottom: 12px !important;
+  padding-bottom: 10px !important;
 }
 :root[data-page-fit="compact"] .cv-body {
-  padding-top: 20px !important;
-  padding-bottom: 24px !important;
+  padding-top: 14px !important;
+  padding-bottom: 18px !important;
 }
 :root[data-page-fit="compact"] .section-content,
 :root[data-page-fit="compact"] .dynamic-content {
-  font-size: 13px !important;
-  line-height: 1.55 !important;
+  font-size: 12.5px !important;
+  line-height: 1.38 !important;
+}
+:root[data-page-fit="compact"] .experience-highlights,
+:root[data-page-fit="compact"] .certification-list,
+:root[data-page-fit="compact"] ul {
+  margin-top: 4px !important;
 }
 :root[data-page-fit="tight"] .cv-section {
-  margin-top: 14px !important;
+  margin-top: 9px !important;
 }
 :root[data-page-fit="tight"] .cv-header,
 :root[data-page-fit="tight"] .cv-body {
-  padding-left: 22px !important;
-  padding-right: 22px !important;
+  padding-left: 16px !important;
+  padding-right: 16px !important;
+}
+:root[data-page-fit="tight"] .cv-body {
+  padding-top: 10px !important;
+  padding-bottom: 14px !important;
 }
 :root[data-page-fit="tight"] .section-content,
 :root[data-page-fit="tight"] .dynamic-content {
-  font-size: 12.5px !important;
-  line-height: 1.45 !important;
+  font-size: 11.4px !important;
+  line-height: 1.26 !important;
+}
+:root[data-page-fit="tight"] .entry h3 {
+  margin-top: 8px !important;
+  margin-bottom: 3px !important;
+  font-size: 13px !important;
+}
+:root[data-page-fit="tight"] .meta {
+  margin-top: 3px !important;
+  margin-bottom: 5px !important;
 }
 :root[data-page-fit="tight"] .skill-chip {
-  padding: 3px 8px !important;
-  font-size: 11px !important;
+  padding: 2px 7px !important;
+  font-size: 10.5px !important;
 }
 :root[data-page-fit="ultra"] .cv-section {
-  margin-top: 12px !important;
+  margin-top: 7px !important;
 }
 :root[data-page-fit="ultra"] .cv-header,
 :root[data-page-fit="ultra"] .cv-body {
-  padding-left: 18px !important;
-  padding-right: 18px !important;
+  padding-left: 12px !important;
+  padding-right: 12px !important;
+}
+:root[data-page-fit="ultra"] .cv-body {
+  padding-top: 8px !important;
+  padding-bottom: 10px !important;
 }
 :root[data-page-fit="ultra"] .section-content,
 :root[data-page-fit="ultra"] .dynamic-content {
+  font-size: 10.3px !important;
+  line-height: 1.18 !important;
+}
+:root[data-page-fit="ultra"] .section-title {
+  margin-top: 7px !important;
+  margin-bottom: 4px !important;
+}
+:root[data-page-fit="ultra"] .entry h3 {
+  margin-top: 6px !important;
+  margin-bottom: 2px !important;
   font-size: 12px !important;
-  line-height: 1.35 !important;
+}
+:root[data-page-fit="ultra"] .meta {
+  margin-top: 2px !important;
+  margin-bottom: 3px !important;
+}
+:root[data-page-fit="ultra"] .experience-highlights,
+:root[data-page-fit="ultra"] .certification-list,
+:root[data-page-fit="ultra"] ul {
+  margin-top: 3px !important;
+  margin-bottom: 3px !important;
 }
 :root[data-page-fit="ultra"] .skill-chip {
-  padding: 2px 7px !important;
-  font-size: 10.5px !important;
+  padding: 1px 6px !important;
+  font-size: 9.8px !important;
 }
 """
 
@@ -210,6 +246,83 @@ ONE_PAGE_PRINT_CSS = """
     box-shadow: none !important;
     overflow: visible !important;
     background: #ffffff !important;
+  }
+  .cv-header,
+  .cv-body {
+    padding-left: 14px !important;
+    padding-right: 14px !important;
+  }
+  .cv-header {
+    padding-top: 12px !important;
+    padding-bottom: 8px !important;
+    margin-bottom: 10px !important;
+  }
+  .cv-body {
+    padding-top: 8px !important;
+    padding-bottom: 10px !important;
+  }
+  .cv-header .name {
+    font-size: 24px !important;
+    line-height: 1.05 !important;
+  }
+  .cv-header .title {
+    font-size: 11px !important;
+    line-height: 1.2 !important;
+    margin-top: 4px !important;
+  }
+  .contact-info {
+    margin-top: 6px !important;
+    gap: 5px 10px !important;
+  }
+  .contact-label,
+  .contact-value,
+  .contact-item {
+    font-size: 9px !important;
+    line-height: 1.15 !important;
+  }
+  .cv-section {
+    margin-top: 7px !important;
+  }
+  .section-title {
+    margin-top: 0 !important;
+    margin-bottom: 4px !important;
+    font-size: 9.5px !important;
+    line-height: 1.1 !important;
+  }
+  .section-content,
+  .dynamic-content {
+    font-size: 10.3px !important;
+    line-height: 1.18 !important;
+  }
+  .entry h3 {
+    margin-top: 6px !important;
+    margin-bottom: 2px !important;
+    font-size: 12px !important;
+    line-height: 1.18 !important;
+  }
+  .meta {
+    margin: 2px 0 3px !important;
+    font-size: 9.5px !important;
+    line-height: 1.15 !important;
+  }
+  .summary-content,
+  .skill-chip-list {
+    gap: 4px !important;
+  }
+  .skill-chip {
+    padding: 1px 6px !important;
+    font-size: 9.5px !important;
+    line-height: 1.1 !important;
+  }
+  .experience-highlights,
+  .certification-list,
+  ul {
+    margin-top: 3px !important;
+    margin-bottom: 3px !important;
+    padding-left: 13px !important;
+  }
+  li {
+    margin-bottom: 1px !important;
   }
   .cv-header,
   .letter-header,

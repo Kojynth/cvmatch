@@ -50,7 +50,8 @@ risk.
 - when runtime changes can affect final CV rendering, preserve the one-page
   **fit-to-page** contract end to end: prioritized content allocation,
   measured rendered height, controlled compression tiers, then PDF export
-  (never rely on CSS clipping or crop-to-page)
+  (never rely on CSS clipping or crop-to-page); direct WeasyPrint exports must
+  keep `PDF_ONE_PAGE_FIT_CSS` aligned with the preview print contract
 - preserve the header render contract for generated CVs: actionable contact
   methods render as explicit links (`mailto:`, `tel:`, LinkedIn, GitHub,
   portfolio URL), placeholder labels like `Lien 1` / `Link 1` are forbidden,

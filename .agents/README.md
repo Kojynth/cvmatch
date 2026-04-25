@@ -24,6 +24,9 @@ Current render/export contracts to preserve across agent runs:
 - print/PDF contract = single canonical print block, A4 margins, no forced
   `body` A4 height, no `overflow: hidden`, and `break-inside: avoid` on
   structured experience/project/education blocks
+- direct WeasyPrint exports must apply the `PDF_ONE_PAGE_FIT_CSS` fallback in
+  `app/controllers/export_manager.py`; preview fit CSS alone does not protect
+  final PDFs
 - one-page render must keep structured sections (summary, skills, experience,
   featured project, certifications) instead of flattening content into a blob
 - final rendered sentences must stay whole: no `...` / `…` truncation in the

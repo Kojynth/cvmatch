@@ -10,7 +10,9 @@ Checklist:
    measured fit-to-page compression, a single canonical print block,
    no `overflow: hidden` crop, no forced `body` A4 height, and
    `break-inside: avoid` on structured blocks; also verify no renderer-side
-   ellipsis/clamp truncation is used as a fit-to-page shortcut.
+   ellipsis/clamp truncation is used as a fit-to-page shortcut. For direct
+   PDF export, verify WeasyPrint applies `PDF_ONE_PAGE_FIT_CSS` as well as
+   template CSS; preview-only CSS is not sufficient.
 4. If header rendering is touched, verify clickable contacts with explicit
    labels, no `Lien 1` / `Link 1`, and candidature-style target subtitle
    semantics (`Poste vise` / `Target role`).
