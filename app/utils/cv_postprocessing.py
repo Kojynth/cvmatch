@@ -2547,12 +2547,11 @@ def _rebuild_skills_section_from_profile(
         return
 
     current_skills = cv_json.get("skills")
-    if (
+    current_is_usable = (
         isinstance(current_skills, list)
         and current_skills
         and not skills_section_low_signal(current_skills, profile_json)
-    ):
-        return
+    )
 
     recovered = build_skill_blocks_from_profile(
         profile_json,
@@ -2562,11 +2561,65 @@ def _rebuild_skills_section_from_profile(
     if not recovered:
         return
 
-    cv_json["skills"] = recovered
-    logger.warning(
-        "Skills reconciliation rebuilt %s profile-backed blocks.",
-        len(recovered),
-    )
+    if not current_is_usable:
+        cv_json["skills"] = recovered
+        logger.warning(
+            "Skills reconciliation rebuilt %s profile-backed blocks.",
+            len(recovered),
+        )
+        return
+
+    technical_label = "Technical Skills" if language_code == "en" else "Competences techniques"
+    soft_label = "Soft Skills" if language_code == "en" else "Qualites"
+    soft_categories = {
+        "soft skill",
+        "soft skills",
+        "qualites",
+        "qualités",
+        "qualites personnelles",
+        "qualités personnelles",
+        "qualities",
+        "strengths",
+    }
+    buckets: Dict[str, Dict[str, Any]] = {
+        "technical": {"category": technical_label, "items": []},
+        "soft": {"category": soft_label, "items": []},
+    }
+    seen: set[str] = set()
+
+    def append_block(block: Any) -> None:
+        if not isinstance(block, dict):
+            return
+        category = str(block.get("category") or "").strip()
+        category_norm = _normalize_for_match(category)
+        bucket_key = "soft" if category_norm in soft_categories else "technical"
+        items = block.get("items") or block.get("skills") or block.get("skills_list") or []
+        if not isinstance(items, list):
+            return
+        for item in items:
+            name = ""
+            if isinstance(item, dict):
+                name = str(item.get("name") or item.get("skill") or "").strip()
+            elif isinstance(item, str):
+                name = item.strip()
+            key = _normalize_for_match(name)
+            if not name or not key or key in seen:
+                continue
+            seen.add(key)
+            buckets[bucket_key]["items"].append(name)
+
+    for block in current_skills:
+        append_block(block)
+    for block in recovered:
+        append_block(block)
+
+    merged = [block for block in buckets.values() if block.get("items")]
+    if merged:
+        cv_json["skills"] = merged
+        logger.info(
+            "Skills reconciliation merged %s profile-backed blocks into existing skills.",
+            len(recovered),
+        )
 
 
 def reconcile_cv_sections_with_profile(

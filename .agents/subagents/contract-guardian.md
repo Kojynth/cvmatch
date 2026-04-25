@@ -73,6 +73,11 @@ history, and `mass_apply`.
   before ranking instead of applying an early 4-6 sentence cap
 - when offer-keyword extraction is touched, verify requirement-heavy sections
   outrank marketing/culture/benefits/remote-policy text in downstream terms
+- when featured-skill ranking is touched, verify compact chips can come from
+  any explicit profile source (`skills`, `soft_skills`, projects,
+  education/formations, certifications, experience text) only when compact,
+  skill-shaped, source-backed, and offer-aligned; soft skills may compete only
+  when the offer explicitly asks for that trait
 - when offer-only targeting is touched, verify pure offer-only terms stay in
   the natural positioning sentence unless profile evidence supports a
   coherent implicit inference elsewhere

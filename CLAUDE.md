@@ -34,9 +34,11 @@
     grounded sentences instead
   - chronology/detail contract: keep rendered roles in reverse chronology and
     use relevance ranking only to allocate richer detail to the anchor role
-  - featured-skills contract: compact chips come from the profile `skills`
-    pool first; experience/project evidence may reprioritize or compactly
-    rewrite labels, but must not mint extra chips from narrative bullets
+  - featured-skills contract: compact chips may come from any explicit
+    profile source (`skills`, `soft_skills`, projects, education/formations,
+    certifications, experience text) when the extracted label is compact,
+    skill-shaped, source-backed, and offer-aligned; never render raw narrative
+    fragments as chips
   - skill-list credibility contract: do not backfill weak/noisy skill chips
     just to hit a display quota; fewer credible chips are better than filler,
     except when the profile only exposes a small compact skill pool that

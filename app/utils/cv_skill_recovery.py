@@ -17,6 +17,11 @@ from .cv_skill_evidence import (
 from .cv_skill_ranking import rank_skill_blocks_by_relevance
 from .keyword_alignment import normalize_keyword_for_match
 
+try:
+    from ..domain.generation.tool_signals import collect_named_tool_hints
+except Exception:
+    collect_named_tool_hints = None
+
 _GENERIC_SKILL_LABELS = {
     "skill",
     "skills",
@@ -185,6 +190,23 @@ def build_skill_blocks_from_profile(
             continue
         _extend_candidates(technical_candidates, entry.get("technologies"), profile)
         _extend_candidates(technical_candidates, entry.get("tech_stack"), profile)
+        _extend_candidates(technical_candidates, entry.get("skills"), profile)
+        _extend_candidates(technical_candidates, entry.get("tools"), profile)
+
+    for entry in profile.get("education") or []:
+        if not isinstance(entry, dict):
+            continue
+        for key in (
+            "field_of_study",
+            "details",
+            "description",
+            "courses",
+            "modules",
+            "specialization",
+            "specialisation",
+            "skills",
+        ):
+            _extend_candidates(technical_candidates, entry.get(key), profile)
 
     for entry in profile.get("certifications") or []:
         if isinstance(entry, dict):
@@ -196,6 +218,9 @@ def build_skill_blocks_from_profile(
             _extend_candidates(soft_candidates, entry.get("items"), profile)
         else:
             _extend_candidates(soft_candidates, entry, profile)
+
+    if collect_named_tool_hints is not None:
+        technical_candidates.extend(collect_named_tool_hints(profile, max_items=24))
 
     supported_extra_terms = collect_supported_skill_terms(extra_terms, profile)
     technical_candidates.extend(supported_extra_terms.get("technical") or [])

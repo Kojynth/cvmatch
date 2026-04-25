@@ -450,7 +450,7 @@ class ExportManager:
                 normalized = _normalize_text_key(name)
                 if not normalized:
                     return True
-                return normalized in _LOW_VALUE_SOFT_SKILL_KEYS
+                return False
 
             # Si c'est une liste simple, la convertir en structure categorisee
             if skills and len(skills) > 0 and isinstance(skills[0], str):
@@ -2416,10 +2416,11 @@ class ExportManager:
         job_title: str,
         experience_entries: Any,
         projects: Any,
+        source: str = "skill",
     ) -> float:
         original_text = self._normalize_render_text(original_name)
         display_text = self._normalize_render_text(display_name) or original_text
-        score = self._score_featured_skill_candidate(display_text, source="skill")
+        score = self._score_featured_skill_candidate(display_text, source=source)
 
         probes: List[str] = []
         for entry in experience_entries or []:
@@ -2563,6 +2564,8 @@ class ExportManager:
             marker in normalized_display for marker in ("benchmark", "exploration", "evaluation")
         ) and len(evidence_terms) >= 3:
             score += 1.2
+        if str(source or "") == "soft_skill":
+            score += 0.4
 
         rendered_probe = self._normalize_match_probe(
             " ".join(
@@ -2578,6 +2581,38 @@ class ExportManager:
 
         offer_probe = self._normalize_match_probe(" ".join([job_title, *(offer_terms or [])]))
         skill_probe = self._normalize_match_probe(" ".join(evidence_terms + [display_text, original_text]))
+        soft_alignment_groups = (
+            (
+                ("autonomie", "autonomous", "self starter", "self-starter"),
+                ("autonomous", "self starter", "self-starter", "autonomie"),
+            ),
+            (
+                ("rigueur", "rigoureux", "rigoureuse"),
+                ("accuracy", "robustness", "reliability", "quality", "rigueur"),
+            ),
+            (
+                ("travailler en equipe", "travail en equipe", "teamwork"),
+                ("collaborative", "cross functional", "team spirited", "teamwork", "stakeholders"),
+            ),
+            (
+                ("curieux", "curiosite", "curiosity"),
+                ("learning", "innovation", "continuous improvement", "creative", "curiosity"),
+            ),
+            (
+                ("efficacite", "efficiency"),
+                ("efficient", "efficiency", "productivity", "scalable", "save time"),
+            ),
+            (
+                ("problem solving", "resolution de problemes"),
+                ("problem solver", "debugging", "resolve", "issue"),
+            ),
+        )
+        for skill_aliases, offer_aliases in soft_alignment_groups:
+            if any(self._match_probe_contains_term(skill_probe, item) for item in skill_aliases) and any(
+                self._match_probe_contains_term(offer_probe, item) for item in offer_aliases
+            ):
+                score += 2.0
+                break
         qa_offer_markers = (
             "qa",
             "test",
@@ -2678,6 +2713,31 @@ class ExportManager:
             "software engineer",
             "scripting",
         )
+        ai_skill_markers = (
+            "ai",
+            "ia",
+            "ml",
+            "llm",
+            "llmops",
+            "mlops",
+            "machine learning",
+            "prompt engineering",
+            "rag",
+            "model",
+            "modele",
+        )
+        ai_offer_markers = (
+            "ai",
+            "ml",
+            "llm",
+            "machine learning",
+            "model",
+            "models",
+            "model integrations",
+            "inference",
+            "rag",
+            "prompt",
+        )
         qa_offer_active = any(
             self._match_probe_contains_term(offer_probe, marker)
             for marker in qa_offer_markers
@@ -2694,6 +2754,10 @@ class ExportManager:
             self._match_probe_contains_term(offer_probe, marker)
             for marker in programming_offer_markers
         )
+        ai_offer_active = any(
+            self._match_probe_contains_term(offer_probe, marker)
+            for marker in ai_offer_markers
+        )
         qa_skill_match = any(self._match_probe_contains_term(skill_probe, marker) for marker in qa_skill_markers)
         bi_skill_match = any(self._match_probe_contains_term(skill_probe, marker) for marker in bi_skill_markers)
         db_skill_match = any(self._match_probe_contains_term(skill_probe, marker) for marker in db_skill_markers)
@@ -2701,6 +2765,18 @@ class ExportManager:
             self._match_probe_contains_term(skill_probe, marker)
             for marker in programming_skill_markers
         )
+        ai_skill_match = any(
+            self._match_probe_contains_term(skill_probe, marker)
+            for marker in ai_skill_markers
+        )
+
+        if ai_offer_active and ai_skill_match:
+            score += 3.2
+            if any(
+                self._match_probe_contains_term(skill_probe, marker)
+                for marker in ("llmops", "mlops", "prompt engineering", "rag")
+            ):
+                score += 1.2
 
         if qa_offer_active:
             if qa_skill_match:
@@ -2780,7 +2856,8 @@ class ExportManager:
         for block in skills:
             if isinstance(block, dict):
                 items = block.get("skills_list") or block.get("items") or block.get("skills") or []
-                bucket = fallback if self._is_soft_skill_category(block.get("category")) else primary
+                is_soft = self._is_soft_skill_category(block.get("category"))
+                bucket = fallback if is_soft else primary
                 if not isinstance(items, list):
                     continue
                 for item in items:
@@ -2789,14 +2866,19 @@ class ExportManager:
                             bucket,
                             item.get("name") or item.get("skill") or "",
                             order,
-                            source="skill",
+                            source="soft_skill" if is_soft else "skill",
                         )
                     else:
-                        order = _append(bucket, item, order, source="skill")
+                        order = _append(
+                            bucket,
+                            item,
+                            order,
+                            source="soft_skill" if is_soft else "skill",
+                        )
             elif isinstance(block, str):
                 order = _append(primary, block, order, source="skill")
 
-        candidates = primary or fallback
+        candidates = [*primary, *fallback]
         if not candidates:
             return []
 
@@ -2820,6 +2902,7 @@ class ExportManager:
                         job_title=job_title,
                         experience_entries=experience_probe_entries or (experience_all or []),
                         projects=projects,
+                        source=source,
                     ),
                     order,
                     self._rewrite_featured_skill_label(
@@ -2837,10 +2920,10 @@ class ExportManager:
         selection_floor = -2.5 if len(ranked) <= max(1, int(max_items or 1)) else 0.0
         selected = [name for score, _order, name, _source in ranked if score >= selection_floor]
         if len(ranked) <= max(1, int(max_items or 1)) and len(selected) < len(ranked):
-            for _score, _order, name, _source in ranked:
+            for _score, _order, name, source in ranked:
                 if name in selected:
                     continue
-                if self._score_featured_skill_candidate(name, source="skill") < 0.0:
+                if self._score_featured_skill_candidate(name, source=source) < 0.0:
                     continue
                 selected.append(name)
         deduped: List[str] = []
