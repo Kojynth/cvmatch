@@ -2261,6 +2261,8 @@ class ExportManager:
             )
         ):
             score += 0.8
+        if "cas limite" in normalized_text or "edge case" in normalized_text:
+            score += 2.0
         if any(
             token in normalized_text
             for token in (
@@ -2509,7 +2511,11 @@ class ExportManager:
         *,
         max_items: int,
     ) -> List[str]:
-        output = [self._normalize_render_text(item) for item in selected if self._normalize_render_text(item)]
+        output = [
+            self._normalize_render_text(item)
+            for item in selected
+            if self._normalize_render_text(item)
+        ]
         selected_probe = self._normalize_text_key(" ".join(output))
         priority_markers = (
             ("playwright", "cypress", "selenium", "agilitest"),
@@ -5369,7 +5375,6 @@ class ExportManager:
                 if self._normalize_render_text(item)
             ]
             entry["_render_source_description"] = source_description
-
             role_budget = max(1, int(max_bullets or 1))
             exp_score = float(score_by_key.get(exp_key) or 0.0)
             info_units = int(info_units_by_key.get(exp_key) or 1)

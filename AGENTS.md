@@ -87,7 +87,7 @@ and must stay usable on heterogeneous Windows/Linux machines.
   explicit, accessible links when actionable (`mailto:`, `tel:`, LinkedIn,
   GitHub, portfolio URL). Placeholder labels such as `Lien 1` / `Link 1`
   are forbidden in final HTML. The target subtitle must make the recruitment
-  intent explicit (for example `Poste vise: {job_title} | {company}` /
+  intent explicit (for example `Poste visé: {job_title} | {company}` /
   `Target role: {job_title} | {company}`) instead of looking like an employer
   label. Regression coverage must pin clickable contacts and smart link labels.
 - **Content allocation contract (MANDATORY)**: final one-page rendering must
@@ -227,6 +227,13 @@ and must stay usable on heterogeneous Windows/Linux machines.
   Company-description prose is supporting context only: it may inform weak
   sector inference or tie-breaking, but it must not outrank action/impact
   evidence and should usually be omitted from the rendered bullet list.
+- **Experience tense guidance contract (MANDATORY)**: experience detail
+  editing / "Visualiser les détails" must explicitly tell the user which
+  tense to use from the role dates: current roles use present-tense action
+  verbs; ended roles use past-tense action verbs. This guidance is editorial
+  support, not permission to invent metrics or rewrite source facts. Do not
+  maintain renderer-side language-wide verb replacement lists; tense issues
+  should be surfaced to the user unless a safe, language-aware rewriter exists.
 - **Featured-skills ranking contract (MANDATORY)**: compact hard skill/tool
   chips must be ranked against the target offer and may be sourced from
   explicit profile evidence: `skills`, projects, education/formations,

@@ -53,7 +53,7 @@ history, and `mass_apply`.
   fit rules,
   explicit clickable contact header links with smart labels (no `Lien 1` /
   `Link 1` placeholders), explicit candidature target subtitle semantics
-  (`Poste vise` / `Target role`), and preservation of structured sections
+  (`Poste visé` / `Target role`), and preservation of structured sections
   such as featured project and certifications when present in one-page CV JSON;
   final rendered sentences must stay whole (no `...` / `…` truncation), and
   any grounded positioning sentence must remain visible in the rendered summary
@@ -74,6 +74,10 @@ history, and `mass_apply`.
   that profile-derived source extraction keeps enough late candidate sentences
   before ranking instead of applying an early 4-6 sentence cap; dense evidence
   should be fused into 2-4 coherent bullets instead of dropped
+- when profile detail feedback / "Visualiser les détails" is touched, verify
+  tense guidance is derived from role dates: present-tense action verbs for
+  current roles, past-tense action verbs for ended roles, without
+  renderer-side language-wide verb replacement lists
 - when offer-keyword extraction is touched, verify requirement-heavy sections
   outrank marketing/culture/benefits/remote-policy text in downstream terms
 - when featured-skill ranking is touched, verify hard skill/tool chips can

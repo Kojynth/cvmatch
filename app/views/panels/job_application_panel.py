@@ -179,6 +179,59 @@ class JobApplicationPanel(QWidget):
 
         return widget
 
+    def _get_profile_cv_language_options(self):
+        """Return FR/EN CV language choices declared in the profile."""
+        try:
+            from ...utils.multilang_cv_support import extract_profile_language_options
+
+            profile_languages = (
+                getattr(self.profile, "extracted_languages", None)
+                or getattr(self.profile, "languages", None)
+                or []
+            )
+            options = extract_profile_language_options(
+                {"languages": profile_languages},
+                fallback=False,
+            )
+        except Exception:
+            options = []
+        return [(code, label) for code, label in options if code in {"fr", "en"}]
+
+    @staticmethod
+    def _set_combo_to_data(combo, value: str) -> bool:
+        for index in range(combo.count()):
+            if combo.itemData(index) == value:
+                combo.setCurrentIndex(index)
+                return True
+        return False
+
+    @staticmethod
+    def _selected_cv_language(widget) -> str:
+        combo = getattr(widget, "cv_language_combo", None)
+        if combo is None:
+            return ""
+        try:
+            return str(combo.currentData() or "").strip().lower()
+        except Exception:
+            return ""
+
+    def _apply_selected_cv_language_to_offer_payload(self, widget, offer_payload):
+        cv_language = self._selected_cv_language(widget)
+        widget.current_cv_language = cv_language
+        if not cv_language:
+            return offer_payload
+
+        payload = dict(offer_payload or {})
+        payload["cv_language"] = cv_language
+        payload["target_language"] = cv_language
+        analysis = payload.get("analysis")
+        analysis_payload = dict(analysis) if isinstance(analysis, dict) else {}
+        analysis_payload["language"] = cv_language
+        analysis_payload["cv_language"] = cv_language
+        analysis_payload["target_language"] = cv_language
+        payload["analysis"] = analysis_payload
+        return payload
+
     def create_generation_widget(self):
         """Create the CV generation widget wired to the worker pipeline."""
         widget = QFrame()
@@ -201,6 +254,23 @@ class JobApplicationPanel(QWidget):
         template_combo.addItems(["modern", "classic", "tech", "creative"])
         template_combo.setCurrentText(self.profile.preferred_template)
         style_layout.addWidget(template_combo)
+
+        style_layout.addWidget(QLabel("Langue CV :"))
+        cv_language_combo = QComboBox()
+        language_options = self._get_profile_cv_language_options()
+        if language_options:
+            for code, label in language_options:
+                cv_language_combo.addItem(label, code)
+            preferred_language = str(
+                getattr(self.profile, "preferred_language", "") or ""
+            ).strip().lower()
+            if preferred_language:
+                self._set_combo_to_data(cv_language_combo, preferred_language)
+            cv_language_combo.setEnabled(len(language_options) > 1)
+        else:
+            cv_language_combo.addItem("Non renseignee", "")
+            cv_language_combo.setEnabled(False)
+        style_layout.addWidget(cv_language_combo)
         style_layout.addStretch()
         layout.addLayout(style_layout)
 
@@ -280,6 +350,8 @@ class JobApplicationPanel(QWidget):
 
         widget.template_combo = template_combo
 
+        widget.cv_language_combo = cv_language_combo
+
         widget.ai_suggestion = ai_suggestion
 
         widget.generate_btn = generate_btn
@@ -310,8 +382,15 @@ class JobApplicationPanel(QWidget):
 
         widget.current_template = template_combo.currentText()
 
+        widget.current_cv_language = self._selected_cv_language(widget)
+
         template_combo.currentTextChanged.connect(
             lambda value: setattr(widget, "current_template", value)
+        )
+        cv_language_combo.currentIndexChanged.connect(
+            lambda _index: setattr(
+                widget, "current_cv_language", self._selected_cv_language(widget)
+            )
         )
 
         generate_btn.clicked.connect(lambda: self.start_generation(widget))
@@ -607,7 +686,10 @@ class JobApplicationPanel(QWidget):
         template = widget.template_combo.currentText()
         widget.current_template = template
 
-        offer_payload = dict(widget.offer_data)
+        offer_payload = self._apply_selected_cv_language_to_offer_payload(
+            widget,
+            dict(widget.offer_data),
+        )
         if isinstance(application_id_override, int):
             target_application_id = application_id_override
         else:
@@ -754,7 +836,10 @@ class JobApplicationPanel(QWidget):
         self._prune_model_cache_before_generation(widget)
 
         widget._preview_regen_in_progress = bool(from_preview)
-        offer_payload = dict(widget.offer_data)
+        offer_payload = self._apply_selected_cv_language_to_offer_payload(
+            widget,
+            dict(widget.offer_data),
+        )
         template = (
             widget.template_combo.currentText()
             if hasattr(widget, "template_combo")
@@ -951,10 +1036,24 @@ class JobApplicationPanel(QWidget):
             try:
                 from ...utils.cv_json_renderer import cv_json_to_cv_data
 
-                language = None
+                language = (
+                    result.get("language")
+                    or cv_json_final.get("language")
+                    or self._selected_cv_language(widget)
+                    or None
+                )
                 if widget.offer_data:
                     analysis = widget.offer_data.get("analysis") or {}
-                    language = analysis.get("language") if isinstance(analysis, dict) else None
+                    language = (
+                        language
+                        or widget.offer_data.get("cv_language")
+                        or widget.offer_data.get("target_language")
+                        or (
+                            analysis.get("language")
+                            if isinstance(analysis, dict)
+                            else None
+                        )
+                    )
                 structured_data = cv_json_to_cv_data(cv_json_final, language=language)
                 structured_data["raw_content"] = cv_markdown
             except Exception as exc:
@@ -974,6 +1073,18 @@ class JobApplicationPanel(QWidget):
             except Exception as exc:
                 logger.warning(f"Parsing generated CV failed: {exc}")
                 structured_data["raw_content"] = cv_markdown
+
+        selected_language = (
+            result.get("language")
+            or (
+                cv_json_final.get("language")
+                if isinstance(cv_json_final, dict)
+                else ""
+            )
+            or self._selected_cv_language(widget)
+        )
+        if selected_language:
+            structured_data["language"] = str(selected_language).strip().lower()
 
         if widget.offer_data:
             structured_data["job_title"] = widget.offer_data.get("job_title")
@@ -1199,6 +1310,16 @@ class JobApplicationPanel(QWidget):
                 if idx >= 0:
                     combo.setCurrentIndex(idx)
                     widget.current_template = combo.currentText()
+
+        requested_language = str(data.get("language") or "").strip().lower()
+        if not requested_language and isinstance(data.get("cv_data"), dict):
+            requested_language = str(
+                data.get("cv_data", {}).get("language") or ""
+            ).strip().lower()
+        if requested_language and hasattr(widget, "cv_language_combo"):
+            combo = getattr(widget, "cv_language_combo", None)
+            if combo is not None and self._set_combo_to_data(combo, requested_language):
+                widget.current_cv_language = self._selected_cv_language(widget)
 
         cv_data = data.get("cv_data")
         offer_payload_override = (

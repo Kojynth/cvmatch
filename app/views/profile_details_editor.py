@@ -636,6 +636,14 @@ class ExperienceItem(QFrame):
         self.date_feedback_label.hide()
         layout.addWidget(self.date_feedback_label)
 
+        self.tense_feedback_label = QLabel()
+        self.tense_feedback_label.setWordWrap(True)
+        self.tense_feedback_label.setStyleSheet(
+            f"color: {StyleManager.COLORS['info']}; font-size: 11px; padding-left: 2px;"
+        )
+        self.tense_feedback_label.hide()
+        layout.addWidget(self.tense_feedback_label)
+
         # Description
         self.fields['description'] = QTextEdit(self.experience_data.get('description', ''))
         self.fields['description'].setPlaceholderText("Description des responsabilités et réalisations...")
@@ -677,6 +685,8 @@ class ExperienceItem(QFrame):
                 self.date_feedback_label.hide()
             if self.editor_feedback_label is not None:
                 self.editor_feedback_label.hide()
+            if getattr(self, "tense_feedback_label", None) is not None:
+                self.tense_feedback_label.hide()
             return
 
         feedback = build_experience_editor_feedback(
@@ -691,12 +701,16 @@ class ExperienceItem(QFrame):
         )
 
         date_feedback = str(feedback.get("date_feedback") or "").strip()
+        tense_feedback = str(feedback.get("tense_feedback") or "").strip()
         editorial_feedback = str(feedback.get("editorial_feedback") or "").strip()
         company_feedback = str(feedback.get("company_feedback") or "").strip()
 
         if self.date_feedback_label is not None:
             self.date_feedback_label.setText(date_feedback)
             self.date_feedback_label.setVisible(bool(date_feedback))
+        if getattr(self, "tense_feedback_label", None) is not None:
+            self.tense_feedback_label.setText(tense_feedback)
+            self.tense_feedback_label.setVisible(bool(tense_feedback))
         if self.editor_feedback_label is not None:
             self.editor_feedback_label.setText(editorial_feedback)
             self.editor_feedback_label.setVisible(bool(editorial_feedback))

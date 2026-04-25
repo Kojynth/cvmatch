@@ -56,7 +56,7 @@ risk.
   methods render as explicit links (`mailto:`, `tel:`, LinkedIn, GitHub,
   portfolio URL), placeholder labels like `Lien 1` / `Link 1` are forbidden,
   and the target subtitle must read as a candidature target
-  (`Poste vise` / `Target role`) rather than an employer label
+  (`Poste visé` / `Target role`) rather than an employer label
 - preserve one-page section allocation: summary (max 3 short lines), up to 10
   compact credible skill/tool chips when layout allows, a natural grounded positioning sentence appended
   to the summary when available, 2-3 concrete impacts per role chosen from
@@ -73,6 +73,10 @@ risk.
   protect the most aligned anchor role first, then compress lower-priority
   roles; fuse dense source evidence into 2-4 coherent bullets instead of
   dropping useful proof or rendering too many bullets
+- when profile detail feedback / "Visualiser les détails" is in scope, keep
+  date-driven tense guidance visible: present-tense action verbs for current
+  roles, past-tense action verbs for ended roles, without renderer-side
+  language-wide verb replacement lists
 - keep rendered role order reverse-chronological; relevance decides detail
   density, not visible role order
 - do not rely on renderer-side sentence clipping with `...` / `…`; if output

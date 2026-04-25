@@ -372,7 +372,7 @@ def _build_target_role_line(
     if not parts:
         return ""
     joined = " | ".join(parts)
-    prefix = "Target role" if is_en else "Poste vise"
+    prefix = "Target role" if is_en else "Poste visé"
     return f"{prefix}: {joined}"
 
 

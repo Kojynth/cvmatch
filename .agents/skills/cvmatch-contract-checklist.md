@@ -15,7 +15,7 @@ Checklist:
    template CSS; preview-only CSS is not sufficient.
 4. If header rendering is touched, verify clickable contacts with explicit
    labels, no `Lien 1` / `Link 1`, and candidature-style target subtitle
-   semantics (`Poste vise` / `Target role`).
+   semantics (`Poste visé` / `Target role`).
 5. If one-page allocation is touched, verify preservation of structured
    sections (summary, skills, experience, featured project, certifications)
    instead of flattening to an `additional relevant details` blob, and verify
@@ -33,7 +33,10 @@ Checklist:
    extraction keeps a rich candidate pool before scoring instead of dropping
    late profile evidence with an early 4-6 sentence cap, and that dense source
    evidence is fused into 2-4 coherent bullets rather than expanded into too
-   many bullets.
+   many bullets. If profile detail feedback is touched, verify "Visualiser les
+   détails" shows tense guidance from dates: present-tense action verbs for
+   current roles, past-tense action verbs for ended roles, without adding
+   renderer-side language-wide verb replacement lists.
 8. If featured-skill ranking is touched, verify hard skill/tool chips may come
    from explicit profile evidence (`skills`, projects, education/formations,
    certifications, experience text) only when the extracted label is compact,

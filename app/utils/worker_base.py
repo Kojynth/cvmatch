@@ -115,6 +115,19 @@ def get_generation_language_code(
         return default
 
     analysis = offer_data.get("analysis", {})
+    for key in ("cv_language", "target_language", "language_code"):
+        explicit_language = offer_data.get(key)
+        if explicit_language:
+            normalized = normalize_language_code(str(explicit_language))
+            if normalized:
+                return normalized
+    if isinstance(analysis, dict):
+        for key in ("cv_language", "target_language"):
+            explicit_language = analysis.get(key)
+            if explicit_language:
+                normalized = normalize_language_code(str(explicit_language))
+                if normalized:
+                    return normalized
     analysis_language = analysis.get("language") if isinstance(analysis, dict) else None
     offer_text = offer_data.get("text")
 

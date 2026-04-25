@@ -23,7 +23,7 @@
   - header render contract: actionable contacts are explicit links
     (`mailto:`, `tel:`, LinkedIn, GitHub, portfolio), placeholder labels
     like `Lien 1` are forbidden, and the target subtitle must read as a
-    candidature target (`Poste vise` / `Target role`) rather than an
+    candidature target (`Poste visé` / `Target role`) rather than an
     employer label
   - one-page content allocation contract: structured summary assembled from retained blocks,
     up to 10 compact credible skill/tool chips when layout allows, a natural positioning sentence appended
@@ -111,6 +111,11 @@
   roles; keep a rich profile-derived source-candidate pool before scoring
   instead of capping extraction to the first few sentences; company-description
   prose is only weak sector context and usually should not appear in the CV
+- experience tense guidance contract: profile detail editing / "Visualiser les
+  détails" must tell the user to use present-tense action verbs for current
+  roles and past-tense action verbs for ended roles, based on role dates. This
+  is guidance only; do not invent unsupported metrics or facts to satisfy it,
+  and do not add renderer-side language-wide verb replacement lists
 - sector/industry signal contract: sector hints are allowed only as a minor
   ranking/vocabulary bonus, never as a hard gate and never over stronger
   offer-skill/profile evidence
