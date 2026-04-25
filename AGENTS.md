@@ -101,11 +101,11 @@ and must stay usable on heterogeneous Windows/Linux machines.
     them (not a keyword dump);
   - rendered experience order stays reverse-chronological; relevance ranking
     may change detail budgets, not the visible role order;
-  - skill chips may come from any explicit user-profile source: `skills`,
-    `soft_skills`, projects, education/formations, certifications, and
-    experience evidence. Narrative experience/project/education text may create
-    chips only when the extracted label is skill-shaped, source-backed, and
-    ranked as aligned to the offer; avoid raw sentence fragments;
+  - hard skill/tool chips may come from explicit user-profile evidence:
+    `skills`, projects, education/formations, certifications, and experience
+    evidence. Narrative experience/project/education text may create chips
+    only when the extracted label is skill-shaped, source-backed, and ranked
+    as aligned to the offer; avoid raw sentence fragments;
   - asymmetric experience density: the most aligned experience keeps the
     richest detail budget, the most recent role may keep a secondary budget,
     and lower-priority roles compress first;
@@ -221,20 +221,20 @@ and must stay usable on heterogeneous Windows/Linux machines.
   Company-description prose is supporting context only: it may inform weak
   sector inference or tie-breaking, but it must not outrank action/impact
   evidence and should usually be omitted from the rendered bullet list.
-- **Featured-skills ranking contract (MANDATORY)**: compact skill chips must
-  be ranked against the target offer and may be sourced from any explicit
-  profile evidence: `skills`, `soft_skills`, projects, education/formations,
+- **Featured-skills ranking contract (MANDATORY)**: compact hard skill/tool
+  chips must be ranked against the target offer and may be sourced from
+  explicit profile evidence: `skills`, projects, education/formations,
   certifications, and experience text. Experience/project/education evidence
   may create a chip only when the extracted label is compact, skill-shaped,
   source-backed, and offer-aligned; never render raw narrative fragments as
   chips. When a vague comparative skill is backed by explicit tool names in
   source evidence, prefer a compact comparative label such as
   `Benchmark Playwright / Cypress / Selenium` over a vague wording or an
-  invented direct-usage claim. Soft skills may compete with hard skills when
-  the offer explicitly asks for them (for example autonomy, rigor,
-  collaboration, curiosity, problem solving), but must not be filler. Do not
-  backfill low-scoring/noisy skill candidates just to reach a visual chip
-  quota: a shorter credible skill list is better than ten weak chips.
+  invented direct-usage claim. Soft skills must stay in a dedicated
+  `Savoir-être` / `Soft skills` section and must not compete with hard skill
+  chips unless no hard skill pool exists for the profile. Do not backfill
+  low-scoring/noisy skill candidates just to reach a visual chip quota: a
+  shorter credible skill list is better than ten weak chips.
 - **Company-description filter contract (MANDATORY)**: renderer-side guards
   that suppress employer-description prose must stay narrow. Reject true
   intros such as `Company: filiale...` or `Employer - Groupe...`, but do not
@@ -307,8 +307,9 @@ and must stay usable on heterogeneous Windows/Linux machines.
   signal exists. `missing_summary_terms` alone is not a sufficient candidate
   pool: the selector must also consider aligned skill/talent terms already
   grounded in the profile, so cross-domain offer-only terms do not evict
-  better profile-backed keywords. Profile soft skills may appear only as
-  supported fallback signal, never as generic filler. Regression coverage
+  better profile-backed keywords. Profile soft skills may appear only as a
+  separate supported fallback signal, never as hard skill chips or generic
+  filler. Regression coverage
   lives in `tests/contracts/test_cv_postprocessing_contract.py` and
   `tests/utils/test_cv_summary_adaptation.py`.
 

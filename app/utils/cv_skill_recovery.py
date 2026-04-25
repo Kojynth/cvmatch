@@ -116,6 +116,19 @@ def _clean_skill_candidate(
     return cleaned
 
 
+def _split_list_like_skill_string(value: str) -> List[str]:
+    text = re.sub(r"\s+", " ", str(value or "").strip())
+    if not text:
+        return []
+    if not re.search(r"[,;|·•\n]", str(value or "")):
+        return []
+    return [
+        item.strip(" ,;:.-")
+        for item in re.split(r"\s*(?:,|;|\||·|•|\n)\s*", str(value or ""))
+        if item.strip(" ,;:.-")
+    ]
+
+
 def skills_section_low_signal(
     skills_section: Any,
     profile_json: Dict[str, Any] | None = None,
@@ -154,6 +167,11 @@ def _extend_candidates(
         cleaned = _clean_skill_candidate(value, profile_json)
         if cleaned:
             output.append(cleaned)
+            return
+        for item in _split_list_like_skill_string(value):
+            cleaned_item = _clean_skill_candidate(item, profile_json)
+            if cleaned_item:
+                output.append(cleaned_item)
         return
     if isinstance(value, list):
         for item in value:
@@ -226,12 +244,8 @@ def build_skill_blocks_from_profile(
     technical_candidates.extend(supported_extra_terms.get("technical") or [])
     soft_candidates.extend(supported_extra_terms.get("soft") or [])
 
-    technical_items = _dedup_preserve(technical_candidates)[
-        : max(1, int(max_items_per_block))
-    ]
-    soft_items = _dedup_preserve(soft_candidates)[
-        : max(0, min(6, int(max_items_per_block)))
-    ]
+    technical_items = _dedup_preserve(technical_candidates)
+    soft_items = _dedup_preserve(soft_candidates)
 
     blocks: List[Dict[str, Any]] = []
     if technical_items:
@@ -267,4 +281,33 @@ def build_skill_blocks_from_profile(
         )
 
     ranked = rank_skill_blocks_by_relevance(blocks, list(offer_terms or []))
-    return ranked if ranked else blocks
+    selected_blocks = ranked if ranked else blocks
+
+    technical_limit = max(1, int(max_items_per_block))
+    soft_limit = max(0, min(6, int(max_items_per_block)))
+    clamped: List[Dict[str, Any]] = []
+    for block in selected_blocks:
+        if not isinstance(block, dict):
+            continue
+        items = [
+            item
+            for item in (block.get("items") or [])
+            if isinstance(item, str) and item.strip()
+        ]
+        category_norm = normalize_keyword_for_match(block.get("category") or "")
+        is_soft_block = category_norm in {
+            "soft skills",
+            "soft skill",
+            "qualites",
+            "qualites personnelles",
+            "strengths",
+        }
+        limit = soft_limit if is_soft_block else technical_limit
+        if limit <= 0:
+            continue
+        next_block = dict(block)
+        next_block["items"] = items[:limit]
+        if next_block["items"]:
+            clamped.append(next_block)
+
+    return clamped if clamped else selected_blocks

@@ -30,10 +30,12 @@ Checklist:
    visible role order itself stays reverse-chronological. Also verify source
    extraction keeps a rich candidate pool before scoring instead of dropping
    late profile evidence with an early 4-6 sentence cap.
-8. If featured-skill ranking is touched, verify chips may come from any
-   explicit profile source (`skills`, `soft_skills`, projects,
-   education/formations, certifications, experience text) only when the
-   extracted label is compact, skill-shaped, source-backed, and offer-aligned.
+8. If featured-skill ranking is touched, verify hard skill/tool chips may come
+   from explicit profile evidence (`skills`, projects, education/formations,
+   certifications, experience text) only when the extracted label is compact,
+   skill-shaped, source-backed, and offer-aligned. Keep soft skills in a
+   dedicated `Savoir-être` / `Soft skills` section, not mixed into hard skill
+   chips unless there is no hard skill pool.
    Vague comparative skills can become labels such as
    `Benchmark Playwright / Cypress / Selenium` when source evidence names the
    tools. Do not backfill weak/noisy chips just to reach the visible cap.

@@ -527,6 +527,7 @@ def cv_json_to_cv_data(
         "profile": "Profile" if is_en else "Profil",
         "experience": "Experience" if is_en else "Experience",
         "skills": "Skills" if is_en else "Compétences",
+        "soft_skills": "Soft skills" if is_en else "Savoir-Ãªtre",
         "education": "Education" if is_en else "Formation",
         "projects": "Projects" if is_en else "Projets",
         "languages": "Languages" if is_en else "Langues",
@@ -785,6 +786,7 @@ def cv_json_to_markdown(cv_json: Dict[str, Any], language: Optional[str] = None)
         "profile": labels.get("profile") or "Profile",
         "experience": labels.get("experience") or "Experience",
         "skills": labels.get("skills") or "Skills",
+        "soft_skills": labels.get("soft_skills") or "Soft skills",
         "education": labels.get("education") or "Education",
         "projects": labels.get("projects") or "Projects",
         "languages": labels.get("languages") or "Languages",
@@ -865,10 +867,13 @@ def cv_json_to_markdown(cv_json: Dict[str, Any], language: Optional[str] = None)
             names = [item.get("name") for item in items if isinstance(item, dict)]
             if names:
                 lines.append(f"- {category}: {', '.join(names)}")
-        soft_skills = [item for item in data.get("soft_skills") or [] if isinstance(item, str)]
-        if soft_skills:
-            prefix = "Strengths" if data.get("language") == "en" else "Atouts"
-            lines.append(f"- {prefix}: {', '.join(soft_skills)}")
+
+    soft_skills = [item for item in data.get("soft_skills") or [] if isinstance(item, str)]
+    if soft_skills:
+        lines.append("")
+        lines.append(f"## {labels['soft_skills']}")
+        for item in soft_skills:
+            lines.append(f"- {item}")
 
     if data.get("education"):
         lines.append("")

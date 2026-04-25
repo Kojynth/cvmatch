@@ -379,14 +379,18 @@ def should_keep_skill_term(
 
     has_profile = isinstance(profile_json, dict) and bool(profile_json)
 
-    if route_term_to_section(term) == "skills":
+    routed_section = route_term_to_section(term)
+    if routed_section == "skills":
         if not require_profile_evidence:
             return True
         if has_profile:
             return skill_term_supported_by_profile(term, profile_json)
         return False
-
     tokens = _normalized_skill_tokens(term)
+    if routed_section and routed_section != "skills" and len(tokens) != 1:
+        return False
+    if has_profile and skill_term_supported_by_profile(term, profile_json):
+        return True
     if len(tokens) != 1:
         return False
 
