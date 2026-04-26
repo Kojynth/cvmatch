@@ -6,6 +6,9 @@ history, export, or `mass_apply` payloads.
 Checklist:
 1. Identify all affected contracts.
 2. Verify propagation across UI, JSON, DB, generation, export, history.
+   Keep test files ignored by Git: do not add `.gitignore` exceptions for
+   `tests/` or `scripts/tests/`, and do not stage newly-created test files
+   unless the user explicitly overrides this for the change.
 3. If render/export is touched, verify the one-page print contract:
    measured fit-to-page compression, a single canonical print block,
    no `overflow: hidden` crop, no forced `body` A4 height, and

@@ -470,6 +470,8 @@ Prompt\ initial.txt
 # =============================================================================
 # 22. TESTS & TOOLS (development-only)
 # =============================================================================
+# Keep test paths ignored. Do not add negated exceptions such as !tests/... or
+# !scripts/tests/... unless the user explicitly overrides this rule.
 tests/
 tests/**
 tools/
@@ -491,22 +493,8 @@ scripts/debug_*.txt
 tests/unit/workers/linkedin/fixtures*.html
 
 # =============================================================================
-# 24. RE-ALLOW VERSIONED CORE TESTS AND AGENTIC OPS (MUST STAY LAST)
+# 24. RE-ALLOW AGENTIC OPS (MUST STAY LAST)
 # =============================================================================
-!tests/
-tests/*
-!tests/contracts/
-!tests/contracts/**
-!tests/mass_apply/
-!tests/mass_apply/**
-!tests/pipeline/
-tests/pipeline/*
-!tests/unit/
-tests/unit/*
-!tests/unit/workers/
-tests/unit/workers/*
-!scripts/tests/
-!scripts/tests/**
 !.github/
 !.github/**
 !.agents/

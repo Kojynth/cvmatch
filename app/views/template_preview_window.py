@@ -330,16 +330,27 @@ ONE_PAGE_PRINT_CSS = """
     margin-top: 3px !important;
     margin-bottom: 3px !important;
     padding-left: 13px !important;
+    list-style: none !important;
   }
   .experience-highlights {
-    padding-left: 0 !important;
+    padding-left: 13px !important;
   }
   .experience-highlight {
     margin: 0 0 1px !important;
-    padding-left: 13px !important;
+    padding-left: 0 !important;
   }
   li {
     margin-bottom: 1px !important;
+    display: block !important;
+    position: static !important;
+    padding-left: 0 !important;
+    list-style: none !important;
+  }
+  li::before,
+  .section-content li::before,
+  .dynamic-content li::before {
+    content: none !important;
+    display: none !important;
   }
   .cv-header,
   .letter-header,
