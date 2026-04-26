@@ -9,6 +9,7 @@ import os
 import re
 import tempfile
 import unicodedata
+import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 
@@ -18,7 +19,10 @@ except ImportError:  # pragma: no cover - optional in lightweight contract CI
     Environment = None
     FileSystemLoader = None
 
-from loguru import logger
+try:
+    from loguru import logger
+except ImportError:  # pragma: no cover - optional in lightweight contract CI
+    logger = logging.getLogger(__name__)
 
 # WeasyPrint sera importé seulement quand nécessaire pour éviter les messages d'erreur multiples
 WEASYPRINT_AVAILABLE = None  # Sera déterminé lors du premier usage
