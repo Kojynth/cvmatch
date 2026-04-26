@@ -213,7 +213,7 @@ def test_fit_tiers_hide_optional_content_before_scaling(monkeypatch) -> None:
     assert ':root[data-page-fit="compact"] .fit-compact-hide' in css
     assert ':root[data-page-fit="tight"] .fit-tight-hide' in css
     assert ':root[data-page-fit="ultra"] .fit-ultra-hide' in css
-    assert ':root[data-page-fit="critical"] .project-section' in css
+    assert ':root[data-page-fit="critical"] .project-section' not in css
     assert ':root[data-page-fit="critical"] .experience-entry:nth-of-type(n+5)' in css
 
 

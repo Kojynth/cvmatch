@@ -188,7 +188,7 @@
       {% endif %}
 
       {% if interests %}
-      <section class="cv-section interests-section fit-ultra-hide">
+      <section class="cv-section interests-section">
         <h2 class="section-title">{{ labels.interests if labels is defined and labels.interests is defined else 'Interests' }}</h2>
         <div class="section-content">
           {{ interests | join(', ') }}

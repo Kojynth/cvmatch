@@ -886,6 +886,21 @@ def sanitize_cv_json_output(
             cleaned_certs.append(cleaned_entry)
     cv_json["certifications"] = cleaned_certs
 
+    # Clean interests / hobbies
+    cleaned_interests = []
+    raw_interests = cv_json.get("interests")
+    if isinstance(raw_interests, str):
+        raw_interests = [raw_interests]
+    if isinstance(raw_interests, list):
+        for item in raw_interests:
+            if not isinstance(item, str):
+                continue
+            for value in re.split(r"[\n;|]+", item):
+                text = clean_text_field(value)
+                if text:
+                    cleaned_interests.append(text)
+    cv_json["interests"] = _dedup_preserve(cleaned_interests)[:6]
+
     # Clean ATS keywords
     if isinstance(cv_json.get("ats_keywords"), list):
         cleaned_keywords = []
@@ -928,6 +943,7 @@ def merge_cv_json_missing_sections(
         "projects",
         "languages",
         "certifications",
+        "interests",
     ):
         if not cv_json_final.get(key) and cv_json_draft.get(key):
             cv_json_final[key] = cv_json_draft[key]
@@ -2866,6 +2882,88 @@ def _reconcile_languages_section(
         )
 
 
+def _extract_profile_projects(profile_json: Dict[str, Any]) -> List[Dict[str, str]]:
+    rows: List[Dict[str, str]] = []
+    if not isinstance(profile_json, dict):
+        return rows
+    for item in profile_json.get("projects") or []:
+        if not isinstance(item, dict):
+            continue
+        name = clean_text_field(item.get("name") or "", check_review_markers=False)
+        description = clean_text_field(
+            item.get("description") or "",
+            check_review_markers=False,
+            dedupe_narrative=True,
+        )
+        technologies = clean_text_field(
+            item.get("technologies") or item.get("tech_stack") or "",
+            check_review_markers=False,
+        )
+        url = clean_text_field(item.get("url") or "", check_review_markers=False)
+        duration = clean_text_field(
+            item.get("duration") or "", check_review_markers=False
+        )
+        if not any((name, description, technologies, url, duration)):
+            continue
+        rows.append(
+            {
+                "name": name,
+                "description": description,
+                "technologies": technologies,
+                "url": url,
+                "duration": duration,
+            }
+        )
+    return rows
+
+
+def _extract_profile_interests(profile_json: Dict[str, Any]) -> List[str]:
+    rows: List[str] = []
+    if not isinstance(profile_json, dict):
+        return rows
+    raw_interests = profile_json.get("interests") or profile_json.get("hobbies") or []
+    if isinstance(raw_interests, str):
+        raw_interests = [raw_interests]
+    if not isinstance(raw_interests, list):
+        return rows
+    for item in raw_interests:
+        if not isinstance(item, str):
+            continue
+        for value in re.split(r"[\n;|]+", item):
+            text = clean_text_field(value, check_review_markers=False)
+            if text:
+                rows.append(text)
+    return _dedup_preserve(rows)[:6]
+
+
+def _reconcile_projects_and_interests_sections(
+    cv_json: Dict[str, Any],
+    profile_json: Dict[str, Any],
+) -> None:
+    if not isinstance(cv_json, dict) or not isinstance(profile_json, dict):
+        return
+
+    projects = cv_json.get("projects")
+    if not isinstance(projects, list) or not projects:
+        profile_projects = _extract_profile_projects(profile_json)
+        if profile_projects:
+            cv_json["projects"] = profile_projects[:2]
+            logger.warning(
+                "Project reconciliation appended %s missing profile entries.",
+                min(2, len(profile_projects)),
+            )
+
+    interests = cv_json.get("interests")
+    if not isinstance(interests, list) or not interests:
+        profile_interests = _extract_profile_interests(profile_json)
+        if profile_interests:
+            cv_json["interests"] = profile_interests
+            logger.warning(
+                "Interest reconciliation appended %s missing profile entries.",
+                len(profile_interests),
+            )
+
+
 def _rebuild_skills_section_from_profile(
     cv_json: Dict[str, Any],
     profile_json: Dict[str, Any],
@@ -2992,6 +3090,7 @@ def reconcile_cv_sections_with_profile(
     )
     _reconcile_education_section(cv_json, profile_json)
     _reconcile_languages_section(cv_json, profile_json)
+    _reconcile_projects_and_interests_sections(cv_json, profile_json)
 
 
 _SUMMARY_CONTACT_PATTERNS = (
@@ -4080,6 +4179,7 @@ def coerce_generated_cv_payload(
         "projects",
         "languages",
         "certifications",
+        "interests",
         "ats_keywords",
     )
     for key in list_sections:
