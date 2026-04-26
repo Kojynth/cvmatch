@@ -742,6 +742,28 @@ def sanitize_cv_json_output(
         existing_items = merged_skills[idx].get("items") or []
         merged_skills[idx]["items"] = _dedup_preserve([*existing_items, *items])
 
+    all_skill_items = [
+        item
+        for block in merged_skills
+        if isinstance(block, dict)
+        for item in (block.get("items") or [])
+        if isinstance(item, str) and item.strip()
+    ]
+    if all_skill_items:
+        for block in merged_skills:
+            if not isinstance(block, dict):
+                continue
+            block["items"] = clean_skill_item_residues(
+                block.get("items") or [],
+                other_items=all_skill_items,
+                category_label=block.get("category") or "",
+            )
+        merged_skills = [
+            block
+            for block in merged_skills
+            if isinstance(block, dict) and block.get("items")
+        ]
+
     cv_json["skills"] = merged_skills
 
     # Clean experience
@@ -883,6 +905,8 @@ def sanitize_cv_json_output(
             cleaned_notes = re.sub(r"\s+", " ", cleaned_notes).strip()
             render_hints["notes"] = cleaned_notes
 
+    _normalize_cv_punctuation_all(cv_json, language_code=language_code)
+
 
 def merge_cv_json_missing_sections(
     cv_json_final: Dict[str, Any],
@@ -917,6 +941,258 @@ def _normalize_for_match(value: Any) -> str:
     text = re.sub(r"[\W_]+", " ", text, flags=re.UNICODE)
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+_GENERIC_SKILL_RESIDUE_HEAD_BLOCKLIST = {
+    "activity",
+    "analyse",
+    "analysis",
+    "automation",
+    "automatisation",
+    "business",
+    "competence",
+    "competences",
+    "data",
+    "debug",
+    "delivery",
+    "design",
+    "development",
+    "documentation",
+    "gestion",
+    "management",
+    "method",
+    "methode",
+    "model",
+    "modele",
+    "platform",
+    "plateform",
+    "plateforme",
+    "process",
+    "processus",
+    "product",
+    "produit",
+    "project",
+    "projet",
+    "quality",
+    "qualite",
+    "role",
+    "service",
+    "software",
+    "strategy",
+    "strategie",
+    "system",
+    "systeme",
+    "task",
+    "test",
+    "testing",
+    "tests",
+    "tool",
+    "tooling",
+    "tools",
+    "workflow",
+}
+
+_NON_SKILL_RESIDUE_HEAD_BLOCKLIST = {
+    "advanced",
+    "agile",
+    "avance",
+    "beginner",
+    "basic",
+    "certified",
+    "client",
+    "customer",
+    "digital",
+    "experienced",
+    "expert",
+    "functional",
+    "general",
+    "global",
+    "intermediate",
+    "internal",
+    "junior",
+    "lead",
+    "mobile",
+    "principal",
+    "professional",
+    "senior",
+    "staff",
+    "strategic",
+    "technical",
+    "web",
+}
+
+_NON_SKILL_RESIDUE_HEAD_SUFFIXES = (
+    "able",
+    "al",
+    "ary",
+    "ible",
+    "ic",
+    "if",
+    "ique",
+    "ive",
+    "ory",
+    "ous",
+)
+
+_TOOLISH_RESIDUE_CATEGORY_TOKENS = {
+    "application",
+    "applications",
+    "automation",
+    "automatisation",
+    "ci",
+    "cd",
+    "delivery",
+    "devops",
+    "framework",
+    "frameworks",
+    "library",
+    "libraries",
+    "logiciel",
+    "logiciels",
+    "outillage",
+    "outil",
+    "outils",
+    "platform",
+    "platforms",
+    "plateforme",
+    "plateformes",
+    "scripting",
+    "software",
+    "stack",
+    "suite",
+    "suites",
+    "system",
+    "systems",
+    "tech",
+    "technique",
+    "techniques",
+    "technical",
+    "technologie",
+    "technologies",
+    "technology",
+    "tool",
+    "tooling",
+    "tools",
+}
+
+
+def _category_suggests_compact_tool_list(category_label: Any) -> bool:
+    tokens = set(_normalize_for_match(category_label).split())
+    if not tokens:
+        return False
+    return bool(tokens & _TOOLISH_RESIDUE_CATEGORY_TOKENS)
+
+
+def _looks_like_non_skill_residue_head(value: Any, norm: str) -> bool:
+    if norm in _NON_SKILL_RESIDUE_HEAD_BLOCKLIST:
+        return True
+    text = str(value or "").strip()
+    if (
+        norm.endswith(_NON_SKILL_RESIDUE_HEAD_SUFFIXES)
+        and not re.search(r"[+#./0-9]", text)
+        and not re.search(r"[a-z][A-Z]", text)
+    ):
+        return True
+    return False
+
+
+def _looks_like_compact_residue_head(
+    value: Any,
+    *,
+    category_label: Any = "",
+) -> bool:
+    text = str(value or "").strip(" ,;:-")
+    if not text or len(text.split()) != 1:
+        return False
+    norm = _normalize_for_match(text)
+    if not norm:
+        return False
+    if norm in SKILL_GLUE_WORDS:
+        return False
+    if norm in ROLE_LIKE_SKILL_TOKENS:
+        return False
+    if norm in _GENERIC_SKILL_RESIDUE_HEAD_BLOCKLIST:
+        return False
+    if _looks_like_non_skill_residue_head(text, norm):
+        return False
+    if len(norm) < 3 or len(norm) > 32:
+        return False
+    if re.search(r"[+#./0-9]", text):
+        return True
+    letters = [char for char in text if char.isalpha()]
+    if letters and len(letters) <= 8 and all(char.isupper() for char in letters):
+        return True
+    if bool(re.search(r"[a-z][A-Z]", text)):
+        return True
+    if bool(re.fullmatch(r"[A-Z][A-Za-z0-9_.+#-]{2,31}", text)):
+        return _category_suggests_compact_tool_list(category_label)
+    return False
+
+
+def clean_skill_item_residues(
+    items: Sequence[Any],
+    *,
+    other_items: Sequence[Any] = (),
+    category_label: Any = "",
+) -> List[str]:
+    """Remove glued skill residues without inventing replacement labels.
+
+    Typical LLM failure: ``"ToolX Data pipeline"`` when ``"Data pipeline"``
+    already exists elsewhere. In that case the compact leading label is the
+    useful signal and the repeated tail is residue.
+    """
+
+    raw_items = [str(item or "").strip() for item in items or [] if str(item or "").strip()]
+    if not raw_items:
+        return []
+
+    global_norms = {
+        _normalize_for_match(item)
+        for item in list(other_items or []) + raw_items
+        if _normalize_for_match(item)
+    }
+    category_norm = _normalize_for_match(category_label)
+    cleaned: List[str] = []
+    for item in raw_items:
+        text = re.sub(r"\s+", " ", item).strip(" ,;:-")
+        if not text:
+            continue
+        parts = text.split()
+        text_norm = _normalize_for_match(text)
+        replacement = text
+        if len(parts) >= 3:
+            first = parts[0].strip(" ,;:-")
+            tail_norm = _normalize_for_match(" ".join(parts[1:]))
+            if (
+                _looks_like_compact_residue_head(
+                    first,
+                    category_label=category_label,
+                )
+                and tail_norm
+            ):
+                residue_seen = False
+                for other_norm in global_norms:
+                    if (
+                        not other_norm
+                        or other_norm == text_norm
+                        or len(other_norm.split()) < 2
+                    ):
+                        continue
+                    if other_norm in tail_norm:
+                        residue_seen = True
+                        break
+                if not residue_seen and category_norm:
+                    category_tokens = {
+                        token
+                        for token in category_norm.split()
+                        if len(token) >= 2 and token not in SKILL_GLUE_WORDS
+                    }
+                    tail_tokens = set(tail_norm.split())
+                    residue_seen = bool(category_tokens and tail_tokens <= category_tokens)
+                if residue_seen:
+                    replacement = first
+        cleaned.append(replacement)
+    return _dedup_preserve(cleaned)
 
 
 def _token_overlap(left: str, right: str) -> float:
@@ -3315,6 +3591,84 @@ def _rewrite_past_role_tense(
                 highlights[index] = joined + trailing
 
 
+_FR_CURRENT_THIRD_PERSON_MAP: Dict[str, str] = {
+    "concois": "con\u00e7oit",
+    "dois": "doit",
+    "fais": "fait",
+    "mets": "met",
+    "peux": "peut",
+    "prends": "prend",
+    "suis": "suit",
+    "vais": "va",
+    "vois": "voit",
+}
+
+
+def _rewrite_current_role_present_tense(
+    cv_json: Dict[str, Any],
+    *,
+    language_code: str,
+) -> None:
+    """Repair obvious first-person heads in current-role French bullets."""
+    if not isinstance(cv_json, dict):
+        return
+    if str(language_code or "").strip().lower().startswith("en"):
+        return
+
+    for entry in cv_json.get("experience") or []:
+        if not isinstance(entry, dict):
+            continue
+        support = _derive_profile_date_support(
+            entry.get("start_date") or "",
+            entry.get("end_date") or "",
+        )
+        if not bool(support.get("is_current")):
+            continue
+        highlights = entry.get("highlights")
+        if not isinstance(highlights, list):
+            continue
+        for index, bullet in enumerate(highlights):
+            if not isinstance(bullet, str):
+                continue
+            raw = bullet.strip()
+            if not raw:
+                continue
+            parts = _CLAUSE_SPLIT_PATTERN.split(raw)
+            rewritten_parts: List[str] = []
+            changed = False
+            for piece_idx, piece in enumerate(parts):
+                if piece_idx % 2 != 0:
+                    rewritten_parts.append(piece)
+                    continue
+                updated = _rewrite_clause_head(
+                    piece,
+                    _FR_CURRENT_THIRD_PERSON_MAP,
+                    "fr",
+                )
+                if updated == piece:
+                    # _rewrite_clause_head checks exact lowercase before the
+                    # accent-stripped fallback. Keep an explicit stripped path
+                    # for present-tense repair too.
+                    raw_piece = piece.lstrip()
+                    leading_ws = piece[: len(piece) - len(raw_piece)]
+                    match = _VERB_HEAD_PATTERN.match(raw_piece)
+                    if match:
+                        head = match.group(0)
+                        replacement = _FR_CURRENT_THIRD_PERSON_MAP.get(
+                            _strip_verb_accents(head.lower())
+                        )
+                        if replacement:
+                            if head[0].isupper():
+                                replacement = replacement[0].upper() + replacement[1:]
+                            updated = leading_ws + replacement + raw_piece[len(head):]
+                if updated != piece:
+                    changed = True
+                rewritten_parts.append(updated)
+            if changed:
+                trailing = bullet[len(bullet.rstrip()):]
+                highlights[index] = "".join(rewritten_parts) + trailing
+
+
 _CLIPPED_TRAILING_STOPWORDS_POSTPROCESS = {
     "a", "afin", "au", "aux", "avec", "chez", "dans", "de", "des", "du",
     "en", "entre", "et", "la", "le", "les", "ou", "par", "pour", "sans",
@@ -3417,6 +3771,89 @@ def _normalize_bullet_punctuation_all(cv_json: Dict[str, Any]) -> None:
             for idx, bullet in enumerate(highlights):
                 if isinstance(bullet, str):
                     highlights[idx] = _normalize_bullet_punctuation(bullet)
+
+
+def _normalize_punctuation_spacing_text(value: Any, *, language_code: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    is_fr = str(language_code or "").strip().lower().startswith("fr")
+    text = re.sub(r"\s+([,.])", r"\1", text)
+    if is_fr:
+        text = re.sub(r"\s*([;:!?])", r" \1", text)
+    else:
+        text = re.sub(r"\s+([;:!?])", r"\1", text)
+    text = re.sub(r"([,.;:!?])(?=\S)", r"\1 ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _normalize_cv_punctuation_all(
+    cv_json: Dict[str, Any],
+    *,
+    language_code: str,
+) -> None:
+    if not isinstance(cv_json, dict):
+        return
+
+    def fix_field(container: Dict[str, Any], key: str) -> None:
+        value = container.get(key)
+        if isinstance(value, str) and value.strip():
+            container[key] = _normalize_punctuation_spacing_text(
+                value,
+                language_code=language_code,
+            )
+
+    for key in ("summary",):
+        fix_field(cv_json, key)
+
+    for block in cv_json.get("skills") or []:
+        if not isinstance(block, dict):
+            continue
+        fix_field(block, "category")
+        items = block.get("items")
+        if isinstance(items, list):
+            block["items"] = [
+                _normalize_punctuation_spacing_text(
+                    item,
+                    language_code=language_code,
+                )
+                if isinstance(item, str)
+                else item
+                for item in items
+            ]
+
+    for section_key in ("experience", "education", "projects", "certifications"):
+        section = cv_json.get(section_key)
+        if not isinstance(section, list):
+            continue
+        for entry in section:
+            if not isinstance(entry, dict):
+                continue
+            for key in (
+                "title",
+                "company",
+                "summary",
+                "degree",
+                "school",
+                "field_of_study",
+                "name",
+                "description",
+                "technologies",
+                "organization",
+            ):
+                fix_field(entry, key)
+            for list_key in ("highlights", "details"):
+                values = entry.get(list_key)
+                if isinstance(values, list):
+                    entry[list_key] = [
+                        _normalize_punctuation_spacing_text(
+                            item,
+                            language_code=language_code,
+                        )
+                        if isinstance(item, str)
+                        else item
+                        for item in values
+                    ]
 
 
 def _repair_clipped_bullets(cv_json: Dict[str, Any]) -> None:
@@ -3603,6 +4040,8 @@ def coerce_generated_cv_payload(
     _normalize_experience_date_formats(merged, language_code=language_code)
     # Rewrite present-tense verb heads to past forms for non-current roles.
     _rewrite_past_role_tense(merged, language_code=language_code)
+    # Repair obvious first-person heads in current-role French bullets.
+    _rewrite_current_role_present_tense(merged, language_code=language_code)
     # Trim or drop clipped bullets (ellipsis endings or trailing stopwords).
     _repair_clipped_bullets(merged)
     # Final style pass: capitalise first letter after inner dash separators.
@@ -3720,6 +4159,10 @@ def coerce_generated_cv_payload(
         except Exception as exc:
             logger.warning("Final CV candidate source diagnostic failed: %s", exc)
 
+    _rewrite_past_role_tense(merged, language_code=language_code)
+    _rewrite_current_role_present_tense(merged, language_code=language_code)
+    _normalize_bullet_punctuation_all(merged)
+    _normalize_cv_punctuation_all(merged, language_code=language_code)
     _dedup_experience_sections_in_place(merged)
     _enforce_single_page_budget(merged)
     return merged

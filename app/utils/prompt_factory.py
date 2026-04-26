@@ -150,15 +150,25 @@ OUTPUT RULES:
 - Never use placeholders (no [A COMPLETER], [TO COMPLETE], or bracketed tokens).
 - In field text, never use decorative special characters like • « » ^ {{ }} [ ].
 - Skills items must be short noun phrases (no sentences, no "candidate should/must").
+- Skills and skill categories must be driven by JOB_TITLE and requirement-heavy
+  JOB_OFFER_TEXT sections for any profession/domain. Do not rely on a fixed
+  tech, QA, or company-specific taxonomy.
 - ats_keywords must be a list of strings from the job offer or OFFER_KEYWORDS_JSON.
 - If OFFER_KEYWORDS_JSON is present, prioritize it for relevance and ATS terms.
 - If OFFER_KEYWORDS_JSON.keyword_families or lexical_field is present, reuse that domain vocabulary in summary/skills/experience when factual.
 - Keyword coverage target: include at least 8 high-signal offer terms across summary/skills/experience when facts support them.
   Exact offer terms are preferred; professional synonyms/acronyms are allowed when they stay factual.
+- When rewriting facts into new sentences, preserve the high-signal keywords,
+  named tools, and role vocabulary that carry the alignment signal. Do not
+  paraphrase away terms that are important for ATS or recruiter matching.
 - render_hints.notes can be freeform guidance for rendering.
 - render_hints.section_order/emphasis/tone are structured hints.
 - Do not include review or instruction text in any field (no critique, no "this CV needs", no "should").
 - Summary must be candidate-focused (role, strengths, impact). Do not describe employer mission/history.
+- Summary must mention COMPANY at least once when COMPANY is provided, using a
+  natural positioning sentence that explains candidate relevance to the target
+  role. Avoid formulaic keyword dumps such as "Profil pertinent pour COMPANY
+  grace a A, B, C" or "Atouts pertinents pour COMPANY : A, B, C".
 - Offer-only vocabulary not grounded in PROFILE_JSON may appear only in a short
   natural closing positioning sentence of the summary. Do not present pure
   offer-only terms as proven skills, projects, or experience facts.
@@ -176,13 +186,28 @@ OUTPUT RULES:
   * highlights: 2-4 short plain strings; each must start with a strong action verb,
     express one main idea, and include at least one term from PRIORITY_OFFER_TERMS
     or JOB_OFFER_TEXT when factual.
+  * Target 35 words or fewer per highlight; never exceed 40 words. If a
+    supported idea is too dense, reformulate it into a shorter single coherent
+    highlight instead of splitting it mechanically or packing clauses with
+    semicolons.
+  * Author each highlight as a new coherent sentence from the supported source
+    facts. When several source facts belong together, synthesize them into one
+    recruiter bullet instead of concatenating copied fragments.
+  * Preserve the strongest profile-backed or offer-matched keywords from the
+    source facts inside the new sentence, especially named tools, methods,
+    systems, certifications, and role-specific vocabulary. Integrate them
+    naturally; do not create a keyword list.
+  * Do not join multiple source sentences with semicolons or commas just to fit
+    the page. The bullet must read as one deliberately written sentence.
   * highlights must read like recruiter bullets, not topic labels: reject noun fragments such as
     "Validation fonctionnelle...", "Testing of...", or "Conception, execution et suivi...".
   * When source evidence supports it, shape each highlight as: action verb + what was done + grounded effect/operational outcome.
   * If exact metrics are absent but the effect is implicit in PROFILE_JSON, you may express a qualitative impact
     (e.g. smoother releases, reduced manual effort, clearer reporting, stronger test coverage) without inventing numbers.
   * highlights must not start with '-', '*', digits, or decorative bullet glyphs.
-  * If source description is a long paragraph or dash-separated list, condense it into these 2-4 ATS-safe highlights.
+  * If source description is a long paragraph or dash-separated list, write 2-4
+    new ATS-safe highlights that preserve the strongest grounded evidence for
+    JOB_TITLE and JOB_OFFER_TEXT.
 - If PROFILE_JSON text is in another language, translate it to LANGUAGE (keep proper nouns, tools, company names).
 - Do not leave mixed-language clauses such as English headings with French verbs or nouns in the same sentence.
 - Keep output compact:
@@ -201,6 +226,8 @@ OUTPUT RULES:
 - Writing quality — apply to all free-text fields:
   * Never use first-person pronouns (je, moi, mon, nous, notre, j'); start every bullet with a conjugated action verb or an infinitive.
   * Use present tense for the current or ongoing role; use past tense (passé composé or imparfait) for all former roles.
+  * In French current-role bullets, write third-person implicit forms such as
+    "suit" rather than first-person forms such as "suis".
   * Avoid cliché adjectives and filler intensifiers: do not use passionné, dynamique, motivé, polyvalent, rigoureux, très, vraiment, extrêmement, or similar; replace with concrete evidence instead.
   * Vary action verbs — do not repeat the same verb more than twice across all highlights and summary combined.
   * Use consistent punctuation style: if bullets end without a period, apply that to all; never mix styles.
@@ -211,6 +238,9 @@ OUTPUT RULES:
   * If exact metrics are absent but PROFILE_JSON makes the operational effect clear, you may express a qualitative impact without inventing numbers.
   * Include quantitative evidence when available: team size, percentages, user count, volumes, time saved, revenue figures.
   * Mention the target company (COMPANY) at least once — preferably in a short natural positioning sentence in the summary — to reinforce personalization; do not invent facts.
+  * Company personalization must stay generic and reusable: never hardcode one
+    employer, one sector, or one profile. Use COMPANY, JOB_TITLE, and offer
+    evidence as variables.
   * Do not insert pure offer-only terms into skills/highlights as if they were already proven by PROFILE_JSON. Pure offer-only targeting language belongs in the summary positioning sentence only.
 """.strip()
 
@@ -340,6 +370,9 @@ OUTPUT RULES:
 - Writing quality:
   * Never use first-person pronouns; start every bullet with a strong action verb.
   * Use present tense for current/ongoing role; past tense for former roles.
+  * Target 35 words or fewer per highlight; never exceed 40 words. Reformulate
+    dense bullets into shorter coherent bullets instead of splitting them
+    mechanically.
   * Avoid cliche adjectives: passionné, dynamique, motivé, polyvalent, rigoureux, très, vraiment.
   * Vary action verbs across all highlights and summary.
   * Reject noun-fragment bullets such as "Validation fonctionnelle..." or "Testing of..." without a verb; rewrite them into action-led recruiter bullets.

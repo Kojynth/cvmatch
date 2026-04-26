@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.utils.cv_postprocessing import (
+    clean_skill_item_residues,
     coerce_generated_cv_payload,
     enforce_cv_offer_adaptation,
 )
@@ -191,3 +192,31 @@ def test_summary_focus_sentence_prefers_profile_backed_aligned_skills() -> None:
     lowered = summary.lower()
     assert "sql" in lowered
     assert "python" in lowered
+
+
+def test_skill_residue_cleanup_preserves_non_skill_qualifier_heads() -> None:
+    cleaned = clean_skill_item_residues(
+        ["Senior Data Analysis", "Predictive Data Analysis", "Data Analysis"],
+        other_items=[
+            "Senior Data Analysis",
+            "Predictive Data Analysis",
+            "Data Analysis",
+        ],
+        category_label="Technical skills",
+    )
+
+    assert "Senior Data Analysis" in cleaned
+    assert "Predictive Data Analysis" in cleaned
+    assert "Senior" not in cleaned
+    assert "Predictive" not in cleaned
+
+
+def test_skill_residue_cleanup_keeps_generic_tool_context_repair() -> None:
+    cleaned = clean_skill_item_residues(
+        ["Python", "Playwright", "Agilitest Tests API"],
+        other_items=["Python", "Playwright", "Tests API"],
+        category_label="Automatisation & scripting",
+    )
+
+    assert "Agilitest" in cleaned
+    assert "Agilitest Tests API" not in cleaned

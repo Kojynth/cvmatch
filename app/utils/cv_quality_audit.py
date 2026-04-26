@@ -105,6 +105,10 @@ _INLINE_PSEUDO_BULLET_PATTERN = re.compile(
 
 _WORD_PATTERN = re.compile(r"\b\S+\b", re.UNICODE)
 _ACTION_HEAD_PATTERN = re.compile(r"^[A-Za-zÀ-ÿ']+")
+_CLAUSE_SPLIT_PATTERN = re.compile(
+    r"\s*(?:,|;|\bet\b|\band\b|\bpuis\b|\bthen\b)\s+",
+    re.IGNORECASE,
+)
 
 _WEAK_VERB_HEADS = {
     "fr": frozenset({
@@ -121,6 +125,18 @@ _WEAK_VERB_HEADS = {
         "participated",
         "worked",
     }),
+}
+
+_FR_CURRENT_FIRST_PERSON_HEADS = {
+    "concois",
+    "dois",
+    "fais",
+    "mets",
+    "peux",
+    "prends",
+    "suis",
+    "vais",
+    "vois",
 }
 
 _FORMULAIC_SUMMARY_OPENERS = (
@@ -423,6 +439,14 @@ def _bullet_has_tense_or_style_issue(text: Any, *, is_current: bool, target_lang
     first_token = match.group(0).lower()
 
     if lang == "fr":
+        if is_current:
+            for clause in _CLAUSE_SPLIT_PATTERN.split(raw):
+                clause_head = _ACTION_HEAD_PATTERN.match(clause.lstrip())
+                if not clause_head:
+                    continue
+                normalized_head = _strip_accents(clause_head.group(0).lower())
+                if normalized_head in _FR_CURRENT_FIRST_PERSON_HEADS:
+                    return True
         present_heads = {
             "accompagne",
             "ameliore",

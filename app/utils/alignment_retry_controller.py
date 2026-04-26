@@ -360,7 +360,7 @@ def build_alignment_retry_guidance(
             or quality_audit.get("ats_text_issues")
         ):
             quality_rewrite.append(
-                "Rewrite every experience into 2-4 concise ATS-safe highlights using plain text only, with one idea per line and no inline pseudo-bullet paragraphs."
+                "Rewrite every experience into 2-4 concise ATS-safe highlights using plain text only, with one idea per line. Target 35 words or fewer and never exceed 40 words; reformulate dense bullets instead of splitting them mechanically."
             )
         if quality_audit.get("summary_length_issues"):
             quality_rewrite.append(

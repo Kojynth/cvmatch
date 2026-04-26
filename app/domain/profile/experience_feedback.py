@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from typing import Any, Dict, List
 
 
@@ -199,6 +200,41 @@ def _has_date_order_issue(start_date: Any, end_date: Any) -> bool:
     return start_norm > end_norm
 
 
+def _parse_local_date_month(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+
+    iso_match = re.fullmatch(r"(\d{4})-(\d{1,2})", raw)
+    if iso_match:
+        year, month = iso_match.groups()
+        month_int = int(month)
+        if 1 <= month_int <= 12:
+            return f"{year}-{month_int:02d}"
+        return ""
+
+    mm_yyyy_match = re.fullmatch(r"(\d{1,2})/(\d{4})", raw)
+    if mm_yyyy_match:
+        month, year = mm_yyyy_match.groups()
+        month_int = int(month)
+        if 1 <= month_int <= 12:
+            return f"{year}-{month_int:02d}"
+        return ""
+
+    dd_mm_yyyy_match = re.fullmatch(r"\d{1,2}/(\d{1,2})/(\d{4})", raw)
+    if dd_mm_yyyy_match:
+        month, year = dd_mm_yyyy_match.groups()
+        month_int = int(month)
+        if 1 <= month_int <= 12:
+            return f"{year}-{month_int:02d}"
+        return ""
+
+    if re.fullmatch(r"\d{4}", raw):
+        return f"{raw}-01"
+
+    return ""
+
+
 def _build_editorial_feedback(description: str, *, language_code: str = "fr") -> str:
     text = str(description or "").strip()
     if not text:
@@ -273,22 +309,66 @@ def _is_past_role(end_date: Any) -> bool:
     token = str(end_date or "").strip().lower()
     if not token:
         return False
-    return token not in _CURRENT_ROLE_END_TOKENS
+    if token in _CURRENT_ROLE_END_TOKENS:
+        return False
+    end_month = _normalize_end_date_month(end_date)
+    if end_month:
+        return end_month < date.today().strftime("%Y-%m")
+    return True
 
 
 def _is_current_role(end_date: Any) -> bool:
     token = str(end_date or "").strip().lower()
-    return bool(token and token in _CURRENT_ROLE_END_TOKENS)
+    if not token:
+        return False
+    if token in _CURRENT_ROLE_END_TOKENS:
+        return True
+    end_month = _normalize_end_date_month(end_date)
+    if end_month:
+        return end_month >= date.today().strftime("%Y-%m")
+    return False
+
+
+def _normalize_end_date_month(end_date: Any) -> str:
+    raw = str(end_date or "").strip()
+    if not raw:
+        return ""
+    local_month = _parse_local_date_month(raw)
+    if local_month:
+        return local_month
+    try:
+        from ...rules.date_normalize import _normalize_single_date, normalize_present_token
+    except Exception:
+        return ""
+
+    if str(normalize_present_token(raw) or "").strip().upper() == "PRESENT":
+        return date.today().strftime("%Y-%m")
+    normalized = str(_normalize_single_date(raw) or "").strip()
+    normalized_month = _parse_local_date_month(normalized)
+    if normalized_month:
+        return normalized_month
+    return ""
+
+
+def _has_missing_end_date(end_date: Any) -> bool:
+    return not str(end_date or "").strip()
 
 
 def _build_tense_style_feedback(
     *,
     is_past_role: bool,
     is_current_role: bool,
+    has_missing_end_date: bool,
     language_code: str,
 ) -> str:
     language = _normalize_language_code(language_code)
     if language == "en":
+        if has_missing_end_date:
+            return (
+                "Verb tense: end date missing. If this role is current, use "
+                "present-tense action verbs; if it is finished, add an end date "
+                "and use past-tense action verbs."
+            )
         if is_current_role:
             return (
                 "Verb tense: current role, write actions in present tense "
@@ -301,15 +381,44 @@ def _build_tense_style_feedback(
             )
         return ""
 
+    if language == "ja":
+        if has_missing_end_date:
+            return (
+                "Temps des verbes : date de fin manquante. Pour une sortie "
+                "japonaise, utilisez une formulation en cours/non passée si le "
+                "poste est actuel ; sinon ajoutez une date de fin et utilisez "
+                "une formulation passée/accomplie."
+            )
+        if is_current_role:
+            return (
+                "Temps des verbes : poste en cours. Pour une sortie japonaise, "
+                "utilisez une formulation en cours/non passée et conservez des "
+                "actions courtes."
+            )
+        if is_past_role:
+            return (
+                "Temps des verbes : poste terminé. Pour une sortie japonaise, "
+                "utilisez une formulation passée/accomplie et conservez des "
+                "actions courtes."
+            )
+        return ""
+
+    if has_missing_end_date:
+        return (
+            "Temps des verbes : date de fin manquante. Si le poste est en cours, "
+            "indiquez Présent/En cours et rédigez au présent ; s'il est terminé, "
+            "ajoutez une date de fin et rédigez au passé composé."
+        )
     if is_current_role:
         return (
             "Temps des verbes : poste en cours, rédigez les actions au présent "
-            "(ex. « Analyse », « Structure », « Automatise »), sans infinitif."
+            "(ex. « Analyse », « Structure », « Suit »). Pour les anciens postes, "
+            "utilisez le passé composé."
         )
     if is_past_role:
         return (
             "Temps des verbes : poste terminé, rédigez les actions au passé "
-            "(ex. « Analysé », « Structuré », « Automatisé »), sans infinitif."
+            "composé (ex. « A analysé », « A structuré », « A automatisé »)."
         )
     return ""
 
@@ -352,6 +461,7 @@ def build_experience_editor_feedback(
     description = str(entry.get("description") or "")
     is_past_role = _is_past_role(entry.get("end_date"))
     is_current_role = _is_current_role(entry.get("end_date"))
+    has_missing_end_date = _has_missing_end_date(entry.get("end_date"))
 
     editorial = _build_editorial_feedback(description, language_code=language_code)
     quality = _build_quality_feedback(
@@ -370,6 +480,7 @@ def build_experience_editor_feedback(
         "tense_feedback": _build_tense_style_feedback(
             is_past_role=is_past_role,
             is_current_role=is_current_role,
+            has_missing_end_date=has_missing_end_date,
             language_code=language_code,
         ),
         "company_feedback": _build_company_feedback(

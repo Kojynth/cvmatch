@@ -26,6 +26,14 @@ _RENDER_POSITIONING_PATTERNS = {
             r"^\s*Profil\s+pertinent(?:\s+pour\s+(?P<company>.+?))?\s+gr(?:a|â)ce\s+[aà]\s+(?P<terms>.+?)\.\s*$",
             re.IGNORECASE,
         ),
+        re.compile(
+            r"^\s*Pour\s+(?P<company>.+?),\s+ce\s+profil\s+(?:met\s+en\s+avant\s+un\s+positionnement\s+pertinent\s+autour\s+de|cible\s+le\s+poste\s+de\s+.+?\s+avec\s+un\s+positionnement\s+autour\s+de)\s+(?P<terms>.+?)\.\s*$",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"^\s*Ce\s+profil\s+met\s+en\s+avant\s+un\s+positionnement\s+pertinent\s+autour\s+de\s+(?P<terms>.+?)\.\s*$",
+            re.IGNORECASE,
+        ),
     ),
     "en": (
         re.compile(
@@ -34,6 +42,14 @@ _RENDER_POSITIONING_PATTERNS = {
         ),
         re.compile(
             r"^\s*Profile\s+aligned(?:\s+with\s+(?P<company>.+?))?\s+through\s+(?P<terms>.+?)\.\s*$",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"^\s*For\s+(?P<company>.+?),\s+this\s+profile\s+(?:highlights\s+relevant\s+positioning\s+around|targets\s+the\s+.+?\s+role\s+with\s+positioning\s+around)\s+(?P<terms>.+?)\.\s*$",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"^\s*This\s+profile\s+highlights\s+relevant\s+positioning\s+around\s+(?P<terms>.+?)\.\s*$",
             re.IGNORECASE,
         ),
     ),
@@ -145,11 +161,20 @@ def _build_render_positioning_sentence(
     is_en = str(language_code or "").lower().startswith("en")
     if is_en:
         if company_name:
-            return f"Profile aligned with {company_name} through {cleaned_terms}."
-        return f"Profile aligned through {cleaned_terms}."
+            return (
+                f"For {company_name}, this profile highlights relevant "
+                f"positioning around {cleaned_terms}."
+            )
+        return f"This profile highlights relevant positioning around {cleaned_terms}."
     if company_name:
-        return f"Profil pertinent pour {company_name} grâce à {cleaned_terms}."
-    return f"Profil pertinent grâce à {cleaned_terms}."
+        return (
+            f"Pour {company_name}, ce profil met en avant un positionnement "
+            f"pertinent autour de {cleaned_terms}."
+        )
+    return (
+        f"Ce profil met en avant un positionnement pertinent autour de "
+        f"{cleaned_terms}."
+    )
 
 
 def _extract_render_positioning_sentence(value: Any, *, language_code: str) -> str:

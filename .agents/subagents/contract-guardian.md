@@ -65,15 +65,18 @@ history, and `mass_apply`.
   terms may remain, but must not evict better grounded aligned signal
 - when summary assembly is touched, verify the final rendered summary is built
   after retained blocks are selected, avoids repeating signals already visible
-  in experience bullets, and keeps the natural company-targeting sentence
-  present
+  in experience bullets, and keeps `{company}` visible in a natural
+  `{job_title}` relevance sentence instead of a formulaic keyword dump
 - when experience rendering/selection is touched, verify company-description
   prose is treated as weak context only and does not outrank stronger
   action/impact sentences aligned with the offer; also verify the anchor
   experience keeps the richest detail budget before lower-priority roles and
   that profile-derived source extraction keeps enough late candidate sentences
   before ranking instead of applying an early 4-6 sentence cap; dense evidence
-  should be fused into 2-4 coherent bullets instead of dropped
+  should be rewritten by the LLM into 2-4 new coherent bullets instead of
+  dropped, copied, or mechanically joined by the renderer; high-signal
+  keywords, named tools, and role vocabulary that carry alignment must survive
+  the rewrite naturally
 - when profile detail feedback / "Visualiser les détails" is touched, verify
   tense guidance is derived from role dates: present-tense action verbs for
   current roles, past-tense action verbs for ended roles, without
@@ -86,7 +89,9 @@ history, and `mass_apply`.
   skill-shaped, source-backed, and offer-aligned; soft skills must stay in a
   dedicated `Savoir-être` / `Soft skills` section only when not already proved
   inside experience bullets; strongly targeted offers may use compact grouped
-  chips when that improves hierarchy/proof
+  chips when that improves hierarchy/proof, but grouping must be driven by
+  `{job_title}` and requirement-heavy offer evidence for any profession/sector
+  in the generated CV JSON, not by renderer-side hardcoded categories
 - when offer-only targeting is touched, verify pure offer-only terms stay in
   the natural positioning sentence unless profile evidence supports a
   coherent implicit inference elsewhere

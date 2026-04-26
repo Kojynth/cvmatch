@@ -887,10 +887,27 @@ class FinalCVPhase:
                     _repair_clipped_bullets,
                     _dedup_fuzzy_highlights,
                     _dedup_experience_entries,
+                    _normalize_bullet_punctuation_all,
+                    _normalize_cv_punctuation_all,
+                    _rewrite_current_role_present_tense,
+                    _rewrite_past_role_tense,
                 )
 
                 if isinstance(state.cv_json_final, dict):
+                    _rewrite_past_role_tense(
+                        state.cv_json_final,
+                        language_code=state.language_code,
+                    )
+                    _rewrite_current_role_present_tense(
+                        state.cv_json_final,
+                        language_code=state.language_code,
+                    )
                     _repair_clipped_bullets(state.cv_json_final)
+                    _normalize_bullet_punctuation_all(state.cv_json_final)
+                    _normalize_cv_punctuation_all(
+                        state.cv_json_final,
+                        language_code=state.language_code,
+                    )
                     for section in ("experience", "experiences"):
                         entries = state.cv_json_final.get(section)
                         if not isinstance(entries, list):
