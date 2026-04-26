@@ -11,7 +11,13 @@ import tempfile
 import unicodedata
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
-from jinja2 import Environment, FileSystemLoader
+
+try:
+    from jinja2 import Environment, FileSystemLoader
+except ImportError:  # pragma: no cover - optional in lightweight contract CI
+    Environment = None
+    FileSystemLoader = None
+
 from loguru import logger
 
 # WeasyPrint sera importé seulement quand nécessaire pour éviter les messages d'erreur multiples
@@ -157,6 +163,8 @@ PDF_ONE_PAGE_FIT_CSS = """
 def _check_weasyprint():
     """Vérifie la disponibilité de WeasyPrint seulement quand nécessaire."""
     global WEASYPRINT_AVAILABLE
+    if Environment is None or FileSystemLoader is None:
+        return False
     if WEASYPRINT_AVAILABLE is None:
         try:
             from weasyprint import HTML, CSS
@@ -185,16 +193,19 @@ class ExportManager:
         self.css_dir = self.templates_dir / "css"
 
         # Configuration Jinja2
-        self.jinja_env = Environment(
-            loader=FileSystemLoader(
-                [str(self.cv_templates_dir), str(self.templates_dir)]
-            ),
-            autoescape=True,
-        )
+        self.jinja_env = None
+        if Environment is not None and FileSystemLoader is not None:
+            self.jinja_env = Environment(
+                loader=FileSystemLoader(
+                    [str(self.cv_templates_dir), str(self.templates_dir)]
+                ),
+                autoescape=True,
+            )
 
         # Ajouter des filtres personnalisés
-        self.jinja_env.filters["rjust"] = self._filter_rjust
-        self.jinja_env.filters["ljust"] = self._filter_ljust
+        if self.jinja_env is not None:
+            self.jinja_env.filters["rjust"] = self._filter_rjust
+            self.jinja_env.filters["ljust"] = self._filter_ljust
 
         # Formats supportés
         self.supported_formats = ["html"]
@@ -245,6 +256,12 @@ class ExportManager:
         self, cv_data: Dict[str, Any], template: str, is_fallback: bool = False
     ) -> str:
         """Génère le HTML du CV."""
+        if self.jinja_env is None:
+            raise RuntimeError(
+                "Jinja2 is required to render CV HTML. Install project rendering "
+                "dependencies before calling ExportManager.generate_html()."
+            )
+
         try:
             # Charger le template
             template_file = f"{template}.html"

@@ -23,7 +23,8 @@ REQUIRED_DEPENDENCIES = [
     "pandas",
     "numpy",
     "requests",
-    "loguru"
+    "loguru",
+    "jinja2",
 ]
 
 # Optional but recommended dependencies (lazy loaded now)
@@ -102,6 +103,18 @@ def load_dependency_cache() -> Dict[str, Any]:
     try:
         with open(CACHE_FILE, 'r', encoding='utf-8') as f:
             cache_data = json.load(f)
+
+        cached_results = cache_data.get('results')
+        if not isinstance(cached_results, dict):
+            return None
+        cached_critical = cached_results.get('critical')
+        cached_optional = cached_results.get('optional')
+        if not isinstance(cached_critical, dict) or not isinstance(cached_optional, dict):
+            return None
+        if any(dep not in cached_critical for dep in REQUIRED_DEPENDENCIES):
+            return None
+        if any(dep not in cached_optional for dep in OPTIONAL_DEPENDENCIES):
+            return None
         
         # Double-check validity if not using fast check
         if not FAST_CACHE_CHECK:
@@ -186,7 +199,7 @@ def _minimal_dependency_check() -> Dict[str, Any]:
     }
     
     # Only check the most critical ones
-    essential_deps = ["dateutil", "PySide6"]
+    essential_deps = ["dateutil", "PySide6", "jinja2"]
     for dep in essential_deps:
         ok, msg = check_dependency(dep)
         results["critical"][dep] = (ok, msg)
