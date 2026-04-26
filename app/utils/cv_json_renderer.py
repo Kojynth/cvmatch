@@ -23,6 +23,10 @@ _RENDER_POSITIONING_PATTERNS = {
             re.IGNORECASE,
         ),
         re.compile(
+            r"^\s*Profil\s+align[ée]?(?:\s+avec\s+(?P<company>.+?))?\s*[:\-]\s*(?P<terms>.+?)\.\s*$",
+            re.IGNORECASE,
+        ),
+        re.compile(
             r"^\s*Profil\s+pertinent(?:\s+pour\s+(?P<company>.+?))?\s+gr(?:a|â)ce\s+[aà]\s+(?P<terms>.+?)\.\s*$",
             re.IGNORECASE,
         ),
@@ -161,20 +165,11 @@ def _build_render_positioning_sentence(
     is_en = str(language_code or "").lower().startswith("en")
     if is_en:
         if company_name:
-            return (
-                f"For {company_name}, this profile highlights relevant "
-                f"positioning around {cleaned_terms}."
-            )
-        return f"This profile highlights relevant positioning around {cleaned_terms}."
+            return f"Profile aligned with {company_name}: {cleaned_terms}."
+        return f"Profile aligned with the target role: {cleaned_terms}."
     if company_name:
-        return (
-            f"Pour {company_name}, ce profil met en avant un positionnement "
-            f"pertinent autour de {cleaned_terms}."
-        )
-    return (
-        f"Ce profil met en avant un positionnement pertinent autour de "
-        f"{cleaned_terms}."
-    )
+        return f"Profil aligné avec {company_name} : {cleaned_terms}."
+    return f"Profil aligné avec le poste visé : {cleaned_terms}."
 
 
 def _extract_render_positioning_sentence(value: Any, *, language_code: str) -> str:

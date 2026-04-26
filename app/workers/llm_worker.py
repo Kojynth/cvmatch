@@ -1129,7 +1129,7 @@ def _markdown_skeleton_for_template(
     )
 
 
-from .qwen_manager import QwenManager  # noqa: F401 â€” backward-compat re-export
+from .qwen_manager import QwenManager  # noqa: F401 - backward-compat re-export
 
 try:
     from ..utils.pipeline_orchestrator import build_default_pipeline, PipelineState
@@ -2373,7 +2373,9 @@ OUTPUT RULES:
   but only as positioning/relevance, not as a claimed past responsibility.
 - When TARGET_COMPANY is provided, keep it visible in the summary, but do not
   use a formulaic keyword dump such as "Profil pertinent pour COMPANY grace a
-  A, B, C" or "Atouts pertinents pour COMPANY : A, B, C".
+  A, B, C" or "Atouts pertinents pour COMPANY : A, B, C". Prefer a short
+  relevance sentence that links PROFILE_JSON evidence to the target role's
+  concrete requirements.
 - Use TARGET_JOB_TITLE and requirement-heavy offer terms to decide what makes
   the profile relevant. Keep the rule generic for any profession or sector; do
   not hardcode one employer, one user profile, or a tech/QA-only taxonomy.
@@ -6046,7 +6048,7 @@ OUTPUT RULES:
             session.commit()
             session.refresh(application)
 
-        # Mettre Ã  jour les stats du profil via SQL direct (Ã©vite DetachedInstanceError)
+        # Mettre à jour les stats du profil via SQL direct (évite DetachedInstanceError)
         try:
             with get_session() as session:
                 from sqlmodel import text
@@ -6058,9 +6060,9 @@ OUTPUT RULES:
                     {"pid": self.profile_data.id},
                 )
                 session.commit()
-                logger.debug(f"Stats profil {self.profile_data.id} mises Ã  jour")
+                logger.debug(f"Stats profil {self.profile_data.id} mises à jour")
         except Exception as e:
-            logger.warning(f"Impossible de mettre Ã  jour les stats du profil: {e}")
+            logger.warning(f"Impossible de mettre à jour les stats du profil: {e}")
 
         return application
 
@@ -6120,11 +6122,11 @@ class CoverLetterGenerationWorker(QThread):
             progress_callback(f"💠 Initialisation du modèle {model_name}...")
             self.qwen_manager.load_model(progress_callback, allow_fallback=False)
 
-            # Ã‰tape 2: Construction du prompt
+            # Étape 2: Construction du prompt
             progress_callback("🔍 Construction du prompt pour la lettre...")
             prompt = self.build_letter_prompt()
 
-            # Ã‰tape 3: GÃ©nÃ©ration de la lettre
+            # Étape 3: Génération de la lettre
             progress_callback("💬 Génération de la lettre de motivation...")
             cover_letter = self.qwen_manager.generate_cover_letter(
                 prompt, progress_callback
@@ -6134,7 +6136,7 @@ class CoverLetterGenerationWorker(QThread):
                 self._build_cover_letter_generation_audit(cover_letter)
             )
 
-            # Ã‰tape 4: Sauvegarde
+            # Étape 4: Sauvegarde
             progress_callback("💾 Sauvegarde de la lettre...")
             application = self.save_cover_letter(
                 cover_letter,
@@ -6142,11 +6144,11 @@ class CoverLetterGenerationWorker(QThread):
                 cover_letter_review=cover_letter_review,
             )
 
-            # Ã‰tape 5: Nettoyage mÃ©moire
+            # Étape 5: Nettoyage mémoire
             progress_callback("🧹 Nettoyage mémoire...")
             self.qwen_manager.cleanup_memory()
 
-            # RÃ©sultat final
+            # Résultat final
             result = {
                 "application_id": application.id,
                 "cover_letter": cover_letter,

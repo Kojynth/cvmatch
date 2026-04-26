@@ -10,6 +10,13 @@
   - profile JSON round-trip
   - CV JSON contracts
   - history/export consistency
+  - preview/export immutability: exporting a PDF must not reload, rescale, or
+    otherwise visibly mutate the preview the user is looking at. WebEngine PDF
+    export must use a dedicated hidden `QWebEngineView` loaded with the same
+    final HTML and clean it up after success/error; do not call `setHtml`,
+    print-fit JS, or `printToPdf` on visible `cv_web_view` / `letter_web_view`
+    except as an explicit fallback. Regression coverage:
+    `tests/contracts/test_template_preview_pdf_export_contract.py`
   - deterministic generation fallback
   - PII-safe logging
   - one-page CV output via prioritized content -> HTML render -> measured

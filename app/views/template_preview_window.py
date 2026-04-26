@@ -876,6 +876,7 @@ class TemplatePreviewWindow(QMainWindow):
         self._pending_pdf_html = None
         self._pdf_export_method = None
         self._pdf_web_view = None
+        self._pdf_web_view_owned = False
         self._last_export_kind = None
         self._generation_audit_cache = self._resolve_generation_audit()
         
@@ -967,9 +968,9 @@ class TemplatePreviewWindow(QMainWindow):
         setattr(self, attr_name, None)
 
     def _release_preview_resources(self) -> None:
+        self._cleanup_pdf_export_view()
         self._dispose_web_view("cv_web_view")
         self._dispose_web_view("letter_web_view")
-        self._dispose_web_view("_pdf_web_view")
         self.last_rendered_html = ""
         self.last_letter_rendered_html = ""
         self._pending_pdf_html = None
@@ -2216,6 +2217,31 @@ class TemplatePreviewWindow(QMainWindow):
             return False
         return bool(support.get("pdf_available"))
 
+    def _cleanup_pdf_export_view(self) -> None:
+        web_view = self._pdf_web_view
+        owned = bool(getattr(self, "_pdf_web_view_owned", False))
+        self._pdf_web_view = None
+        self._pdf_web_view_owned = False
+        if not owned or web_view is None:
+            return
+        if web_view in (
+            getattr(self, "cv_web_view", None),
+            getattr(self, "letter_web_view", None),
+        ):
+            return
+        try:
+            web_view.stop()
+        except Exception:
+            pass
+        try:
+            web_view.setHtml("<html><body></body></html>", baseUrl=QUrl("about:blank"))
+        except Exception:
+            pass
+        try:
+            web_view.deleteLater()
+        except Exception:
+            pass
+
     def _load_html_for_pdf(self, html_with_css: str, web_view) -> None:
         templates_dir = Path(__file__).parent.parent.parent / "templates"
         base_url = f"file:///{str(templates_dir).replace(chr(92), '/')}/"
@@ -2249,8 +2275,29 @@ class TemplatePreviewWindow(QMainWindow):
 
     def _start_webengine_pdf_export(self, pdf_output_path: str, html_with_css: str, web_view) -> None:
         self._pdf_export_method = "webengine"
-        self._pdf_web_view = web_view
-        page = web_view.page()
+        self._cleanup_pdf_export_view()
+        export_web_view = web_view
+        self._pdf_web_view_owned = False
+
+        if html_with_css:
+            try:
+                export_web_view = QWebEngineView(self)
+                export_web_view.hide()
+                export_web_view.loadFinished.connect(self._on_preview_loaded)
+                page = export_web_view.page()
+                if hasattr(page, "pdfPrintingFinished"):
+                    page.pdfPrintingFinished.connect(self._on_pdf_print_finished)
+                self._pdf_web_view_owned = True
+            except Exception as exc:
+                logger.warning(
+                    "Vue WebEngine dediee a l'export indisponible, "
+                    f"utilisation de l'aperçu visible: {exc}"
+                )
+                export_web_view = web_view
+                self._pdf_web_view_owned = False
+
+        self._pdf_web_view = export_web_view
+        page = export_web_view.page()
         if not hasattr(page, "pdfPrintingFinished"):
             self.on_export_error("Export PDF via WebEngine non supporte. Installez WeasyPrint.")
             return
@@ -2260,12 +2307,12 @@ class TemplatePreviewWindow(QMainWindow):
             "Export PDF via la previsualisation..."
         )
         if html_with_css:
-            self._load_html_for_pdf(html_with_css, web_view)
+            self._load_html_for_pdf(html_with_css, export_web_view)
         else:
-            self._set_preview_loaded(web_view, False)
+            self._set_preview_loaded(export_web_view, False)
             self.load_template_preview()
 
-        if self._is_preview_loaded(web_view):
+        if self._is_preview_loaded(export_web_view):
             self._print_pdf_with_webengine()
 
     def _print_pdf_with_webengine(self) -> None:
@@ -2295,13 +2342,6 @@ class TemplatePreviewWindow(QMainWindow):
         sender = self.sender()
         if sender is None:
             return
-        if sender is self.cv_web_view:
-            self._cv_preview_loaded = bool(ok)
-        elif sender is self.letter_web_view:
-            self._letter_preview_loaded = bool(ok)
-        else:
-            return
-
         if self._pdf_export_method == "webengine" and self._pending_pdf_path and sender is self._pdf_web_view:
             if not ok:
                 self.on_export_error(
@@ -2309,6 +2349,13 @@ class TemplatePreviewWindow(QMainWindow):
                 )
                 return
             self._print_pdf_with_webengine()
+            return
+        if sender is self.cv_web_view:
+            self._cv_preview_loaded = bool(ok)
+        elif sender is self.letter_web_view:
+            self._letter_preview_loaded = bool(ok)
+        else:
+            return
 
     def _on_pdf_print_finished(self, file_path: str, success: bool) -> None:
         if self._pdf_export_method != "webengine":
@@ -2443,7 +2490,7 @@ class TemplatePreviewWindow(QMainWindow):
         self._pdf_export_method = None
         self._pending_pdf_path = None
         self._pending_pdf_html = None
-        self._pdf_web_view = None
+        self._cleanup_pdf_export_view()
 
         export_kind = self._last_export_kind or "cv"
         self._last_export_kind = None
@@ -2496,7 +2543,7 @@ class TemplatePreviewWindow(QMainWindow):
         self._pdf_export_method = None
         self._pending_pdf_path = None
         self._pending_pdf_html = None
-        self._pdf_web_view = None
+        self._cleanup_pdf_export_view()
         self._last_export_kind = None
         self._update_export_state()
 

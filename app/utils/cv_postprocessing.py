@@ -2819,6 +2819,7 @@ def _rebuild_skills_section_from_profile(
             build_skill_blocks_from_profile,
             skills_section_low_signal,
         )
+        from .cv_skill_evidence import should_keep_skill_term
     except Exception:
         return
 
@@ -2863,7 +2864,7 @@ def _rebuild_skills_section_from_profile(
     }
     seen: set[str] = set()
 
-    def append_block(block: Any) -> None:
+    def append_block(block: Any, *, require_profile_support: bool = False) -> None:
         if not isinstance(block, dict):
             return
         category = str(block.get("category") or "").strip()
@@ -2881,13 +2882,19 @@ def _rebuild_skills_section_from_profile(
             key = _normalize_for_match(name)
             if not name or not key or key in seen:
                 continue
+            if require_profile_support and not should_keep_skill_term(
+                name,
+                profile_json,
+                require_profile_evidence=True,
+            ):
+                continue
             seen.add(key)
             buckets[bucket_key]["items"].append(name)
 
-    for block in current_skills:
-        append_block(block)
     for block in recovered:
         append_block(block)
+    for block in current_skills:
+        append_block(block, require_profile_support=True)
 
     merged = [block for block in buckets.values() if block.get("items")]
     if merged:
