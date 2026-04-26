@@ -200,6 +200,41 @@ def _has_date_order_issue(start_date: Any, end_date: Any) -> bool:
     return start_norm > end_norm
 
 
+def _parse_local_date_month(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+
+    iso_match = re.fullmatch(r"(\d{4})-(\d{1,2})", raw)
+    if iso_match:
+        year, month = iso_match.groups()
+        month_int = int(month)
+        if 1 <= month_int <= 12:
+            return f"{year}-{month_int:02d}"
+        return ""
+
+    mm_yyyy_match = re.fullmatch(r"(\d{1,2})/(\d{4})", raw)
+    if mm_yyyy_match:
+        month, year = mm_yyyy_match.groups()
+        month_int = int(month)
+        if 1 <= month_int <= 12:
+            return f"{year}-{month_int:02d}"
+        return ""
+
+    dd_mm_yyyy_match = re.fullmatch(r"\d{1,2}/(\d{1,2})/(\d{4})", raw)
+    if dd_mm_yyyy_match:
+        month, year = dd_mm_yyyy_match.groups()
+        month_int = int(month)
+        if 1 <= month_int <= 12:
+            return f"{year}-{month_int:02d}"
+        return ""
+
+    if re.fullmatch(r"\d{4}", raw):
+        return f"{raw}-01"
+
+    return ""
+
+
 def _build_editorial_feedback(description: str, *, language_code: str = "fr") -> str:
     text = str(description or "").strip()
     if not text:
@@ -298,6 +333,9 @@ def _normalize_end_date_month(end_date: Any) -> str:
     raw = str(end_date or "").strip()
     if not raw:
         return ""
+    local_month = _parse_local_date_month(raw)
+    if local_month:
+        return local_month
     try:
         from ...rules.date_normalize import _normalize_single_date, normalize_present_token
     except Exception:
@@ -306,8 +344,9 @@ def _normalize_end_date_month(end_date: Any) -> str:
     if str(normalize_present_token(raw) or "").strip().upper() == "PRESENT":
         return date.today().strftime("%Y-%m")
     normalized = str(_normalize_single_date(raw) or "").strip()
-    if re.fullmatch(r"\d{4}-\d{2}", normalized):
-        return normalized
+    normalized_month = _parse_local_date_month(normalized)
+    if normalized_month:
+        return normalized_month
     return ""
 
 

@@ -992,8 +992,115 @@ _GENERIC_SKILL_RESIDUE_HEAD_BLOCKLIST = {
     "workflow",
 }
 
+_NON_SKILL_RESIDUE_HEAD_BLOCKLIST = {
+    "advanced",
+    "agile",
+    "avance",
+    "beginner",
+    "basic",
+    "certified",
+    "client",
+    "customer",
+    "digital",
+    "experienced",
+    "expert",
+    "functional",
+    "general",
+    "global",
+    "intermediate",
+    "internal",
+    "junior",
+    "lead",
+    "mobile",
+    "principal",
+    "professional",
+    "senior",
+    "staff",
+    "strategic",
+    "technical",
+    "web",
+}
 
-def _looks_like_compact_residue_head(value: Any) -> bool:
+_NON_SKILL_RESIDUE_HEAD_SUFFIXES = (
+    "able",
+    "al",
+    "ary",
+    "ible",
+    "ic",
+    "if",
+    "ique",
+    "ive",
+    "ory",
+    "ous",
+)
+
+_TOOLISH_RESIDUE_CATEGORY_TOKENS = {
+    "application",
+    "applications",
+    "automation",
+    "automatisation",
+    "ci",
+    "cd",
+    "delivery",
+    "devops",
+    "framework",
+    "frameworks",
+    "library",
+    "libraries",
+    "logiciel",
+    "logiciels",
+    "outillage",
+    "outil",
+    "outils",
+    "platform",
+    "platforms",
+    "plateforme",
+    "plateformes",
+    "scripting",
+    "software",
+    "stack",
+    "suite",
+    "suites",
+    "system",
+    "systems",
+    "tech",
+    "technique",
+    "techniques",
+    "technical",
+    "technologie",
+    "technologies",
+    "technology",
+    "tool",
+    "tooling",
+    "tools",
+}
+
+
+def _category_suggests_compact_tool_list(category_label: Any) -> bool:
+    tokens = set(_normalize_for_match(category_label).split())
+    if not tokens:
+        return False
+    return bool(tokens & _TOOLISH_RESIDUE_CATEGORY_TOKENS)
+
+
+def _looks_like_non_skill_residue_head(value: Any, norm: str) -> bool:
+    if norm in _NON_SKILL_RESIDUE_HEAD_BLOCKLIST:
+        return True
+    text = str(value or "").strip()
+    if (
+        norm.endswith(_NON_SKILL_RESIDUE_HEAD_SUFFIXES)
+        and not re.search(r"[+#./0-9]", text)
+        and not re.search(r"[a-z][A-Z]", text)
+    ):
+        return True
+    return False
+
+
+def _looks_like_compact_residue_head(
+    value: Any,
+    *,
+    category_label: Any = "",
+) -> bool:
     text = str(value or "").strip(" ,;:-")
     if not text or len(text.split()) != 1:
         return False
@@ -1006,6 +1113,8 @@ def _looks_like_compact_residue_head(value: Any) -> bool:
         return False
     if norm in _GENERIC_SKILL_RESIDUE_HEAD_BLOCKLIST:
         return False
+    if _looks_like_non_skill_residue_head(text, norm):
+        return False
     if len(norm) < 3 or len(norm) > 32:
         return False
     if re.search(r"[+#./0-9]", text):
@@ -1015,9 +1124,9 @@ def _looks_like_compact_residue_head(value: Any) -> bool:
         return True
     if bool(re.search(r"[a-z][A-Z]", text)):
         return True
-    # Unknown compact labels are acceptable only after a proven repeated tail
-    # is found by the caller; capitalization alone is never the only signal.
-    return bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9_.+#-]{2,31}", text))
+    if bool(re.fullmatch(r"[A-Z][A-Za-z0-9_.+#-]{2,31}", text)):
+        return _category_suggests_compact_tool_list(category_label)
+    return False
 
 
 def clean_skill_item_residues(
@@ -1054,7 +1163,13 @@ def clean_skill_item_residues(
         if len(parts) >= 3:
             first = parts[0].strip(" ,;:-")
             tail_norm = _normalize_for_match(" ".join(parts[1:]))
-            if _looks_like_compact_residue_head(first) and tail_norm:
+            if (
+                _looks_like_compact_residue_head(
+                    first,
+                    category_label=category_label,
+                )
+                and tail_norm
+            ):
                 residue_seen = False
                 for other_norm in global_norms:
                     if (
