@@ -226,6 +226,16 @@ def test_auto_fit_fallback_scale_is_readability_capped(monkeypatch) -> None:
     assert "Math.max(scale, 0.01)" not in script
 
 
+def test_webengine_print_css_keeps_readable_typography(monkeypatch) -> None:
+    template_preview_window = _load_preview_module(monkeypatch)
+
+    css = template_preview_window.ONE_PAGE_PRINT_CSS
+    assert "font-size: 12.8px !important;" in css
+    assert "font-size: 12.6px !important;" in css
+    assert "font-size: 10.3px !important;" not in css
+    assert ':root[data-page-fit="critical"] .section-content' in css
+
+
 def test_hidden_pdf_view_load_triggers_print_without_visible_preview_branch(
     monkeypatch,
 ) -> None:

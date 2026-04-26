@@ -326,88 +326,88 @@ ONE_PAGE_PRINT_CSS = """
   }
   .cv-header,
   .cv-body {
-    padding-left: 14px !important;
-    padding-right: 14px !important;
+    padding-left: 18px !important;
+    padding-right: 18px !important;
   }
   .cv-header {
-    padding-top: 12px !important;
-    padding-bottom: 8px !important;
-    margin-bottom: 10px !important;
+    padding-top: 18px !important;
+    padding-bottom: 12px !important;
+    margin-bottom: 12px !important;
   }
   .cv-body {
-    padding-top: 8px !important;
-    padding-bottom: 10px !important;
+    padding-top: 14px !important;
+    padding-bottom: 18px !important;
   }
   .cv-header .name {
-    font-size: 24px !important;
-    line-height: 1.05 !important;
+    font-size: 30px !important;
+    line-height: 1.08 !important;
   }
   .cv-header .title {
-    font-size: 11px !important;
+    font-size: 13px !important;
     line-height: 1.2 !important;
-    margin-top: 4px !important;
+    margin-top: 6px !important;
   }
   .contact-info {
-    margin-top: 6px !important;
-    gap: 5px 10px !important;
+    margin-top: 8px !important;
+    gap: 7px 12px !important;
   }
   .contact-label,
   .contact-value,
   .contact-item {
-    font-size: 9px !important;
-    line-height: 1.15 !important;
+    font-size: 10px !important;
+    line-height: 1.2 !important;
   }
   .cv-section {
-    margin-top: 7px !important;
+    margin-top: 11px !important;
   }
   .section-title {
     margin-top: 0 !important;
-    margin-bottom: 4px !important;
-    font-size: 9.5px !important;
-    line-height: 1.1 !important;
+    margin-bottom: 6px !important;
+    font-size: 11px !important;
+    line-height: 1.15 !important;
   }
   .section-content,
   .dynamic-content {
-    font-size: 10.3px !important;
-    line-height: 1.18 !important;
+    font-size: 12.8px !important;
+    line-height: 1.38 !important;
   }
   .entry h3 {
-    margin-top: 6px !important;
-    margin-bottom: 2px !important;
-    font-size: 12px !important;
-    line-height: 1.18 !important;
+    margin-top: 8px !important;
+    margin-bottom: 3px !important;
+    font-size: 13.5px !important;
+    line-height: 1.2 !important;
   }
   .meta {
-    margin: 2px 0 3px !important;
-    font-size: 9.5px !important;
-    line-height: 1.15 !important;
+    margin: 3px 0 5px !important;
+    font-size: 10.5px !important;
+    line-height: 1.2 !important;
   }
   .summary-content,
   .skill-chip-list {
-    gap: 4px !important;
+    gap: 5px !important;
   }
   .skill-chip {
-    padding: 1px 6px !important;
-    font-size: 9.5px !important;
-    line-height: 1.1 !important;
+    padding: 2px 7px !important;
+    font-size: 10.5px !important;
+    line-height: 1.12 !important;
   }
   .experience-highlights,
   .certification-list,
   ul {
-    margin-top: 3px !important;
-    margin-bottom: 3px !important;
-    padding-left: 13px !important;
+    margin-top: 4px !important;
+    margin-bottom: 4px !important;
+    padding-left: 14px !important;
     list-style: none !important;
   }
   .experience-highlights {
-    padding-left: 13px !important;
+    padding-left: 14px !important;
   }
   .experience-highlight {
-    margin: 0 0 1px !important;
+    margin: 0 0 2px !important;
     padding-left: 0 !important;
   }
   li {
-    margin-bottom: 1px !important;
+    margin-bottom: 2px !important;
     display: block !important;
     position: static !important;
     padding-left: 0 !important;
@@ -418,6 +418,43 @@ ONE_PAGE_PRINT_CSS = """
   .dynamic-content li::before {
     content: none !important;
     display: none !important;
+  }
+  :root[data-page-fit="critical"] .cv-section {
+    margin-top: 9px !important;
+  }
+  :root[data-page-fit="critical"] .cv-header,
+  :root[data-page-fit="critical"] .cv-body {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+  :root[data-page-fit="critical"] .cv-header {
+    padding-top: 15px !important;
+    padding-bottom: 10px !important;
+    margin-bottom: 10px !important;
+  }
+  :root[data-page-fit="critical"] .cv-body {
+    padding-top: 11px !important;
+    padding-bottom: 14px !important;
+  }
+  :root[data-page-fit="critical"] .section-content,
+  :root[data-page-fit="critical"] .dynamic-content {
+    font-size: 12.6px !important;
+    line-height: 1.34 !important;
+  }
+  :root[data-page-fit="critical"] .entry h3 {
+    margin-top: 7px !important;
+    margin-bottom: 3px !important;
+    font-size: 13.2px !important;
+  }
+  :root[data-page-fit="critical"] .meta {
+    margin: 2px 0 4px !important;
+    font-size: 10.4px !important;
+    line-height: 1.18 !important;
+  }
+  :root[data-page-fit="critical"] .skill-chip {
+    padding: 2px 7px !important;
+    font-size: 10.4px !important;
+    line-height: 1.1 !important;
   }
   .cv-header,
   .letter-header,
