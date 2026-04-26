@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
+from app.controllers.export_manager import ExportManager
 from app.utils.cv_postprocessing import (
     clean_skill_item_residues,
     coerce_generated_cv_payload,
@@ -280,3 +285,134 @@ def test_profile_skill_reconciliation_drops_unsupported_offer_only_skills() -> N
     assert "Cloud computing" not in rendered
     assert "Architecture cloud AWS" not in rendered
     assert "ensuring end-to-end reliability" not in rendered
+
+
+def test_render_featured_skills_ranks_profile_evidence_against_offer() -> None:
+    manager = ExportManager()
+    cv_data = {
+        "name": "Alice Example",
+        "language": "fr",
+        "job_title": "Software Engineer, QA",
+        "company": "Mistral AI",
+        "ats_keywords": [
+            "API testing",
+            "test automation",
+            "edge cases",
+            "release readiness",
+            "Python",
+        ],
+        "profile_summary": "Profil QA.",
+        "skills": [
+            {
+                "category": "Compétences techniques",
+                "skills_list": [
+                    {"name": "UX Design"},
+                    {"name": "Cloud computing"},
+                    {"name": "Architecture cloud AWS"},
+                    {"name": "Tableau, Power BI et Looker"},
+                    {"name": "Benchmark d'outils d'automatisations"},
+                    {"name": "SQL"},
+                    {"name": "Python"},
+                    {"name": "Bases de données relationnelles"},
+                    {"name": "Jira"},
+                    {"name": "Postman"},
+                ],
+            }
+        ],
+        "experience": [
+            {
+                "title": "Alternant Ingénieur QA",
+                "company": "Careside",
+                "start_date": "09/2023",
+                "end_date": "Présent",
+                "description": (
+                    "Réalise des tests API avec Postman ainsi que des vérifications "
+                    "en base de données sur MongoDB, PostgreSQL et Microsoft SQL Server. "
+                    "Maintient la bibliothèque de tests de non-régression avec Xray et Jira. "
+                    "Explore et benchmarke Playwright, Cypress, Selenium et Agilitest "
+                    "pour industrialiser les tests."
+                ),
+            }
+        ],
+    }
+
+    prepared = manager.prepare_template_data(cv_data)
+
+    rendered = " / ".join(prepared["featured_skills"])
+    assert "Compétences techniques :" not in rendered
+    assert "Postman" in rendered
+    assert "SQL" in rendered
+    assert "MongoDB" in rendered
+    assert "PostgreSQL" in rendered
+    assert "Benchmark Playwright / Cypress / Selenium / Agilitest" in rendered
+    assert "UX Design" not in rendered
+    assert "Cloud computing" not in rendered
+    assert "Architecture cloud AWS" not in rendered
+    assert "Tableau" not in rendered
+
+
+def test_pdf_text_order_keeps_experience_bullets_before_education() -> None:
+    pypdf = pytest.importorskip("pypdf")
+    from app.controllers.export_manager import _check_weasyprint
+
+    if not _check_weasyprint():
+        pytest.skip("WeasyPrint unavailable")
+
+    manager = ExportManager()
+    output_path = Path("runtime") / "test_pdf_text_order_contract.pdf"
+    output_path.parent.mkdir(exist_ok=True)
+    cv_data = {
+        "name": "Alice Example",
+        "language": "fr",
+        "job_title": "QA Engineer",
+        "company": "ACME",
+        "profile_summary": "Profil QA.",
+        "experience": [
+            {
+                "title": "Role Alpha",
+                "company": "Company A",
+                "start_date": "01/2024",
+                "end_date": "Présent",
+                "description": [
+                    "Alpha bullet verifies API behaviour.",
+                    "Alpha bullet tracks production defects.",
+                ],
+            },
+            {
+                "title": "Role Beta",
+                "company": "Company B",
+                "start_date": "01/2023",
+                "end_date": "12/2023",
+                "description": ["Beta bullet automates reporting checks."],
+            },
+        ],
+        "education": [
+            {
+                "degree": "Formation Gamma",
+                "institution": "School C",
+                "year": "2024",
+            }
+        ],
+    }
+
+    try:
+        manager.export_cv(
+            cv_data,
+            template="minimal",
+            output_format="pdf",
+            output_path=str(output_path),
+        )
+        with output_path.open("rb") as handle:
+            reader = pypdf.PdfReader(handle)
+            text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        assert text.index("Role Alpha") < text.index("Alpha bullet verifies API behaviour")
+        assert text.index("Alpha bullet tracks production defects") < text.index("Role Beta")
+        assert text.index("Beta bullet automates reporting checks") < text.index(
+            "F O R M A T I O N"
+        )
+        assert text.index("F O R M A T I O N") < text.index("Formation Gamma")
+    finally:
+        try:
+            output_path.unlink()
+        except OSError:
+            pass

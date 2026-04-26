@@ -48,6 +48,12 @@ Current render/export contracts to preserve across agent runs:
   many bullets, or mechanically joined by the renderer with semicolons; keep
   high-signal keywords, named tools, and role vocabulary inside the rewritten
   bullets when they carry offer/profile alignment
+
+Git hygiene rule for tests:
+- Keep `tests/` and `tests/**` ignored in `.gitignore`.
+- Do not add negated exceptions for test paths (`!tests/...`,
+  `!scripts/tests/...`) and do not stage newly-created test files unless the
+  user explicitly overrides this rule for that specific change.
 - keep rendered experience order reverse-chronological; use relevance only to
   allocate detail, not to reshuffle the visible role order
 - "Visualiser les détails" / profile detail editing must show tense guidance:

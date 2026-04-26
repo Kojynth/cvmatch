@@ -9,10 +9,20 @@ import os
 import re
 import tempfile
 import unicodedata
+import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
-from jinja2 import Environment, FileSystemLoader
-from loguru import logger
+
+try:
+    from jinja2 import Environment, FileSystemLoader
+except ImportError:  # pragma: no cover - optional in lightweight contract CI
+    Environment = None
+    FileSystemLoader = None
+
+try:
+    from loguru import logger
+except ImportError:  # pragma: no cover - optional in lightweight contract CI
+    logger = logging.getLogger(__name__)
 
 # WeasyPrint sera importé seulement quand nécessaire pour éviter les messages d'erreur multiples
 WEASYPRINT_AVAILABLE = None  # Sera déterminé lors du premier usage
@@ -116,16 +126,27 @@ PDF_ONE_PAGE_FIT_CSS = """
     margin-top: 3px !important;
     margin-bottom: 3px !important;
     padding-left: 13px !important;
+    list-style: none !important;
   }
   .experience-highlights {
-    padding-left: 0 !important;
+    padding-left: 13px !important;
   }
   .experience-highlight {
     margin: 0 0 1px !important;
-    padding-left: 13px !important;
+    padding-left: 0 !important;
   }
   li {
     margin-bottom: 1px !important;
+    display: block !important;
+    position: static !important;
+    padding-left: 0 !important;
+    list-style: none !important;
+  }
+  li::before,
+  .section-content li::before,
+  .dynamic-content li::before {
+    content: none !important;
+    display: none !important;
   }
   .cv-section,
   .entry,
@@ -146,6 +167,8 @@ PDF_ONE_PAGE_FIT_CSS = """
 def _check_weasyprint():
     """Vérifie la disponibilité de WeasyPrint seulement quand nécessaire."""
     global WEASYPRINT_AVAILABLE
+    if Environment is None or FileSystemLoader is None:
+        return False
     if WEASYPRINT_AVAILABLE is None:
         try:
             from weasyprint import HTML, CSS
@@ -174,16 +197,19 @@ class ExportManager:
         self.css_dir = self.templates_dir / "css"
 
         # Configuration Jinja2
-        self.jinja_env = Environment(
-            loader=FileSystemLoader(
-                [str(self.cv_templates_dir), str(self.templates_dir)]
-            ),
-            autoescape=True,
-        )
+        self.jinja_env = None
+        if Environment is not None and FileSystemLoader is not None:
+            self.jinja_env = Environment(
+                loader=FileSystemLoader(
+                    [str(self.cv_templates_dir), str(self.templates_dir)]
+                ),
+                autoescape=True,
+            )
 
         # Ajouter des filtres personnalisés
-        self.jinja_env.filters["rjust"] = self._filter_rjust
-        self.jinja_env.filters["ljust"] = self._filter_ljust
+        if self.jinja_env is not None:
+            self.jinja_env.filters["rjust"] = self._filter_rjust
+            self.jinja_env.filters["ljust"] = self._filter_ljust
 
         # Formats supportés
         self.supported_formats = ["html"]
@@ -234,6 +260,12 @@ class ExportManager:
         self, cv_data: Dict[str, Any], template: str, is_fallback: bool = False
     ) -> str:
         """Génère le HTML du CV."""
+        if self.jinja_env is None:
+            raise RuntimeError(
+                "Jinja2 is required to render CV HTML. Install project rendering "
+                "dependencies before calling ExportManager.generate_html()."
+            )
+
         try:
             # Charger le template
             template_file = f"{template}.html"
@@ -2822,6 +2854,26 @@ class ExportManager:
             "strengths",
         }
 
+    def _is_generic_skill_category_label(self, label: Any) -> bool:
+        normalized = self._normalize_text_key(label)
+        return normalized in {
+            "competence",
+            "competences",
+            "competence technique",
+            "competences techniques",
+            "hard skill",
+            "hard skills",
+            "skill",
+            "skills",
+            "technical skill",
+            "technical skills",
+            "technical competencies",
+            "technical competences",
+            "tooling",
+            "tools",
+            "outils",
+        }
+
     def _is_noisy_featured_skill_label(self, value: Any) -> bool:
         text = self._normalize_render_text(value)
         norm = self._normalize_text_key(text)
@@ -3203,7 +3255,7 @@ class ExportManager:
         specific_context_keywords = {
             token[:8]
             for token in context_keywords
-            if token not in comparative_markers
+            if not any(token.startswith(marker) for marker in comparative_markers)
             and token not in {"outil", "outils", "tool", "tools"}
         }
 
@@ -3554,15 +3606,40 @@ class ExportManager:
         for item in (original_text, display_text):
             if item:
                 evidence_terms.append(item)
-        for tool in self._collect_skill_proof_tools(
-            original_text,
-            experience_entries=experience_entries,
-            projects=projects,
-            max_items=8,
+        proof_tool_context_markers = (
+            "api",
+            "automat",
+            "benchmark",
+            "compar",
+            "database",
+            "base de donnees",
+            "bases de donnees",
+            "non regression",
+            "outil",
+            "outils",
+            "regression",
+            "test",
+            "testing",
+            "tool",
+            "tools",
+        )
+        can_use_proof_tools = any(
+            marker in self._normalize_text_key(original_text)
+            for marker in proof_tool_context_markers
+        )
+        if (
+            can_use_proof_tools
+            and not self._looks_like_compact_tool_label(original_text)
         ):
-            text = self._normalize_render_text(tool)
-            if text:
-                evidence_terms.append(text)
+            for tool in self._collect_skill_proof_tools(
+                original_text,
+                experience_entries=experience_entries,
+                projects=projects,
+                max_items=8,
+            ):
+                text = self._normalize_render_text(tool)
+                if text:
+                    evidence_terms.append(text)
 
         evidence_terms = [
             item
@@ -3599,26 +3676,37 @@ class ExportManager:
             score += 1.8
 
         direct_alignment_signal = offer_match_count > 0 or job_title_hit
-        if anchor_probe and any(
+        anchor_evidence = bool(anchor_probe and any(
             self._match_probe_contains_term(anchor_probe, candidate)
             for candidate in evidence_terms
-        ):
-            score += 2.2 if direct_alignment_signal else 0.6
-        if recent_probe and any(
+        ))
+        recent_evidence = bool(recent_probe and any(
             self._match_probe_contains_term(recent_probe, candidate)
             for candidate in evidence_terms
-        ):
-            score += 1.6 if direct_alignment_signal else 0.4
-        if all_experience_probe and any(
+        ))
+        experience_evidence = bool(all_experience_probe and any(
             self._match_probe_contains_term(all_experience_probe, candidate)
             for candidate in evidence_terms
-        ):
-            score += 1.0 if direct_alignment_signal else 0.2
-        if project_probe and any(
+        ))
+        project_evidence = bool(project_probe and any(
             self._match_probe_contains_term(project_probe, candidate)
             for candidate in evidence_terms
-        ):
+        ))
+
+        if anchor_evidence:
+            score += 2.2 if direct_alignment_signal else 0.6
+        if recent_evidence:
+            score += 1.6 if direct_alignment_signal else 0.4
+        if experience_evidence:
+            score += 1.0 if direct_alignment_signal else 0.2
+        if project_evidence:
             score += 0.8
+        if (
+            bool(offer_terms)
+            and not direct_alignment_signal
+            and not (anchor_evidence or recent_evidence or experience_evidence)
+        ):
+            score -= 3.4
 
         generic_labels = {
             "pack office",
@@ -3670,6 +3758,9 @@ class ExportManager:
         )
         skill_probe = self._normalize_match_probe(
             " ".join(evidence_terms + [display_text, original_text])
+        )
+        label_probe = self._normalize_match_probe(
+            " ".join([display_text, original_text])
         )
         soft_alignment_groups = (
             (
@@ -3780,6 +3871,8 @@ class ExportManager:
             "data visualization",
         )
         db_skill_markers = (
+            "base de donnees",
+            "bases de donnees",
             "sql",
             "database",
             "postgresql",
@@ -3872,23 +3965,23 @@ class ExportManager:
             for marker in ai_offer_markers
         )
         qa_skill_match = any(
-            self._match_probe_contains_term(skill_probe, marker)
+            self._match_probe_contains_term(label_probe, marker)
             for marker in qa_skill_markers
         )
         bi_skill_match = any(
-            self._match_probe_contains_term(skill_probe, marker)
+            self._match_probe_contains_term(label_probe, marker)
             for marker in bi_skill_markers
         )
         db_skill_match = any(
-            self._match_probe_contains_term(skill_probe, marker)
+            self._match_probe_contains_term(label_probe, marker)
             for marker in db_skill_markers
         )
         programming_skill_match = any(
-            self._match_probe_contains_term(skill_probe, marker)
+            self._match_probe_contains_term(label_probe, marker)
             for marker in programming_skill_markers
         )
         ai_skill_match = any(
-            self._match_probe_contains_term(skill_probe, marker)
+            self._match_probe_contains_term(label_probe, marker)
             for marker in ai_skill_markers
         )
 
@@ -3934,7 +4027,15 @@ class ExportManager:
                 score += 2.0
             if has_explicit_offer_terms and bi_skill_match and not bi_offer_active:
                 score -= 8.0
-            if has_explicit_offer_terms and db_skill_match and not db_offer_active:
+            if (
+                has_explicit_offer_terms
+                and db_skill_match
+                and not db_offer_active
+                and not (
+                    qa_offer_active
+                    and (anchor_evidence or recent_evidence or experience_evidence)
+                )
+            ):
                 score -= 8.2
             if (
                 has_explicit_offer_terms
@@ -3950,6 +4051,12 @@ class ExportManager:
             score += 1.6
         if db_skill_match and db_offer_active:
             score += 1.4
+        if (
+            db_skill_match
+            and qa_offer_active
+            and (anchor_evidence or recent_evidence or experience_evidence)
+        ):
+            score += 1.2
         if programming_skill_match and programming_offer_active:
             score += 1.0
 
@@ -3958,6 +4065,10 @@ class ExportManager:
             and db_skill_match
             and len(normalized_display.split()) == 1
             and not db_offer_active
+            and not (
+                qa_offer_active
+                and (anchor_evidence or recent_evidence or experience_evidence)
+            )
         ):
             score -= 5.0
         if (
@@ -4054,6 +4165,8 @@ class ExportManager:
                 category = self._normalize_render_text(
                     block.get("category") or ""
                 ).strip(" :")
+                if self._is_generic_skill_category_label(category):
+                    continue
                 items = (
                     block.get("skills_list")
                     or block.get("items")
@@ -4196,6 +4309,15 @@ class ExportManager:
             elif isinstance(block, str):
                 order = _append(primary, block, order, source="skill")
 
+        named_tool_payload = {
+            "skills": skills,
+            "experience_all": experience_all or experience_entries,
+            "experience": experience_entries or experience_all,
+            "projects": projects,
+        }
+        for tool in self._collect_named_featured_skill_candidates(named_tool_payload):
+            order = _append(primary, tool, order, source="named_tool")
+
         candidates = primary if primary else fallback
         if not candidates:
             return []
@@ -4239,9 +4361,9 @@ class ExportManager:
             ),
             key=lambda row: (-row[0], row[1]),
         )
-        has_offer_signal = bool(list(offer_terms or []))
+        has_offer_signal = bool(list(offer_terms or []) or str(job_title or "").strip())
         selection_floor = (
-            0.0
+            3.3
             if has_offer_signal
             else (-2.5 if len(ranked) <= max(1, int(max_items or 1)) else 0.0)
         )
@@ -4259,12 +4381,19 @@ class ExportManager:
                 selected.append(name)
         deduped: List[str] = []
         seen_selected: set[str] = set()
+        selected_groups: List[str] = []
         for item in selected:
             key = self._normalize_text_key(item)
             if not key or key in seen_selected:
                 continue
+            if len(key) > 3 and any(
+                self._match_probe_contains_term(group, item) for group in selected_groups
+            ):
+                continue
             seen_selected.add(key)
             deduped.append(item)
+            if "/" in str(item or ""):
+                selected_groups.append(str(item or ""))
         return deduped[: max(1, int(max_items or 1))]
 
     def _select_featured_soft_skills(
@@ -4852,7 +4981,11 @@ class ExportManager:
         ]
 
         rendered_probe_parts: List[str] = []
-        for exp in (formatted_data or {}).get("experience") or []:
+        summary_probe_experiences = list((formatted_data or {}).get("experience") or [])
+        for extra_exp in (formatted_data or {}).get("experience_all") or []:
+            if isinstance(extra_exp, dict) and extra_exp not in summary_probe_experiences:
+                summary_probe_experiences.append(extra_exp)
+        for exp in summary_probe_experiences:
             if not isinstance(exp, dict):
                 continue
             rendered_probe_parts.extend(
@@ -4862,6 +4995,11 @@ class ExportManager:
                     " ".join(
                         str(line)
                         for line in (exp.get("description") or [])
+                        if isinstance(line, str)
+                    ),
+                    " ".join(
+                        str(line)
+                        for line in (exp.get("_render_source_description") or [])
                         if isinstance(line, str)
                     ),
                 ]

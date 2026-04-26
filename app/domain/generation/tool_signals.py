@@ -138,6 +138,8 @@ _LOW_SIGNAL_LOWERCASE_WORDS = _GENERIC_TOOL_WORDS | frozenset(
         "details",
         "domain",
         "experience",
+        "explore",
+        "explorer",
         "general",
         "gestion",
         "highlight",
@@ -212,14 +214,15 @@ _TITLECASE_BLOCKLIST = frozenset(
 _TOOL_CONTEXT_PATTERNS = (
     re.compile(
         r"\b(?:outils?|tools?|logiciels?|software|frameworks?|plateformes?|platforms?|"
-        r"syst[eè]mes?|systems?|suites?|stack|technologies?|applications?)\b",
+        r"syst[eè]mes?|systems?|suites?|stack|technologies?|applications?|"
+        r"bases?\s+de\s+donn[eé]es|databases?)\b",
         re.IGNORECASE,
     ),
     re.compile(
-        r"\b(?:ma[iî]trise de|utilisation de|usage de|benchmark(?:s|ing)? de|"
+        r"\b(?:ma[iî]trise de|utilisation de|usage de|benchmark(?:s|ing|e|er|[eé])? de|"
         r"comparatif de|exp[eé]rience avec|connaissance de|stack(?: technique)?|"
         r"built with|used|using|experience with|knowledge of|proficient in|"
-        r"worked with|implemented with|benchmark(?:s|ing)?(?: on| of)?|"
+        r"worked with|implemented with|benchmark(?:s|ing|e|er|[eé])?(?: on| of)?|"
         r"comparison of)\b",
         re.IGNORECASE,
     ),
@@ -244,7 +247,7 @@ _VAGUE_TOOL_PATTERNS = (
 
 _LEADING_CONTEXT_PATTERNS = (
     re.compile(
-        r"^(?:benchmark(?:s|ing)?|comparatif|[ée]valuation|evaluation|usage|utilisation|"
+        r"^(?:benchmark(?:s|ing|e|er|[eé])?|explor(?:e|er|[eé])?|comparatif|[ée]valuation|evaluation|usage|utilisation|"
         r"ma[iî]trise|expertise|connaissance|mise en place|gestion|suivi|"
         r"implemented|implementing|used|using|tested|testing|validated|validating|"
         r"benchmarked|benchmarking|configured|configuring|deployed|deploying|"
@@ -278,7 +281,7 @@ _CONTEXT_CAPTURE_PATTERNS = (
     re.compile(
         r"\b(?:proficient in|experience with|knowledge of|worked with|built with|"
         r"using|used|use of|ma[iî]trise de|utilisation de|usage de|"
-        r"benchmark(?:s|ing)?(?: on| of| de)?|comparatif de)\s+((?:(?!\.\s|;\s|\n).)+)",
+        r"benchmark(?:s|ing|e|er|[eé])?(?: on| of| de)?|comparatif de)\s+((?:(?!\.\s|;\s|\n).)+)",
         re.IGNORECASE,
     ),
     re.compile(
@@ -287,8 +290,14 @@ _CONTEXT_CAPTURE_PATTERNS = (
     ),
     re.compile(
         r"\b(?:implemented|tested|validated|built|created|configured|used|using|"
-        r"developed|con[cç]u|construit|utilis[eé]|mis en place)\b"
+        r"developed|con[cç]u|construit|utilis[eé]|r[eé]alis[eé]|"
+        r"effectu[eé]|mis en place)\b"
         r"(?:(?!\.\s|;\s|\n).){0,40}\b(?:with|avec)\s+((?:(?!\.\s|;\s|\n).)+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:bases?\s+de\s+donn[eé]es|databases?)\s+"
+        r"(?:sur|avec|on|with)\s+((?:(?!\.\s|;\s|\n).)+)",
         re.IGNORECASE,
     ),
 )
@@ -367,7 +376,11 @@ def _split_fragments(text: str, *, explicit_context: bool) -> List[str]:
             block_context = explicit_context or _has_tool_context(block)
             parts = re.split(r",", block) if (block_context or "," in block) else [block]
             for part in parts:
-                for piece in re.split(r"\s+(?:and|et|or|ou)\s+", part):
+                for piece in re.split(
+                    r"\s+(?:and|et|or|ou|ainsi que|as well as)\s+",
+                    part,
+                    flags=re.IGNORECASE,
+                ):
                     cleaned = _clean_fragment(piece)
                     if cleaned:
                         out.append(cleaned)

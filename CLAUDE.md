@@ -215,6 +215,10 @@
     fallback, and the same minimum postprocess/quality gate as the main CV
     pipeline.
 - Pytest temp artifacts now live under `runtime/pytest_tmp/`.
+- Test files are Git-ignored by default. Keep `tests/` and `tests/**` ignored
+  in `.gitignore`; do not add `!tests/...` or `!scripts/tests/...` exceptions,
+  and do not stage newly-created test files unless the user explicitly
+  overrides this for a specific change.
 - Local Windows caveat: avoid running broad `python -m black ...` formatting
   in this workspace until the formatter hang is investigated; it can leave a
   long-running Python process. Prefer `py_compile`, `git diff --check`, and

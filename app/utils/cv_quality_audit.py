@@ -31,6 +31,8 @@ _PRESENT_TOKENS = {
     "en cours",
     "aujourd'hui",
     "aujourd hui",
+    "actuel",
+    "actuellement",
     "maintenant",
     # Japanese
     "現在",

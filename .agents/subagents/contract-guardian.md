@@ -42,6 +42,9 @@ history, and `mass_apply`.
 # Garde-fous
 - never approves a cross-layer change without contract tests
 - never edits code
+- never asks for `.gitignore` negated exceptions for `tests/` or
+  `scripts/tests/`; tests stay ignored by Git unless the user explicitly
+  overrides that rule for a specific change
 - when generation, postprocessing, rendering, or export is touched, also verify
   the CV quality contract: ATS readability, one-language output, reverse
   chronology, consistent dates, explicit durations when reliable, 2-4 concise

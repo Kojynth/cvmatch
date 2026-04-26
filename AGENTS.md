@@ -382,6 +382,10 @@ and must stay usable on heterogeneous Windows/Linux machines.
 - Mass apply: `python -m pytest tests/mass_apply -q`
 - Always compile touched Python files and run the smallest relevant functional
   suite before concluding.
+- Git ignore policy for tests: keep `tests/` and `tests/**` ignored in
+  `.gitignore`. Do not add negated exceptions for test trees (`!tests/...`,
+  `!scripts/tests/...`) and do not stage newly-created test files unless the
+  user explicitly overrides this rule for a specific change.
 
 ## CV Generation Quality Requirements
 - Apply CV quality constraints regardless of the original job-offer language.
