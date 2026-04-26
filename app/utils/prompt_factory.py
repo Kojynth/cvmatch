@@ -186,6 +186,10 @@ OUTPUT RULES:
   * highlights: 2-4 short plain strings; each must start with a strong action verb,
     express one main idea, and include at least one term from PRIORITY_OFFER_TERMS
     or JOB_OFFER_TEXT when factual.
+  * Target 35 words or fewer per highlight; never exceed 40 words. If a
+    supported idea is too dense, reformulate it into a shorter single coherent
+    highlight instead of splitting it mechanically or packing clauses with
+    semicolons.
   * Author each highlight as a new coherent sentence from the supported source
     facts. When several source facts belong together, synthesize them into one
     recruiter bullet instead of concatenating copied fragments.
@@ -222,6 +226,8 @@ OUTPUT RULES:
 - Writing quality — apply to all free-text fields:
   * Never use first-person pronouns (je, moi, mon, nous, notre, j'); start every bullet with a conjugated action verb or an infinitive.
   * Use present tense for the current or ongoing role; use past tense (passé composé or imparfait) for all former roles.
+  * In French current-role bullets, write third-person implicit forms such as
+    "suit" rather than first-person forms such as "suis".
   * Avoid cliché adjectives and filler intensifiers: do not use passionné, dynamique, motivé, polyvalent, rigoureux, très, vraiment, extrêmement, or similar; replace with concrete evidence instead.
   * Vary action verbs — do not repeat the same verb more than twice across all highlights and summary combined.
   * Use consistent punctuation style: if bullets end without a period, apply that to all; never mix styles.
@@ -364,6 +370,9 @@ OUTPUT RULES:
 - Writing quality:
   * Never use first-person pronouns; start every bullet with a strong action verb.
   * Use present tense for current/ongoing role; past tense for former roles.
+  * Target 35 words or fewer per highlight; never exceed 40 words. Reformulate
+    dense bullets into shorter coherent bullets instead of splitting them
+    mechanically.
   * Avoid cliche adjectives: passionné, dynamique, motivé, polyvalent, rigoureux, très, vraiment.
   * Vary action verbs across all highlights and summary.
   * Reject noun-fragment bullets such as "Validation fonctionnelle..." or "Testing of..." without a verb; rewrite them into action-led recruiter bullets.

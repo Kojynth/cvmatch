@@ -105,7 +105,9 @@ and must stay usable on heterogeneous Windows/Linux machines.
   - up to 10 compact, credible skill/tool chips when the layout can support
     them (not a keyword dump); skill grouping and ordering must be driven by
     `{job_title}` plus requirement-heavy offer evidence for any profession or
-    sector, never by a hardcoded company/profile/tech-only taxonomy;
+    sector, never by a hardcoded company/profile/tech-only taxonomy; the
+    renderer must not invent profession-specific grouped skill categories,
+    because specific category labels belong in the LLM-generated CV JSON;
   - rendered experience order stays reverse-chronological; relevance ranking
     may change detail budgets, not the visible role order;
   - hard skill/tool chips may come from explicit user-profile evidence:
@@ -257,9 +259,10 @@ and must stay usable on heterogeneous Windows/Linux machines.
   invented direct-usage claim. For strongly targeted offers, prefer compact
   grouped chips over flat keyword lists when this improves proof and
   hierarchy, but derive group labels from `{job_title}` and requirement-heavy
-  offer evidence for the current profession/sector. Soft skills must not
-  compete with hard skill chips; render them only when not already proved
-  inside experience bullets. Do not backfill
+  offer evidence for the current profession/sector during generation, not in
+  renderer-side fallback code. Soft skills must not compete with hard skill
+  chips; render them only when not already proved inside experience bullets.
+  Do not backfill
   low-scoring/noisy skill candidates just to reach a visual chip quota: a
   shorter credible skill list is better than ten weak chips.
 - **Company-description filter contract (MANDATORY)**: renderer-side guards

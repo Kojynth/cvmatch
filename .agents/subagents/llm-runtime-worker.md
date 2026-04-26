@@ -102,7 +102,8 @@ risk.
   labels, but must not create extra chips from narrative bullets alone; compact
   grouped chips are acceptable for strongly targeted offers when they clarify
   hierarchy/proof and are driven by `{job_title}` plus requirement-heavy offer
-  evidence, not by a hardcoded company/profile/tech-only taxonomy
+  evidence in the generated CV JSON, not by a hardcoded
+  company/profile/tech-only renderer taxonomy
 - do not backfill weak/noisy skill chips purely to hit the visible chip cap
 - when the profile exposes only a small already-clean skill pool that fits in
   the chip budget, keep that compact pool instead of over-pruning it

@@ -50,8 +50,9 @@ Checklist:
    `Benchmark Playwright / Cypress / Selenium` when source evidence names the
    tools. Prefer compact grouped chips for strongly targeted offers when they
    clarify hierarchy/proof, but grouping must be driven by `{job_title}` plus
-   requirement-heavy offer evidence for any profession/sector. Do not backfill
-   weak/noisy chips just to reach the visible cap.
+   requirement-heavy offer evidence for any profession/sector in the generated
+   CV JSON, not by renderer-side hardcoded categories. Do not backfill weak/noisy
+   chips just to reach the visible cap.
 9. If experience dedup is touched, verify duplicate retries/date-format
    variants collapse while same company/title with conflicting periods stay
    distinct.

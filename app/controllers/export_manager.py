@@ -562,6 +562,11 @@ class ExportManager:
                 def _clean_skill_candidate(value, profile_json=None):
                     return str(value or "").strip()
 
+            try:
+                from ..utils.cv_postprocessing import clean_skill_item_residues
+            except Exception:
+                clean_skill_item_residues = None
+
             def _normalize_text_key(value: Any) -> str:
                 text = str(value or "").strip().casefold()
                 text = unicodedata.normalize("NFKD", text)
@@ -762,6 +767,52 @@ class ExportManager:
                     if item_key and item_key not in existing_keys:
                         merged[idx]["skills_list"].append(item)
                         existing_keys.add(item_key)
+
+            if callable(clean_skill_item_residues):
+                all_skill_names = [
+                    str(item.get("name") or "").strip()
+                    for block in merged
+                    if isinstance(block, dict)
+                    for item in (block.get("skills_list") or [])
+                    if isinstance(item, dict) and str(item.get("name") or "").strip()
+                ]
+                for block in merged:
+                    if not isinstance(block, dict):
+                        continue
+                    by_name = {
+                        _normalize_text_key(item.get("name")): item
+                        for item in (block.get("skills_list") or [])
+                        if isinstance(item, dict)
+                    }
+                    cleaned_names = clean_skill_item_residues(
+                        [
+                            item.get("name")
+                            for item in (block.get("skills_list") or [])
+                            if isinstance(item, dict)
+                        ],
+                        other_items=all_skill_names,
+                        category_label=block.get("category") or "",
+                    )
+                    rebuilt_items = []
+                    seen_rebuilt = set()
+                    for name in cleaned_names:
+                        name_key = _normalize_text_key(name)
+                        if not name_key or name_key in seen_rebuilt:
+                            continue
+                        original = by_name.get(name_key, {"level": None})
+                        rebuilt_items.append(
+                            {
+                                "name": name,
+                                "level": original.get("level"),
+                            }
+                        )
+                        seen_rebuilt.add(name_key)
+                    block["skills_list"] = rebuilt_items
+                merged = [
+                    block
+                    for block in merged
+                    if isinstance(block, dict) and block.get("skills_list")
+                ]
 
             if len(merged) > 1:
                 merged = [
@@ -1870,7 +1921,7 @@ class ExportManager:
         )
         for pattern, replacement in replacements:
             text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
-        text = re.sub(r"\s+([,.;:])", r"\1", text)
+        text = re.sub(r"\s+([,.])", r"\1", text)
         text = re.sub(r"\s*-\s*Careside\b", " - Careside", text)
         return re.sub(r"\s+", " ", text).strip()
 
@@ -2333,7 +2384,14 @@ class ExportManager:
             if normalized_term_present(normalized_text, norm):
                 score += 1.4 if " " in norm else 0.8
 
-        score += min(0.6, float(self._word_count(text)) / 20.0)
+        word_count = self._word_count(text)
+        score += min(0.6, float(word_count) / 20.0)
+        if word_count > 40:
+            score -= 4.0
+        if word_count > 55:
+            score -= 3.0
+        if word_count > 32 and ";" in text:
+            score -= 1.5
         return score
 
     def _experience_line_bucket(self, value: Any) -> str:
@@ -2603,11 +2661,16 @@ class ExportManager:
                 : max(1, int(max_items or 1))
             ]
 
-        candidate_limit = max(max(1, int(max_items or 1)) * 3, max(1, int(max_items or 1)))
+        target_count = max(1, int(max_items or 1))
+        short_scored = [row for row in scored if self._word_count(row[2]) <= 40]
+        if len(short_scored) >= target_count:
+            scored = short_scored
+
+        candidate_limit = max(target_count * 3, target_count)
         rich_rows = sorted(scored, key=lambda row: (-row[0], row[1]))[:candidate_limit]
         return self._merge_experience_lines_by_signal(
             rich_rows,
-            max_items=max(1, int(max_items or 1)),
+            max_items=target_count,
         )
 
     def _trim_render_text(self, value: Any, max_chars: int) -> str:
@@ -3893,183 +3956,78 @@ class ExportManager:
         language_code: str,
         max_items: int = 10,
     ) -> List[str]:
-        raw_selected = [
-            self._normalize_render_text(item)
-            for item in (selected_skills or [])
-            if self._normalize_render_text(item)
-        ]
-
-        normalized_language = str(language_code or "").strip().lower()
-        base_language = re.split(r"[-_]", normalized_language, maxsplit=1)[0]
-        is_en = base_language == "en"
-        is_fr = base_language == "fr" or not base_language
-        if not (is_en or is_fr):
-            return raw_selected[: max(1, int(max_items or 1))]
-
-        offer_probe = self._normalize_match_probe(" ".join([job_title, *(offer_terms or [])]))
-        qa_offer_active = any(
-            self._match_probe_contains_term(offer_probe, marker)
-            for marker in (
-                "qa",
-                "quality",
-                "test",
-                "testing",
-                "automation",
-                "api",
-                "regression",
-                "exploratory",
-                "debug",
-                "release",
-            )
-        )
-        if not qa_offer_active:
-            return raw_selected[: max(1, int(max_items or 1))]
-
-        # This deterministic regrouping is only a QA/test-specific fallback.
-        # Other professions must keep the LLM's job-title/offer-driven skill
-        # wording instead of being forced into a tech taxonomy.
-        evidence_parts: List[str] = []
-        for skill in self._collect_hard_skill_names_for_compact_summary(
-            (formatted_data or {}).get("skills")
-        ):
-            evidence_parts.append(skill)
-        for entry in (formatted_data or {}).get("experience_all") or []:
-            if not isinstance(entry, dict):
-                continue
-            evidence_parts.extend(
-                [
-                    str(entry.get("title") or ""),
-                    str(entry.get("company") or ""),
-                    " ".join(
-                        str(line)
-                        for line in (
-                            entry.get("_render_source_description")
-                            or entry.get("description")
-                            or []
-                        )
-                        if isinstance(line, str)
-                    ),
-                ]
-            )
-        for project in (formatted_data or {}).get("projects") or []:
-            if not isinstance(project, dict):
-                continue
-            evidence_parts.extend(
-                [
-                    str(project.get("name") or ""),
-                    str(project.get("description") or ""),
-                    str(project.get("technologies") or ""),
-                ]
-            )
-        evidence_probe = self._normalize_match_probe(" ".join(evidence_parts + raw_selected))
-
-        def has_any(*markers: str) -> bool:
-            return any(
-                self._match_probe_contains_term(evidence_probe, marker)
-                for marker in markers
-            )
-
-        def append_group(
-            label_fr: str,
-            label_en: str,
-            values: List[Tuple[str, str, Tuple[str, ...]]],
-        ) -> None:
-            items: List[str] = []
-            seen_items: set[str] = set()
-            for display_fr, display_en, markers in values:
-                if not has_any(*markers):
+        # Rendering must stay domain-neutral. Profession-specific grouping
+        # belongs to the LLM-generated CV JSON, where JOB_TITLE and offer
+        # evidence are available, not to this fallback renderer.
+        category_rows: List[str] = []
+        category_seen: set[str] = set()
+        skill_blocks = (formatted_data or {}).get("skills")
+        if isinstance(skill_blocks, list):
+            non_soft_blocks = [
+                block
+                for block in skill_blocks
+                if isinstance(block, dict)
+                and not self._is_soft_skill_category(block.get("category"))
+            ]
+            names_per_row = 8 if len(non_soft_blocks) <= 2 else 6
+            for block in non_soft_blocks:
+                category = self._normalize_render_text(
+                    block.get("category") or ""
+                ).strip(" :")
+                items = (
+                    block.get("skills_list")
+                    or block.get("items")
+                    or block.get("skills")
+                    or []
+                )
+                if not isinstance(items, list):
                     continue
-                display = display_en if is_en else display_fr
-                key = self._normalize_text_key(display)
-                if not key or key in seen_items:
+                names: List[str] = []
+                seen_names: set[str] = set()
+                for item in items:
+                    if isinstance(item, dict):
+                        raw_name = item.get("name") or item.get("skill") or ""
+                    else:
+                        raw_name = item
+                    name = self._normalize_render_text(raw_name).strip(" ,;:-")
+                    key = self._normalize_text_key(name)
+                    if not name or not key or key in seen_names:
+                        continue
+                    seen_names.add(key)
+                    names.append(name)
+                    if len(names) >= names_per_row:
+                        break
+                if not names:
                     continue
-                seen_items.add(key)
-                items.append(display)
-            if not items:
-                return
-            label = label_en if is_en else label_fr
-            separator = " · "
-            grouped.append(f"{label} : {separator.join(items)}")
+                if category:
+                    row = f"{category} : {' / '.join(names)}"
+                else:
+                    row = " / ".join(names)
+                row_key = self._normalize_text_key(row)
+                if not row_key or row_key in category_seen:
+                    continue
+                category_seen.add(row_key)
+                category_rows.append(row)
+                if len(category_rows) >= max(1, int(max_items or 1)):
+                    break
+        if category_rows:
+            return category_rows
 
-        grouped: List[str] = []
-        append_group(
-            "QA & stratégie de test",
-            "QA & test strategy",
-            [
-                ("Plans de test", "Test plans", ("plan de test", "plans de test")),
-                ("Tests fonctionnels", "Functional testing", ("test fonctionnel", "tests fonctionnels", "fonctionnel")),
-                ("Tests exploratoires", "Exploratory testing", ("exploratoire", "exploratoires", "exploratory")),
-                ("Non-régression", "Regression testing", ("non regression", "non-regression", "xray")),
-                ("Analyse des risques", "Risk analysis", ("risque", "risques", "ambiguite", "incoherence")),
-            ],
-        )
-        append_group(
-            "API, data & debug",
-            "API, data & debugging",
-            [
-                ("Tests API", "API testing", ("api", "api testing")),
-                ("Postman", "Postman", ("postman",)),
-                ("SQL", "SQL", ("sql",)),
-                ("PostgreSQL", "PostgreSQL", ("postgresql",)),
-                ("MongoDB", "MongoDB", ("mongodb",)),
-                ("SQL Server", "SQL Server", ("sql server", "microsoft sql server")),
-                ("Analyse d'anomalies", "Defect analysis", ("anomalie", "anomalies", "debug")),
-            ],
-        )
-        append_group(
-            "Automatisation & scripting",
-            "Automation & scripting",
-            [
-                ("Python", "Python", ("python",)),
-                ("Playwright", "Playwright", ("playwright",)),
-                ("Cypress", "Cypress", ("cypress",)),
-                ("Selenium", "Selenium", ("selenium",)),
-                ("Agilitest", "Agilitest", ("agilitest",)),
-            ],
-        )
-        append_group(
-            "Tooling & delivery QA",
-            "QA tooling & delivery",
-            [
-                ("Jira", "Jira", ("jira",)),
-                ("Xray", "Xray", ("xray",)),
-                ("Gherkin", "Gherkin", ("gherkin",)),
-                ("Agile/Scrum", "Agile/Scrum", ("agile", "scrum")),
-                ("Documentation QA", "QA documentation", ("documentation", "livrable", "livrables")),
-            ],
-        )
-        ai_offer_active = any(
-            self._match_probe_contains_term(offer_probe, marker)
-            for marker in ("ai", "ia", "ml", "machine learning", "model", "llm")
-        )
-        if ai_offer_active and has_any("ia", "ai", "poc", "agent", "agents", "donnees de test"):
-            append_group(
-                "Qualité produit IA",
-                "AI product quality",
-                [
-                    ("POC IA", "AI POC", ("poc", "ia", "ai")),
-                    ("Agents IA", "AI agents", ("agent ia", "agents ia", "agent", "agents")),
-                    ("Génération de données de test", "Test data generation", ("generation de donnees de test", "donnees de test")),
-                    ("Benchmark d'outils QA", "QA tool benchmarking", ("benchmark", "outils", "automation", "automatisation")),
-                ],
-            )
-
-        if not grouped:
-            return raw_selected[: max(1, int(max_items or 1))]
-        target_count = min(
-            max(1, int(max_items or 1)),
-            max(len(grouped), min(5, len(raw_selected))),
-        )
-        grouped_keys = {self._normalize_text_key(item) for item in grouped}
-        for item in raw_selected:
-            if len(grouped) >= target_count:
+        output: List[str] = []
+        seen: set[str] = set()
+        limit = max(1, int(max_items or 1))
+        for item in selected_skills or []:
+            text = self._normalize_render_text(item)
+            if not text:
+                continue
+            key = self._normalize_text_key(text)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            output.append(text)
+            if len(output) >= limit:
                 break
-            item_norm = self._normalize_text_key(item)
-            if not item_norm or item_norm in grouped_keys:
-                continue
-            grouped_keys.add(item_norm)
-            grouped.append(item)
-        return grouped[: max(1, int(max_items or 1))]
+        return output
 
     def _select_featured_skills(
         self,

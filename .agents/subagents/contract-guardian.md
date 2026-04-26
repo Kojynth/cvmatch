@@ -91,6 +91,7 @@ history, and `mass_apply`.
   inside experience bullets; strongly targeted offers may use compact grouped
   chips when that improves hierarchy/proof, but grouping must be driven by
   `{job_title}` and requirement-heavy offer evidence for any profession/sector
+  in the generated CV JSON, not by renderer-side hardcoded categories
 - when offer-only targeting is touched, verify pure offer-only terms stay in
   the natural positioning sentence unless profile evidence supports a
   coherent implicit inference elsewhere

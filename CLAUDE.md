@@ -48,7 +48,9 @@
     fragments as chips. Prefer compact grouped chips for strongly targeted
     offers when grouping improves hierarchy/proof, but grouping must be driven
     by `{job_title}` and offer requirements for any profession/sector, not by
-    a hardcoded company/profile/tech-only taxonomy. Keep soft skills out of
+    a hardcoded company/profile/tech-only taxonomy. Renderer fallback code
+    must not invent profession-specific grouped categories; those labels must
+    come from the generated CV JSON. Keep soft skills out of
     hard skill chips and render a separate `Savoir-être` / `Soft skills`
     section only when they are not already proved inside experience bullets.
   - skill-list credibility contract: do not backfill weak/noisy skill chips

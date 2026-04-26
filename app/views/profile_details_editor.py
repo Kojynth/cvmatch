@@ -534,9 +534,10 @@ class ExperienceItem(QFrame):
     remove_requested = Signal(object)  # Émis quand on veut supprimer cet item
     data_changed = Signal()
 
-    def __init__(self, experience_data: Dict[str, Any] = None):
+    def __init__(self, experience_data: Dict[str, Any] = None, language_code: str = "fr"):
         super().__init__()
         self.experience_data = experience_data or {}
+        self.language_code = str(language_code or "fr").strip() or "fr"
         self.fields = {}
         self.editor_feedback_label = None
         self.date_feedback_label = None
@@ -697,7 +698,7 @@ class ExperienceItem(QFrame):
                 "end_date": self.fields["end_date"].text(),
                 "description": self.fields["description"].toPlainText(),
             },
-            language_code="fr",
+            language_code=self.language_code,
         )
 
         date_feedback = str(feedback.get("date_feedback") or "").strip()
@@ -747,6 +748,9 @@ class ExperienceSection(QGroupBox):
     def __init__(self, profile: UserProfile):
         super().__init__()
         self.profile = profile
+        self.language_code = str(
+            getattr(profile, "preferred_language", None) or "fr"
+        ).strip() or "fr"
         self.experience_items = []
         self.setup_ui()
         sanitize_widget_tree(self)
@@ -794,7 +798,10 @@ class ExperienceSection(QGroupBox):
 
     def add_experience_item(self, experience_data: Dict[str, Any] = None):
         """Ajoute un nouvel item d'expérience."""
-        experience_item = ExperienceItem(experience_data)
+        experience_item = ExperienceItem(
+            experience_data,
+            language_code=self.language_code,
+        )
         experience_item.remove_requested.connect(self.remove_experience_item)
         experience_item.data_changed.connect(self.data_changed.emit)
         

@@ -102,11 +102,11 @@
             {% if exp.location %}{% set _ = meta_parts.append(exp.location) %}{% endif %}
             {% if meta_parts %}<p class="meta">{{ meta_parts | join(' | ') }}</p>{% endif %}
             {% if exp.description %}
-            <div class="experience-highlights">
+            <ul class="experience-highlights">
               {% for item in exp.description %}
-              <p class="experience-highlight{% if loop.index > 2 %} fit-tight-hide{% endif %}">- {{ item }}</p>
+              <li class="experience-highlight{% if loop.index > 2 %} fit-tight-hide{% endif %}">{{ item }}</li>
               {% endfor %}
-            </div>
+            </ul>
             {% endif %}
           </article>
           {% endfor %}

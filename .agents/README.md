@@ -55,7 +55,8 @@ Current render/export contracts to preserve across agent runs:
 - compact grouped skill chips are preferred for strongly targeted offers when
   they make the proof hierarchy clearer than flat keyword chips, but grouping
   must be driven by `{job_title}` and requirement-heavy offer evidence for any
-  profession/sector, not by a hardcoded company/profile/tech-only taxonomy
+  profession/sector, not by a hardcoded company/profile/tech-only taxonomy;
+  renderer fallback code must not invent those grouped categories
 - featured skill chips come from the profile `skills` pool first; use
   experience/project evidence to reprioritize or compactly rewrite labels, but
   do not mint extra chips directly from narrative bullets
