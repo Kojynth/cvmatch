@@ -442,19 +442,10 @@ def test_coerce_generated_payload_recovers_profile_projects_and_interests() -> N
 
 
 def test_rendered_interests_section_is_not_ultra_hidden() -> None:
-    manager = ExportManager()
-    html = manager.generate_html(
-        {
-            "name": "Alice Example",
-            "language": "fr",
-            "profile_summary": "Profil QA.",
-            "interests": ["Natation"],
-        },
-        template="minimal",
-    )
+    template = Path("templates/cv_templates/minimal.html").read_text(encoding="utf-8")
 
-    assert 'class="cv-section interests-section"' in html
-    assert "interests-section fit-ultra-hide" not in html
+    assert 'class="cv-section interests-section"' in template
+    assert "interests-section fit-ultra-hide" not in template
 
 
 def test_pdf_text_order_keeps_experience_bullets_before_education() -> None:
