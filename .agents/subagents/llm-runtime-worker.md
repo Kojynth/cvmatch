@@ -52,6 +52,9 @@ risk.
   measured rendered height, controlled compression tiers, then PDF export
   (never rely on CSS clipping or crop-to-page); direct WeasyPrint exports must
   keep `PDF_ONE_PAGE_FIT_CSS` aligned with the preview print contract
+- if runtime output changes flow into preview/export, verify WebEngine PDF
+  export still prints from a dedicated hidden `QWebEngineView` and does not
+  reload, rescale, or mutate the visible preview during export
 - preserve the header render contract for generated CVs: actionable contact
   methods render as explicit links (`mailto:`, `tel:`, LinkedIn, GitHub,
   portfolio URL), placeholder labels like `Lien 1` / `Link 1` are forbidden,

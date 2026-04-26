@@ -51,6 +51,8 @@ _GENERIC_NOISE_TERMS = {
     "competences",
     "confiance",
     "construisons",
+    "description",
+    "descriptif",
     "emploi",
     "ensemble",
     "entreprise",
@@ -76,6 +78,7 @@ _GENERIC_NOISE_TERMS = {
     "secteurs",
     "service",
     "skills",
+    "summary",
     "technology",
     "technologies",
     "thales",
@@ -90,6 +93,24 @@ _GENERIC_NOISE_TERMS = {
     "zoom et teams",
     "ms teams",
     "microsoft teams",
+}
+
+_SKILL_ACTION_NOISE_HEADS = {
+    "building",
+    "collaborating",
+    "creating",
+    "delivering",
+    "developing",
+    "driving",
+    "enabling",
+    "ensuring",
+    "implementing",
+    "improving",
+    "integrating",
+    "managing",
+    "providing",
+    "supporting",
+    "validating",
 }
 
 _SOFT_SKILL_HINTS = {
@@ -225,6 +246,8 @@ def looks_like_noise_skill_term(term: Any) -> bool:
     if not tokens:
         return True
     if len(tokens) == 1 and tokens[0] in _GENERIC_NOISE_TERMS:
+        return True
+    if len(tokens) >= 2 and tokens[0] in _SKILL_ACTION_NOISE_HEADS:
         return True
     # Responsibility-shaped phrases (usually verb clauses) are not skills.
     if len(tokens) > 5:

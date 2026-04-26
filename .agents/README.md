@@ -17,6 +17,10 @@ Recommended invocation order:
 
 Current render/export contracts to preserve across agent runs:
 - one-page CVs use measured fit-to-page compression, not CSS clipping
+- WebEngine PDF export must not mutate the visible preview. Print from a
+  dedicated hidden `QWebEngineView` loaded with the same final HTML, then clean
+  it up after success/error; do not call `setHtml`, print-fit JS, or
+  `printToPdf` on the visible preview view except as an explicit fallback.
 - final header contact methods are explicit links; placeholder link labels are forbidden
 - target subtitle semantics are explicit candidature semantics:
   `Poste visé: {job_title} | {company}` / `Target role: {job_title} | {company}`,

@@ -188,7 +188,7 @@ def test_summary_focus_sentence_prefers_profile_backed_aligned_skills() -> None:
     )
 
     summary = str(result.get("summary") or "")
-    assert "Atouts pertinents pour Mistral AI" in summary
+    assert "Profil aligné avec Mistral AI" in summary
     lowered = summary.lower()
     assert "sql" in lowered
     assert "python" in lowered
@@ -220,3 +220,63 @@ def test_skill_residue_cleanup_keeps_generic_tool_context_repair() -> None:
 
     assert "Agilitest" in cleaned
     assert "Agilitest Tests API" not in cleaned
+
+
+def test_profile_skill_reconciliation_drops_unsupported_offer_only_skills() -> None:
+    profile_json = {
+        "skills": [
+            {"name": "Postman"},
+            {"name": "SQL"},
+            {"name": "PostgreSQL"},
+            {"name": "MongoDB"},
+            {"name": "SQL Server"},
+        ],
+        "experiences": [
+            {
+                "title": "QA Engineer",
+                "company": "ACME",
+                "start_date": "09/2023",
+                "end_date": "Present",
+                "description": "Tests API avec Postman et vérifications SQL en base.",
+            }
+        ],
+    }
+
+    result = coerce_generated_cv_payload(
+        payload={
+            "summary": "QA profile.",
+            "skills": [
+                {
+                    "category": "Compétences techniques",
+                    "items": [
+                        "ensuring end-to-end reliability",
+                        "QA",
+                        "api",
+                        "Descriptif",
+                        "UX Design",
+                        "Cloud computing",
+                        "Architecture cloud AWS",
+                    ],
+                }
+            ],
+            "experience": [],
+        },
+        profile_json=profile_json,
+        fallback_generator=_fallback_generator,
+        language_code="fr",
+    )
+
+    items = [
+        item
+        for block in result["skills"]
+        for item in block.get("items", [])
+        if isinstance(item, str)
+    ]
+    rendered = " ".join(items)
+    assert "Postman" in rendered
+    assert "SQL" in rendered
+    assert "Descriptif" not in rendered
+    assert "UX Design" not in rendered
+    assert "Cloud computing" not in rendered
+    assert "Architecture cloud AWS" not in rendered
+    assert "ensuring end-to-end reliability" not in rendered

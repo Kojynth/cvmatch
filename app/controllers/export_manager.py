@@ -1697,7 +1697,7 @@ class ExportManager:
                     name = str(item.get("name") or item.get("skill") or "").strip()
                 else:
                     name = str(item or "").strip()
-                if not name:
+                if not name or self._is_noisy_featured_skill_label(name):
                     continue
                 key = name.lower()
                 if key in seen:
@@ -1732,7 +1732,12 @@ class ExportManager:
                 else:
                     name = str(item or "").strip()
                 key = self._normalize_text_key(name)
-                if not name or not key or key in seen:
+                if (
+                    not name
+                    or not key
+                    or key in seen
+                    or self._is_noisy_featured_skill_label(name)
+                ):
                     continue
                 seen.add(key)
                 names.append(name)
@@ -1966,6 +1971,10 @@ class ExportManager:
                     re.IGNORECASE,
                 ),
                 re.compile(
+                    r"^Profil\s+align[ée]?(?:\s+avec\s+[^.:]{1,100})?\s*[:\-]\s*.+\.$",
+                    re.IGNORECASE,
+                ),
+                re.compile(
                     r"^Profil\s+pertinent(?:\s+pour\s+[^.]{1,80}?)?\s+gr(?:a|â)ce\s+[aà]\s+.+\.$",
                     re.IGNORECASE,
                 ),
@@ -1982,6 +1991,10 @@ class ExportManager:
             else (
                 re.compile(
                     r"^Relevant\s+strengths(?:\s+for\s+[^.:]{1,80})?\s+include\s+.+\.$",
+                    re.IGNORECASE,
+                ),
+                re.compile(
+                    r"^Profile\s+aligned(?:\s+with\s+[^.:]{1,100})?\s*[:\-]\s*.+\.$",
                     re.IGNORECASE,
                 ),
                 re.compile(
@@ -2016,6 +2029,10 @@ class ExportManager:
                     re.IGNORECASE,
                 ),
                 re.compile(
+                    r"^Profil\s+align[ée]?(?:\s+avec\s+(?P<company>.+?))?\s*[:\-]\s*(?P<terms>.+?)\.\s*$",
+                    re.IGNORECASE,
+                ),
+                re.compile(
                     r"^Profil\s+pertinent(?:\s+pour\s+(?P<company>.+?))?\s+gr(?:a|â)ce\s+[aà]\s+(?P<terms>.+?)\.\s*$",
                     re.IGNORECASE,
                 ),
@@ -2032,6 +2049,10 @@ class ExportManager:
             else (
                 re.compile(
                     r"^Relevant\s+strengths(?:\s+for\s+(?P<company>.+?))?\s+include\s+(?P<terms>.+?)\.\s*$",
+                    re.IGNORECASE,
+                ),
+                re.compile(
+                    r"^Profile\s+aligned(?:\s+with\s+(?P<company>.+?))?\s*[:\-]\s*(?P<terms>.+?)\.\s*$",
                     re.IGNORECASE,
                 ),
                 re.compile(
@@ -2801,6 +2822,63 @@ class ExportManager:
             "strengths",
         }
 
+    def _is_noisy_featured_skill_label(self, value: Any) -> bool:
+        text = self._normalize_render_text(value)
+        norm = self._normalize_text_key(text)
+        if not text or not norm:
+            return True
+        tokens = [token for token in norm.split() if token]
+        if not tokens:
+            return True
+        if norm in {
+            "descriptif",
+            "description",
+            "job description",
+            "role summary",
+            "about you",
+            "what you will do",
+            "hiring process",
+            "location remote",
+        }:
+            return True
+        if len(tokens) > 5:
+            return True
+        if tokens[0] in {
+            "building",
+            "collaborating",
+            "creating",
+            "delivering",
+            "developing",
+            "driving",
+            "enabling",
+            "ensuring",
+            "implementing",
+            "improving",
+            "integrating",
+            "managing",
+            "providing",
+            "supporting",
+            "validating",
+        }:
+            return True
+        if len(tokens) == 1 and tokens[0] in {
+            "api",
+            "apis",
+            "automation",
+            "automatisation",
+            "cloud",
+            "platform",
+            "platforms",
+            "qa",
+            "software",
+            "testing",
+            "tests",
+            "tool",
+            "tools",
+        }:
+            return True
+        return False
+
     def _score_featured_skill_candidate(
         self,
         value: Any,
@@ -2809,6 +2887,8 @@ class ExportManager:
     ) -> float:
         text = self._normalize_render_text(value)
         if not text:
+            return -100.0
+        if self._is_noisy_featured_skill_label(text):
             return -100.0
 
         norm = self._normalize_text_key(text)
@@ -3989,9 +4069,16 @@ class ExportManager:
                         raw_name = item.get("name") or item.get("skill") or ""
                     else:
                         raw_name = item
-                    name = self._normalize_render_text(raw_name).strip(" ,;:-")
+                    name = self._restore_display_acronyms(
+                        self._normalize_render_text(raw_name)
+                    ).strip(" ,;:-")
                     key = self._normalize_text_key(name)
-                    if not name or not key or key in seen_names:
+                    if (
+                        not name
+                        or not key
+                        or key in seen_names
+                        or self._is_noisy_featured_skill_label(name)
+                    ):
                         continue
                     seen_names.add(key)
                     names.append(name)
@@ -4017,11 +4104,13 @@ class ExportManager:
         seen: set[str] = set()
         limit = max(1, int(max_items or 1))
         for item in selected_skills or []:
-            text = self._normalize_render_text(item)
+            text = self._restore_display_acronyms(
+                self._normalize_render_text(item)
+            )
             if not text:
                 continue
             key = self._normalize_text_key(text)
-            if not key or key in seen:
+            if not key or key in seen or self._is_noisy_featured_skill_label(text):
                 continue
             seen.add(key)
             output.append(text)
@@ -4061,7 +4150,15 @@ class ExportManager:
                 else str(value or "").strip()
             )
             key = self._normalize_text_key(name)
-            if not name or not key or key in seen:
+            if (
+                not name
+                or not key
+                or key in seen
+                or (
+                    source != "soft_skill"
+                    and self._is_noisy_featured_skill_label(name)
+                )
+            ):
                 return order
             seen.add(key)
             target.append((order, name, source))
@@ -4925,36 +5022,134 @@ class ExportManager:
             if is_en:
                 if company_name and role_name:
                     return (
-                        f"For {company_name}, this profile targets the {role_name} "
-                        f"role with positioning around {terms_text}."
+                        f"Profile aligned with the {role_name} role at "
+                        f"{company_name}: foundation in {terms_text}."
                     )
                 if company_name:
-                    return (
-                        f"For {company_name}, this profile highlights relevant "
-                        f"positioning around {terms_text}."
-                    )
-                return f"This profile highlights relevant positioning around {terms_text}."
+                    return f"Profile aligned with {company_name}: foundation in {terms_text}."
+                return f"Profile aligned with the target role: foundation in {terms_text}."
             if company_name and role_name:
                 return (
-                    f"Pour {company_name}, ce profil cible le poste de {role_name} "
-                    f"avec un positionnement autour de {terms_text}."
+                    f"Profil aligné avec le poste {role_name} chez {company_name} : "
+                    f"socle orienté {terms_text}."
                 )
             if company_name:
-                return (
-                    f"Pour {company_name}, ce profil met en avant un positionnement "
-                    f"pertinent autour de {terms_text}."
-                )
-            return (
-                f"Ce profil met en avant un positionnement pertinent autour de "
-                f"{terms_text}."
-            )
+                return f"Profil aligné avec {company_name} : socle orienté {terms_text}."
+            return f"Profil aligné avec le poste visé : socle orienté {terms_text}."
 
         candidate_terms = common_terms + profile_extra_terms + offer_only_terms
-        candidate_sentence = natural_positioning_sentence(
-            candidate_terms,
-            company_name=company,
-            role_name=job_title,
-        )
+
+        def contextual_positioning_sentence(values: List[str]) -> str:
+            probe = self._normalize_text_key(
+                " ".join(
+                    [
+                        *values,
+                        *offer_terms,
+                        *profile_terms,
+                        rendered_probe,
+                        job_title,
+                    ]
+                )
+            )
+            if not probe:
+                return ""
+
+            def has_any(*markers: str) -> bool:
+                return any(
+                    self._match_probe_contains_term(probe, marker)
+                    for marker in markers
+                )
+
+            quality_context = has_any(
+                "qa",
+                "quality",
+                "qualite",
+                "test",
+                "testing",
+                "recette",
+                "anomalie",
+                "anomalies",
+            )
+            if not quality_context:
+                return ""
+
+            proof_parts: List[str] = []
+            if has_any("test api", "tests api", "api testing", "postman"):
+                proof_parts.append("tests API" if not is_en else "API testing")
+            if has_any("sql", "postgresql", "mongodb", "sql server", "database"):
+                proof_parts.append(
+                    "vérifications SQL" if not is_en else "SQL checks"
+                )
+            if has_any("anomalie", "anomalies", "defect", "debug"):
+                proof_parts.append(
+                    "qualification d'anomalies" if not is_en else "defect analysis"
+                )
+            if has_any("pratiques qa", "documentation qa", "gherkin", "xray", "jira"):
+                proof_parts.append(
+                    "structuration de pratiques QA"
+                    if not is_en
+                    else "structured QA practices"
+                )
+
+            focus_parts: List[str] = []
+            if has_any("automation", "automatisation", "playwright", "cypress", "selenium"):
+                focus_parts.append("l'automatisation" if not is_en else "automation")
+            if has_any("edge case", "edge cases", "cas limite", "cas limites", "risque"):
+                focus_parts.append("les cas limites" if not is_en else "edge cases")
+            if has_any("ai", "ia", "ml", "machine learning", "model", "modele"):
+                focus_parts.append(
+                    "l'IA appliquée à la qualité logicielle"
+                    if not is_en
+                    else "AI applied to software quality"
+                )
+            if has_any("release", "pre release", "quality gate", "production"):
+                focus_parts.append(
+                    "la qualité de release" if not is_en else "release quality"
+                )
+
+            if not proof_parts:
+                return ""
+            if len(proof_parts) < 2 and not focus_parts:
+                return ""
+
+            if is_en:
+                head = "Profile aligned"
+                if company and job_title:
+                    head = f"Profile aligned with the {job_title} role at {company}"
+                elif company:
+                    head = f"Profile aligned with {company}"
+                elif job_title:
+                    head = f"Profile aligned with the {job_title} role"
+                sentence = f"{head}: experience in {self._human_join(proof_parts, is_en=True)}"
+                if focus_parts:
+                    sentence += (
+                        f", with a clear focus on "
+                        f"{self._human_join(focus_parts, is_en=True)}"
+                    )
+                return f"{sentence}."
+
+            head = "Profil aligné avec le poste visé"
+            if company and job_title:
+                head = f"Profil aligné avec le poste {job_title} chez {company}"
+            elif company:
+                head = f"Profil aligné avec {company}"
+            elif job_title:
+                head = f"Profil aligné avec le poste {job_title}"
+            sentence = f"{head} : expérience en {self._human_join(proof_parts, is_en=False)}"
+            if focus_parts:
+                sentence += (
+                    f", avec un intérêt marqué pour "
+                    f"{self._human_join(focus_parts, is_en=False)}"
+                )
+            return f"{sentence}."
+
+        candidate_sentence = contextual_positioning_sentence(candidate_terms)
+        if not candidate_sentence:
+            candidate_sentence = natural_positioning_sentence(
+                candidate_terms,
+                company_name=company,
+                role_name=job_title,
+            )
 
         sentence = ""
         if existing:

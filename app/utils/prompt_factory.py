@@ -168,7 +168,9 @@ OUTPUT RULES:
 - Summary must mention COMPANY at least once when COMPANY is provided, using a
   natural positioning sentence that explains candidate relevance to the target
   role. Avoid formulaic keyword dumps such as "Profil pertinent pour COMPANY
-  grace a A, B, C" or "Atouts pertinents pour COMPANY : A, B, C".
+  grace a A, B, C" or "Atouts pertinents pour COMPANY : A, B, C". Prefer a
+  short sentence like "Profil aligne avec le poste ROLE chez COMPANY : experience
+  en A et B, avec un interet pour C" when those facts are grounded.
 - Offer-only vocabulary not grounded in PROFILE_JSON may appear only in a short
   natural closing positioning sentence of the summary. Do not present pure
   offer-only terms as proven skills, projects, or experience facts.

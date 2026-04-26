@@ -58,6 +58,14 @@ and must stay usable on heterogeneous Windows/Linux machines.
 - Preserve round-trip integrity across:
   UI -> profile JSON -> DB -> generated CV JSON -> render/export/history.
 - Preserve history preview/export parity, especially profile photo behaviour.
+- **Preview/export immutability (MANDATORY)**: exporting a PDF must not mutate,
+  reload, rescale, or otherwise visibly change the preview currently shown to
+  the user. WebEngine PDF export must print from a dedicated hidden
+  `QWebEngineView` loaded with the same final HTML, then clean it up after
+  success or error. Do not run print-fit JavaScript, `setHtml`, or
+  `printToPdf` against the visible `cv_web_view` / `letter_web_view` unless a
+  hidden export view cannot be created and the fallback is explicit. Regression
+  coverage lives in `tests/contracts/test_template_preview_pdf_export_contract.py`.
 - `personal_info.links` stays the source of truth and maps to `contact.links`.
 - Use canonical profile keys first and legacy aliases only as explicit fallback.
 - **One-page output (MANDATORY)**: the generated CV must always render to

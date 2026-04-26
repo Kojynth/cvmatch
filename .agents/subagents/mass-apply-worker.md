@@ -58,7 +58,8 @@ review, and bulk generation/apply workflows.
   compression, clickable contact links with explicit labels, explicit target
   subtitle semantics, preservation of structured sections such as featured
   project and certifications when present in CV JSON, and no renderer-side
-  ellipsis/clamp truncation
+  ellipsis/clamp truncation; WebEngine PDF export must not reload/rescale the
+  visible preview and must print from a dedicated hidden export view
 - treat sector/industry similarity only as a very weak bonus in bulk CV
   adaptation, never as a hard gate and never over stronger offer/profile
   evidence

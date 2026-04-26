@@ -50,7 +50,9 @@ history, and `mass_apply`.
   contract: measured fit-to-page compression (no `overflow: hidden` crop,
   no forced `body` A4 height), a single canonical print block with A4 margins,
   direct WeasyPrint export CSS (`PDF_ONE_PAGE_FIT_CSS`) aligned with preview
-  fit rules,
+  fit rules, and WebEngine PDF export that prints from a dedicated hidden
+  `QWebEngineView` without reloading/rescaling/mutating the visible preview
+  (`tests/contracts/test_template_preview_pdf_export_contract.py`),
   explicit clickable contact header links with smart labels (no `Lien 1` /
   `Link 1` placeholders), explicit candidature target subtitle semantics
   (`Poste visé` / `Target role`), and preservation of structured sections

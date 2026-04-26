@@ -12,7 +12,9 @@ Checklist:
    `break-inside: avoid` on structured blocks; also verify no renderer-side
    ellipsis/clamp truncation is used as a fit-to-page shortcut. For direct
    PDF export, verify WeasyPrint applies `PDF_ONE_PAGE_FIT_CSS` as well as
-   template CSS; preview-only CSS is not sufficient.
+   template CSS; preview-only CSS is not sufficient. For WebEngine PDF export,
+   verify printing uses a dedicated hidden `QWebEngineView` loaded with the
+   same final HTML and does not reload, rescale, or mutate the visible preview.
 4. If header rendering is touched, verify clickable contacts with explicit
    labels, no `Lien 1` / `Link 1`, and candidature-style target subtitle
    semantics (`Poste visé` / `Target role`).
