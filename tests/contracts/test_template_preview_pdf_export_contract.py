@@ -35,7 +35,11 @@ class _FakeWebView:
         self.html_calls = []
         self.stopped = False
         self.deleted = False
+        self.resize_calls = []
         self.__class__.instances.append(self)
+
+    def resize(self, width: int, height: int) -> None:
+        self.resize_calls.append((width, height))
 
     def hide(self) -> None:
         self.hidden = True
@@ -145,7 +149,9 @@ def _load_preview_module(monkeypatch):
     return importlib.import_module("app.views.template_preview_window")
 
 
-def _build_export_stub(template_preview_window, visible_web_view: _FakeWebView) -> SimpleNamespace:
+def _build_export_stub(
+    template_preview_window, visible_web_view: _FakeWebView
+) -> SimpleNamespace:
     template_preview_window_cls = template_preview_window.TemplatePreviewWindow
     stub = SimpleNamespace()
     stub.cv_web_view = visible_web_view
@@ -194,9 +200,30 @@ def test_webengine_pdf_export_uses_hidden_view_without_reloading_visible_preview
     hidden_web_view = stub._pdf_web_view
     assert hidden_web_view is not visible_web_view
     assert stub._pdf_web_view_owned is True
+    assert hidden_web_view.resize_calls == [(794, 1123)]
     assert hidden_web_view.hidden is True
     assert hidden_web_view.html_calls
     assert visible_web_view.html_calls == []
+
+
+def test_fit_tiers_hide_optional_content_before_scaling(monkeypatch) -> None:
+    template_preview_window = _load_preview_module(monkeypatch)
+
+    css = template_preview_window.CV_BASE_LAYOUT_CSS
+    assert ':root[data-page-fit="compact"] .fit-compact-hide' in css
+    assert ':root[data-page-fit="tight"] .fit-tight-hide' in css
+    assert ':root[data-page-fit="ultra"] .fit-ultra-hide' in css
+    assert ':root[data-page-fit="critical"] .project-section' in css
+    assert ':root[data-page-fit="critical"] .experience-entry:nth-of-type(n+5)' in css
+
+
+def test_auto_fit_fallback_scale_is_readability_capped(monkeypatch) -> None:
+    template_preview_window = _load_preview_module(monkeypatch)
+
+    script = template_preview_window.CV_AUTO_FIT_SCRIPT
+    assert "MIN_READABLE_PRINT_SCALE = 0.9" in script
+    assert "Math.max(scale, MIN_READABLE_PRINT_SCALE)" in script
+    assert "Math.max(scale, 0.01)" not in script
 
 
 def test_hidden_pdf_view_load_triggers_print_without_visible_preview_branch(
