@@ -120,7 +120,16 @@ CV_BASE_LAYOUT_CSS = """
 .project-entry {
   break-inside: avoid;
 }
-:root[data-page-fit="ultra"] .fit-ultra-hide {
+:root[data-page-fit="compact"] .fit-compact-hide,
+:root[data-page-fit="tight"] .fit-compact-hide,
+:root[data-page-fit="ultra"] .fit-compact-hide,
+:root[data-page-fit="critical"] .fit-compact-hide,
+:root[data-page-fit="tight"] .fit-tight-hide,
+:root[data-page-fit="ultra"] .fit-tight-hide,
+:root[data-page-fit="critical"] .fit-tight-hide,
+:root[data-page-fit="ultra"] .fit-ultra-hide,
+:root[data-page-fit="critical"] .fit-ultra-hide,
+:root[data-page-fit="critical"] .fit-critical-hide {
   display: none !important;
 }
 :root[data-page-fit="compact"] .cv-section {
@@ -219,6 +228,62 @@ CV_BASE_LAYOUT_CSS = """
   padding: 1px 6px !important;
   font-size: 9.8px !important;
 }
+:root[data-page-fit="critical"] .cv-section {
+  margin-top: 6px !important;
+}
+:root[data-page-fit="critical"] .cv-header,
+:root[data-page-fit="critical"] .cv-body {
+  padding-left: 10px !important;
+  padding-right: 10px !important;
+}
+:root[data-page-fit="critical"] .cv-header {
+  padding-top: 10px !important;
+  padding-bottom: 6px !important;
+  margin-bottom: 7px !important;
+}
+:root[data-page-fit="critical"] .cv-body {
+  padding-top: 6px !important;
+  padding-bottom: 8px !important;
+}
+:root[data-page-fit="critical"] .section-content,
+:root[data-page-fit="critical"] .dynamic-content {
+  font-size: 10.1px !important;
+  line-height: 1.15 !important;
+}
+:root[data-page-fit="critical"] .section-title {
+  margin-top: 5px !important;
+  margin-bottom: 3px !important;
+}
+:root[data-page-fit="critical"] .entry h3 {
+  margin-top: 5px !important;
+  margin-bottom: 1px !important;
+  font-size: 11.5px !important;
+}
+:root[data-page-fit="critical"] .meta {
+  margin-top: 1px !important;
+  margin-bottom: 2px !important;
+}
+:root[data-page-fit="critical"] .experience-highlights,
+:root[data-page-fit="critical"] .certification-list,
+:root[data-page-fit="critical"] ul {
+  margin-top: 2px !important;
+  margin-bottom: 2px !important;
+}
+:root[data-page-fit="critical"] .experience-highlight {
+  margin-bottom: 0 !important;
+}
+:root[data-page-fit="critical"] .skill-chip {
+  padding: 1px 5px !important;
+  font-size: 9.4px !important;
+  line-height: 1.05 !important;
+}
+:root[data-page-fit="critical"] .soft-skills-section,
+:root[data-page-fit="critical"] .project-section,
+:root[data-page-fit="critical"] .certification-section,
+:root[data-page-fit="critical"] .education-entry ul,
+:root[data-page-fit="critical"] .experience-entry:nth-of-type(n+5) {
+  display: none !important;
+}
 """
 
 ONE_PAGE_PRINT_CSS = """
@@ -249,8 +314,10 @@ ONE_PAGE_PRINT_CSS = """
     width: calc(186mm / var(--print-scale));
     max-width: calc(186mm / var(--print-scale));
     margin: 0 auto !important;
-    transform: scale(var(--print-scale));
-    transform-origin: top left;
+    position: relative;
+    left: 50%;
+    transform: translateX(-50%) scale(var(--print-scale));
+    transform-origin: top center;
     border: none !important;
     border-radius: 0 !important;
     box-shadow: none !important;
@@ -415,7 +482,8 @@ CV_AUTO_FIT_SCRIPT = """
   const PAGE_MARGIN = 12 * PX_PER_MM;
   const TARGET_WIDTH = PAGE_WIDTH - (PAGE_MARGIN * 2);
   const TARGET_HEIGHT = PAGE_HEIGHT - (PAGE_MARGIN * 2);
-  const TIERS = ["base", "compact", "tight", "ultra"];
+  const MIN_READABLE_PRINT_SCALE = 0.9;
+  const TIERS = ["base", "compact", "tight", "ultra", "critical"];
 
   function fitToPage() {
     const root = document.documentElement;
@@ -455,19 +523,22 @@ CV_AUTO_FIT_SCRIPT = """
       }
     }
 
-    let scale = Math.min(
+    const rawScale = Math.min(
       1,
       TARGET_HEIGHT / Math.max(metrics.height, 1),
       TARGET_WIDTH / Math.max(metrics.width, 1),
     );
+    let scale = rawScale;
     if (!Number.isFinite(scale) || scale <= 0) {
       scale = 1;
     }
-    scale = Math.max(scale, 0.01);
+    scale = Math.max(scale, MIN_READABLE_PRINT_SCALE);
     root.style.setProperty("--print-scale", scale.toFixed(3));
     return {
       tier: root.dataset.pageFit || "ultra",
       scale,
+      rawScale,
+      cappedScale: scale > rawScale,
       height: metrics.height,
       width: metrics.width,
       targetHeight: TARGET_HEIGHT,
@@ -499,6 +570,8 @@ CV_AUTO_FIT_SCRIPT = """
 
 
 _FILENAME_UNSAFE_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
+PDF_EXPORT_VIEWPORT_WIDTH_PX = 794
+PDF_EXPORT_VIEWPORT_HEIGHT_PX = 1123
 
 
 def _sanitize_export_filename_part(value: Any, fallback: str) -> str:
@@ -2293,6 +2366,10 @@ class TemplatePreviewWindow(QMainWindow):
         if html_with_css:
             try:
                 export_web_view = QWebEngineView(self)
+                export_web_view.resize(
+                    PDF_EXPORT_VIEWPORT_WIDTH_PX,
+                    PDF_EXPORT_VIEWPORT_HEIGHT_PX,
+                )
                 export_web_view.hide()
                 export_web_view.loadFinished.connect(self._on_preview_loaded)
                 page = export_web_view.page()

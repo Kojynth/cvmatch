@@ -48,7 +48,7 @@
 
     <main class="cv-body">
       {% if profile_summary_lines %}
-      <section class="cv-section">
+      <section class="cv-section profile-section">
         <h2 class="section-title">{{ labels.profile if labels is defined and labels.profile is defined else 'Profile' }}</h2>
         <div class="section-content summary-content">
           {% for line in profile_summary_lines %}
@@ -59,7 +59,7 @@
       {% endif %}
 
       {% if featured_skills %}
-      <section class="cv-section">
+      <section class="cv-section hard-skills-section">
         <h2 class="section-title">{{ labels.skills if labels is defined and labels.skills is defined else 'Skills' }}</h2>
         <div class="section-content">
           <div class="skill-chip-list">
@@ -72,7 +72,7 @@
       {% endif %}
 
       {% if featured_soft_skills %}
-      <section class="cv-section">
+      <section class="cv-section soft-skills-section">
         <h2 class="section-title">{{ labels.soft_skills if labels is defined and labels.soft_skills is defined else ('Soft skills' if language == 'en' else 'Savoir-être') }}</h2>
         <div class="section-content">
           <div class="skill-chip-list soft-skill-chip-list">
@@ -85,7 +85,7 @@
       {% endif %}
 
       {% if experience %}
-      <section class="cv-section">
+      <section class="cv-section experience-section">
         <h2 class="section-title">{{ labels.experience if labels is defined and labels.experience is defined else 'Experience' }}</h2>
         <div class="section-content">
           {% for exp in experience %}
@@ -115,7 +115,7 @@
       {% endif %}
 
       {% if featured_project %}
-      <section class="cv-section">
+      <section class="cv-section project-section">
         <h2 class="section-title">{{ labels.projects if labels is defined and labels.projects is defined else 'Projects' }}</h2>
         <div class="section-content">
           <article class="entry project-entry">
@@ -134,7 +134,7 @@
       {% endif %}
 
       {% if education %}
-      <section class="cv-section">
+      <section class="cv-section education-section">
         <h2 class="section-title">{{ labels.education if labels is defined and labels.education is defined else 'Education' }}</h2>
         <div class="section-content">
           {% for edu in education %}
@@ -158,7 +158,7 @@
       {% endif %}
 
       {% if featured_certifications %}
-      <section class="cv-section">
+      <section class="cv-section certification-section">
         <h2 class="section-title">{{ labels.certifications if labels is defined and labels.certifications is defined else 'Certifications' }}</h2>
         <div class="section-content">
           <ul class="certification-list">
@@ -175,7 +175,7 @@
       {% endif %}
 
       {% if languages %}
-      <section class="cv-section fit-ultra-hide">
+      <section class="cv-section languages-section fit-ultra-hide">
         <h2 class="section-title">{{ labels.languages if labels is defined and labels.languages is defined else 'Languages' }}</h2>
         <div class="section-content">
           <ul>
@@ -188,7 +188,7 @@
       {% endif %}
 
       {% if interests %}
-      <section class="cv-section fit-ultra-hide">
+      <section class="cv-section interests-section fit-ultra-hide">
         <h2 class="section-title">{{ labels.interests if labels is defined and labels.interests is defined else 'Interests' }}</h2>
         <div class="section-content">
           {{ interests | join(', ') }}
