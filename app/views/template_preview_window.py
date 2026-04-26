@@ -278,7 +278,6 @@ CV_BASE_LAYOUT_CSS = """
   line-height: 1.05 !important;
 }
 :root[data-page-fit="critical"] .soft-skills-section,
-:root[data-page-fit="critical"] .project-section,
 :root[data-page-fit="critical"] .certification-section,
 :root[data-page-fit="critical"] .education-entry ul,
 :root[data-page-fit="critical"] .experience-entry:nth-of-type(n+5) {

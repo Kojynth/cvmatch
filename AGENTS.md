@@ -116,6 +116,10 @@ and must stay usable on heterogeneous Windows/Linux machines.
     sector, never by a hardcoded company/profile/tech-only taxonomy; the
     renderer must not invent profession-specific grouped skill categories,
     because specific category labels belong in the LLM-generated CV JSON;
+    final display must deduplicate repeated tools across flat and comparative
+    labels, prefer compact source-backed groups over raw chips when that
+    improves readability, and avoid losing named profile evidence such as
+    tools, data stores, methods, delivery systems, or frameworks;
   - rendered experience order stays reverse-chronological; relevance ranking
     may change detail budgets, not the visible role order;
   - hard skill/tool chips may come from explicit user-profile evidence:
@@ -134,6 +138,9 @@ and must stay usable on heterogeneous Windows/Linux machines.
     carry offer/profile alignment, integrated naturally rather than as a
     keyword list;
   - one featured project when available;
+  - compact interests/hobbies when present in the source profile, unless the
+    measured fit-to-page pass has no remaining safe space after preserving
+    higher-priority content;
   - a compact certifications block when available;
   - soft skills only as a compact supporting signal, never as filler; when
     behaviour evidence can be integrated into experience bullets, avoid a
@@ -400,9 +407,17 @@ and must stay usable on heterogeneous Windows/Linux machines.
   consistent date format across the full CV.
 - Include an explicit duration for each role or project when reliable dates
   allow it.
+- Preserve required reader-facing sections when source data exists: summary,
+  contact, skills, experience/projects, education, and compact hobbies or
+  interests. Do not drop projects/interests by default just because a CV is
+  one page; use prioritized fit-to-page compression first.
 - Keep each role to 2-4 concise bullet points whenever the source profile
   supports bullet rendering; prefer short action-led bullets over dense
   narrative paragraphs.
+- Role-critical skills shown in the skill section should be proved somewhere
+  visible when the profile contains that evidence. For example, API/data,
+  automation, delivery, or domain tools should be retained in experience or
+  project bullets instead of appearing only as isolated chips.
 - Use strong action verbs, avoid first-person pronouns, keep punctuation and
   tense consistent, and prefer `action + what + result/impact` phrasing when
   facts support it.

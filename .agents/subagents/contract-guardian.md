@@ -59,7 +59,8 @@ history, and `mass_apply`.
   explicit clickable contact header links with smart labels (no `Lien 1` /
   `Link 1` placeholders), explicit candidature target subtitle semantics
   (`Poste visé` / `Target role`), and preservation of structured sections
-  such as featured project and certifications when present in one-page CV JSON;
+  such as featured project, certifications, and compact interests/hobbies when
+  present in one-page CV JSON;
   final rendered sentences must stay whole (no `...` / `…` truncation), and
   any grounded positioning sentence must remain visible in the rendered summary
 - when experience dedup/postprocessing is touched, verify both sides of the
@@ -96,7 +97,10 @@ history, and `mass_apply`.
   inside experience bullets; strongly targeted offers may use compact grouped
   chips when that improves hierarchy/proof, but grouping must be driven by
   `{job_title}` and requirement-heavy offer evidence for any profession/sector
-  in the generated CV JSON, not by renderer-side hardcoded categories
+  in the generated CV JSON, not by renderer-side hardcoded categories; repeated
+  tools must be deduplicated across flat chips and comparative labels, and
+  role-critical skills should remain visible in experience/project proof when
+  the source profile contains that evidence
 - when offer-only targeting is touched, verify pure offer-only terms stay in
   the natural positioning sentence unless profile evidence supports a
   coherent implicit inference elsewhere

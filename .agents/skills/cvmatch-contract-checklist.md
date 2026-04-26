@@ -22,7 +22,8 @@ Checklist:
    labels, no `Lien 1` / `Link 1`, and candidature-style target subtitle
    semantics (`Poste visé` / `Target role`).
 5. If one-page allocation is touched, verify preservation of structured
-   sections (summary, skills, experience, featured project, certifications)
+   sections (summary, skills, experience, featured project, certifications,
+   and compact interests/hobbies when present in the profile)
    instead of flattening to an `additional relevant details` blob, and verify
    the summary may keep one short natural positioning sentence while
    experience blocks prefer action/impact sentences over company-description
@@ -57,7 +58,10 @@ Checklist:
    clarify hierarchy/proof, but grouping must be driven by `{job_title}` plus
    requirement-heavy offer evidence for any profession/sector in the generated
    CV JSON, not by renderer-side hardcoded categories. Do not backfill weak/noisy
-   chips just to reach the visible cap.
+   chips just to reach the visible cap. Deduplicate tools that appear both as
+   individual chips and inside comparative labels, and verify role-critical
+   tools shown in skills are also visible in experience/project evidence when
+   the source profile contains such proof.
 9. If experience dedup is touched, verify duplicate retries/date-format
    variants collapse while same company/title with conflicting periods stay
    distinct.

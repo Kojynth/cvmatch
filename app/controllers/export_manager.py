@@ -2639,41 +2639,268 @@ class ExportManager:
             kept_tokens.append(tokens)
         return kept
 
+    def _source_backed_experience_evidence_lines(
+        self,
+        source_lines: List[str],
+        *,
+        offer_terms: List[str],
+        language_code: str,
+    ) -> List[str]:
+        source_texts = [
+            self._normalize_render_text(item)
+            for item in source_lines or []
+            if self._normalize_render_text(item)
+        ]
+        source_probe = self._normalize_text_key(" ".join(source_texts))
+        offer_probe = self._normalize_text_key(" ".join(offer_terms or []))
+        if not source_probe:
+            return []
+
+        is_en = str(language_code or "").lower().startswith("en")
+
+        def has_source(*markers: str) -> bool:
+            return any(self._match_probe_contains_term(source_probe, marker) for marker in markers)
+
+        def has_offer(*markers: str) -> bool:
+            return any(self._match_probe_contains_term(offer_probe, marker) for marker in markers)
+
+        def first_source(*markers: str) -> str:
+            for line in source_texts:
+                line_probe = self._normalize_text_key(line)
+                if any(self._match_probe_contains_term(line_probe, marker) for marker in markers):
+                    return line
+            return ""
+
+        lines: List[str] = []
+
+        plan_line = first_source(
+            "plan de test",
+            "plans de test",
+            "plan de tests",
+            "plans de tests",
+            "test plan",
+        )
+        if plan_line:
+            if (
+                not is_en
+                and has_source("applications critiques", "application critique")
+                and has_source("risque", "risques", "ambiguite", "incoherence")
+            ):
+                scope = "sur des applications critiques"
+                app_match = re.search(
+                    r"\bsur\s+(\d+)\s+applications?\s+critiques?\b",
+                    plan_line,
+                    re.IGNORECASE,
+                )
+                if app_match:
+                    scope = f"sur {app_match.group(1)} applications critiques"
+                suffix = "risques fonctionnels"
+                if has_offer("edge case", "edge cases", "cas limite", "cas limites") or has_source(
+                    "cas limite",
+                    "cas limites",
+                ):
+                    suffix += " et cas limites"
+                lines.append(
+                    f"Exécute et suit des plans de test {scope}, avec identification des {suffix}."
+                )
+            else:
+                lines.append(plan_line)
+
+        if has_source("postman", "test api", "tests api", "api testing") and has_source(
+            "postgresql",
+            "mongodb",
+            "sql server",
+            "microsoft sql server",
+            "base de donnees",
+            "database",
+        ):
+            if is_en:
+                lines.append(
+                    "Runs API tests with Postman and checks database consistency."
+                )
+            else:
+                db_names = []
+                for label in ("PostgreSQL", "MongoDB", "SQL Server"):
+                    if self._match_probe_contains_term(source_probe, label):
+                        db_names.append(label)
+                db_names = db_names or ["bases de données"]
+                lines.append(
+                    "Réalise des tests API avec Postman et vérifie la cohérence "
+                    f"des données en base sur {', '.join(db_names[:-1])}"
+                    f"{' et ' if len(db_names) > 1 else ''}{db_names[-1]}."
+                )
+
+        quality_line = ""
+        if not is_en and has_source("qualifie", "qualifier", "migration", "parametrage"):
+            if has_source("rgpd", "purge", "conformite"):
+                quality_line = (
+                    "Qualifie les évolutions applicatives et contrôle la conformité RGPD, "
+                    "notamment sur migrations front-end, paramétrages back-end et scripts de purge."
+                )
+            else:
+                quality_line = first_source("qualifie", "qualifier", "migration", "parametrage")
+        elif is_en:
+            quality_line = first_source("release", "migration", "backend", "front end", "compliance")
+        if quality_line:
+            lines.append(quality_line)
+
+        if has_source("agent", "agents") and has_source("ia", "ai"):
+            if not is_en and has_source("donnees de test", "generation de donnees"):
+                count_match = re.search(r"\b(\d+)\s+agents?\b", " ".join(source_texts), re.IGNORECASE)
+                count = count_match.group(1) if count_match else ""
+                count_text = f"{count} " if count else ""
+                lines.append(
+                    f"Crée {count_text}agents IA pour assister les activités QA : "
+                    "génération de données de test, aide à la conception de plans de test "
+                    "et benchmark d'outils d'automatisation."
+                )
+            elif not is_en and has_source("benchmark", "benchmarker"):
+                count_match = re.search(r"\b(\d+)\s+agents?\b", " ".join(source_texts), re.IGNORECASE)
+                count = count_match.group(1) if count_match else ""
+                count_text = f"{count} " if count else ""
+                lines.append(
+                    f"Crée {count_text}agents IA pour assister les activités QA "
+                    "et benchmarker les outils d'automatisation."
+                )
+            else:
+                lines.append(first_source("agent", "agents", "ai", "ia"))
+
+        return self._drop_contained_experience_lines(lines)
+
     def _ensure_named_tool_evidence_lines(
         self,
         selected: List[str],
         source_lines: List[str],
         *,
         max_items: int,
+        offer_terms: Optional[List[str]] = None,
+        language_code: str = "fr",
     ) -> List[str]:
         output = [
             self._normalize_render_text(item)
             for item in selected
             if self._normalize_render_text(item)
         ]
-        selected_probe = self._normalize_text_key(" ".join(output))
-        priority_markers = (
-            ("playwright", "cypress", "selenium", "agilitest"),
-            ("postman", "mongodb", "postgresql", "sql server"),
-            ("jira", "xray", "gherkin"),
+        max_limit = max(1, int(max_items or 1))
+
+        priority_lines = self._source_backed_experience_evidence_lines(
+            source_lines,
+            offer_terms=list(offer_terms or []),
+            language_code=language_code,
         )
-        for markers in priority_markers:
-            if any(marker in selected_probe for marker in markers):
+
+        priority_markers = (
+            (
+                "plan de test",
+                "plans de test",
+                "plan de tests",
+                "plans de tests",
+                "test plan",
+                "risque",
+                "edge case",
+                "cas limite",
+            ),
+            ("postman", "test api", "tests api", "api testing", "mongodb", "postgresql", "sql server"),
+            ("qualifie", "migration", "parametrage", "rgpd", "purge", "conformite"),
+            ("agents ia", "agent ia", "ai agent", "benchmark", "donnees de test"),
+            ("jira", "xray", "gherkin", "documentation", "recette"),
+        )
+
+        def line_bucket(line: str) -> int:
+            norm = self._normalize_text_key(line)
+            bucket_checks = (
+                (3, ("agents ia", "agent ia", "ai agent", "benchmark", "donnees de test")),
+                (1, ("postman", "test api", "tests api", "api testing", "mongodb", "postgresql", "sql server")),
+                (2, ("qualifie", "migration", "parametrage", "rgpd", "purge", "conformite")),
+                (
+                    0,
+                    (
+                        "plan de test",
+                        "plans de test",
+                        "plan de tests",
+                        "plans de tests",
+                        "test plan",
+                        "risque",
+                        "edge case",
+                        "cas limite",
+                    ),
+                ),
+                (4, ("jira", "xray", "gherkin", "documentation", "recette")),
+            )
+            for idx, markers in bucket_checks:
+                if any(self._match_probe_contains_term(norm, marker) for marker in markers):
+                    return idx
+            return len(priority_markers)
+
+        def replace_or_append(candidate: str) -> None:
+            text = self._normalize_render_text(candidate)
+            key = self._normalize_text_key(text)
+            if not text or not key:
+                return
+            if any(self._normalize_text_key(item) == key for item in output):
+                return
+            bucket = line_bucket(text)
+            for idx, existing in enumerate(output):
+                if line_bucket(existing) == bucket:
+                    output[idx] = text
+                    return
+            if len(output) < max_limit:
+                output.append(text)
+                return
+            bucket_counts: Dict[int, int] = {}
+            for existing in output:
+                existing_bucket = line_bucket(existing)
+                bucket_counts[existing_bucket] = bucket_counts.get(existing_bucket, 0) + 1
+            duplicate_indices = [
+                idx
+                for idx, existing in enumerate(output)
+                if bucket_counts.get(line_bucket(existing), 0) > 1
+            ]
+            if duplicate_indices:
+                weakest_duplicate_idx = min(
+                    duplicate_indices,
+                    key=lambda item_idx: (
+                        line_bucket(output[item_idx]),
+                        self._word_count(output[item_idx]),
+                    ),
+                )
+                output[weakest_duplicate_idx] = text
+                return
+            weakest_idx = max(
+                range(len(output)),
+                key=lambda item_idx: (
+                    line_bucket(output[item_idx]),
+                    self._word_count(output[item_idx]),
+                ),
+            )
+            if line_bucket(output[weakest_idx]) > bucket:
+                output[weakest_idx] = text
+
+        for candidate in priority_lines:
+            replace_or_append(candidate)
+
+        selected_probe = self._normalize_text_key(" ".join(output))
+        for markers in priority_markers[1:]:
+            if any(self._match_probe_contains_term(selected_probe, marker) for marker in markers):
                 continue
             candidate = next(
                 (
                     self._normalize_render_text(line)
                     for line in source_lines or []
-                    if any(marker in self._normalize_text_key(line) for marker in markers)
+                    if any(
+                        self._match_probe_contains_term(self._normalize_text_key(line), marker)
+                        for marker in markers
+                    )
                 ),
                 "",
             )
             if not candidate:
                 continue
-            if len(output) < max(1, int(max_items or 1)):
-                output.append(candidate)
-                selected_probe = self._normalize_text_key(" ".join(output))
-        return self._drop_contained_experience_lines(output)[: max(1, int(max_items or 1))]
+            replace_or_append(candidate)
+            selected_probe = self._normalize_text_key(" ".join(output))
+
+        deduped = self._drop_contained_experience_lines(output)
+        return sorted(deduped, key=line_bucket)[:max_limit]
 
     def _select_experience_render_lines(
         self,
@@ -4137,6 +4364,232 @@ class ExportManager:
 
         return candidates
 
+    def _collect_featured_skill_source_probe(
+        self,
+        formatted_data: Dict[str, Any],
+        selected_skills: Any,
+    ) -> str:
+        parts: List[str] = []
+
+        def add(value: Any) -> None:
+            if isinstance(value, str):
+                text = str(value or "").strip()
+                if text:
+                    parts.append(text)
+                return
+            if isinstance(value, dict):
+                for key in (
+                    "name",
+                    "skill",
+                    "label",
+                    "category",
+                    "title",
+                    "summary",
+                    "description",
+                    "_render_source_description",
+                    "highlights",
+                    "items",
+                    "skills",
+                    "skills_list",
+                    "technologies",
+                    "tech_stack",
+                    "field_of_study",
+                    "degree",
+                    "organization",
+                ):
+                    add(value.get(key))
+                return
+            if isinstance(value, list):
+                for item in value:
+                    add(item)
+
+        add(selected_skills)
+        for key in (
+            "skills",
+            "experience_all",
+            "experience_primary",
+            "experience",
+            "projects",
+            "education",
+            "certifications",
+        ):
+            add((formatted_data or {}).get(key))
+
+        return self._normalize_match_probe(" ".join(parts))
+
+    def _build_adaptive_featured_skill_rows(
+        self,
+        selected_skills: Any,
+        formatted_data: Dict[str, Any],
+        *,
+        offer_terms: List[str],
+        job_title: str,
+        language_code: str,
+        max_items: int,
+    ) -> List[str]:
+        source_probe = self._collect_featured_skill_source_probe(
+            formatted_data,
+            selected_skills,
+        )
+        if not any(self._normalize_render_text(item) for item in (offer_terms or [])):
+            return []
+        offer_probe = self._normalize_match_probe(" ".join([job_title, *(offer_terms or [])]))
+        if not source_probe:
+            return []
+
+        is_en = str(language_code or "").lower().startswith("en")
+
+        def source_has(*aliases: str) -> bool:
+            return any(self._match_probe_contains_term(source_probe, alias) for alias in aliases)
+
+        def offer_has(*aliases: str) -> bool:
+            return any(self._match_probe_contains_term(offer_probe, alias) for alias in aliases)
+
+        def supported(*aliases: str) -> bool:
+            return source_has(*aliases)
+
+        qa_active = source_has("qa", "test", "tests", "recette") and offer_has(
+            "qa",
+            "quality",
+            "test",
+            "testing",
+            "edge case",
+            "regression",
+            "release",
+        )
+        data_active = source_has("postman", "sql", "database", "base de donnees") and offer_has(
+            "api",
+            "data",
+            "database",
+            "debug",
+            "postman",
+            "sql",
+        )
+        automation_active = source_has(
+            "python",
+            "playwright",
+            "cypress",
+            "selenium",
+            "agilitest",
+            "benchmark",
+        ) and offer_has("automation", "automated", "python", "typescript", "scripting")
+        delivery_active = source_has(
+            "jira",
+            "xray",
+            "gherkin",
+            "documentation",
+            "anomalie",
+            "anomalies",
+        ) and (qa_active or offer_has("collaborate", "stakeholder", "release", "quality"))
+
+        group_specs = [
+            (
+                "QA & tests" if not is_en else "QA & testing",
+                qa_active,
+                [
+                    (
+                        "Plans de test" if not is_en else "Test plans",
+                        (
+                            "plan de test",
+                            "plans de test",
+                            "plan de tests",
+                            "plans de tests",
+                            "test plan",
+                        ),
+                    ),
+                    (
+                        "Tests fonctionnels" if not is_en else "Functional testing",
+                        ("test fonctionnel", "tests fonctionnels", "fonctionnel", "functional testing", "acceptance"),
+                    ),
+                    (
+                        "Non-régression" if not is_en else "Regression testing",
+                        ("non regression", "non-regression", "regression", "xray"),
+                    ),
+                    (
+                        "Analyse des risques" if not is_en else "Risk analysis",
+                        ("risque", "risques", "risk", "risks"),
+                    ),
+                    (
+                        "Cas limites" if not is_en else "Edge cases",
+                        ("cas limite", "cas limites", "edge case", "edge cases", "risque"),
+                    ),
+                ],
+            ),
+            (
+                "API & data",
+                data_active,
+                [
+                    ("Postman", ("postman",)),
+                    ("Tests API" if not is_en else "API testing", ("test api", "tests api", "api testing", "postman")),
+                    ("SQL", ("sql",)),
+                    ("PostgreSQL", ("postgresql",)),
+                    ("MongoDB", ("mongodb",)),
+                    ("SQL Server", ("sql server", "microsoft sql server")),
+                ],
+            ),
+            (
+                "Automatisation" if not is_en else "Automation",
+                automation_active,
+                [
+                    ("Python", ("python",)),
+                    ("Playwright", ("playwright",)),
+                    ("Cypress", ("cypress",)),
+                    ("Selenium", ("selenium",)),
+                    ("Agilitest", ("agilitest",)),
+                    (
+                        "Benchmark d'outils" if not is_en else "Tool benchmarking",
+                        ("benchmark", "benchmarke", "benchmarking"),
+                    ),
+                ],
+            ),
+            (
+                "Delivery QA" if not is_en else "QA delivery",
+                delivery_active,
+                [
+                    ("Jira", ("jira",)),
+                    ("Xray", ("xray",)),
+                    ("Gherkin", ("gherkin",)),
+                    (
+                        "Documentation QA" if not is_en else "QA documentation",
+                        ("documentation qa", "documentation", "livrable", "livrables", "recette"),
+                    ),
+                    (
+                        "Suivi d'anomalies" if not is_en else "Defect tracking",
+                        ("anomalie", "anomalies", "defect", "issue tracking"),
+                    ),
+                ],
+            ),
+        ]
+
+        rows: List[str] = []
+        seen_items: set[str] = set()
+        for label, active, items in group_specs:
+            if not active:
+                continue
+            names: List[str] = []
+            for display, aliases in items:
+                if display in {"Cas limites", "Edge cases"}:
+                    is_supported = source_has("cas limite", "cas limites", "edge case", "edge cases") or (
+                        source_has("risque", "risques", "risk", "risks")
+                        and offer_has("edge case", "edge cases", "cas limite", "cas limites")
+                    )
+                elif display in {"Tests fonctionnels", "Functional testing"}:
+                    is_supported = source_has(*aliases) and source_has("test", "tests", "qa", "recette")
+                else:
+                    is_supported = supported(*aliases)
+                key = self._normalize_text_key(display)
+                if not is_supported or not key or key in seen_items:
+                    continue
+                seen_items.add(key)
+                names.append(display)
+            if len(names) < 2:
+                continue
+            rows.append(f"{label} : {' · '.join(names)}")
+            if len(rows) >= max(1, int(max_items or 1)):
+                break
+
+        return rows
+
     def _group_featured_skills_for_display(
         self,
         selected_skills: Any,
@@ -4147,9 +4600,9 @@ class ExportManager:
         language_code: str,
         max_items: int = 10,
     ) -> List[str]:
-        # Rendering must stay domain-neutral. Profession-specific grouping
-        # belongs to the LLM-generated CV JSON, where JOB_TITLE and offer
-        # evidence are available, not to this fallback renderer.
+        # Preserve generated categories first. If only flat/generic chips
+        # remain, build compact source-backed rows from offer-active evidence
+        # without introducing company-specific claims.
         category_rows: List[str] = []
         category_seen: set[str] = set()
         skill_blocks = (formatted_data or {}).get("skills")
@@ -4229,6 +4682,16 @@ class ExportManager:
             output.append(text)
             if len(output) >= limit:
                 break
+        grouped_output = self._build_adaptive_featured_skill_rows(
+            output,
+            formatted_data,
+            offer_terms=offer_terms,
+            job_title=job_title,
+            language_code=language_code,
+            max_items=max_items,
+        )
+        if grouped_output:
+            return grouped_output[:limit]
         return output
 
     def _select_featured_skills(
@@ -5233,7 +5696,9 @@ class ExportManager:
             if has_any("automation", "automatisation", "playwright", "cypress", "selenium"):
                 focus_parts.append("l'automatisation" if not is_en else "automation")
             if has_any("edge case", "edge cases", "cas limite", "cas limites", "risque"):
-                focus_parts.append("les cas limites" if not is_en else "edge cases")
+                focus_parts.append(
+                    "l'analyse des cas limites" if not is_en else "edge-case analysis"
+                )
             if has_any("ai", "ia", "ml", "machine learning", "model", "modele"):
                 focus_parts.append(
                     "l'IA appliquée à la qualité logicielle"
@@ -5753,6 +6218,8 @@ class ExportManager:
                 selected_description,
                 source_description,
                 max_items=role_budget,
+                offer_terms=offer_terms,
+                language_code=language_code,
             )
             entry["render_alignment_score"] = exp_score
             entry["render_role_priority"] = (

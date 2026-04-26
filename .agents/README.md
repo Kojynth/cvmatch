@@ -32,7 +32,8 @@ Current render/export contracts to preserve across agent runs:
   `app/controllers/export_manager.py`; preview fit CSS alone does not protect
   final PDFs
 - one-page render must keep structured sections (summary, skills, experience,
-  featured project, certifications) instead of flattening content into a blob
+  featured project, certifications, and compact interests/hobbies when present)
+  instead of flattening content into a blob
 - final rendered sentences must stay whole: no `...` / `…` truncation in the
   one-page HTML/PDF path; select better sentences instead of clipping them
 - when a grounding-safe positioning sentence exists, keep it visible in the
@@ -88,6 +89,10 @@ Git hygiene rule for tests:
   company marketing / benefits / remote / hiring-process text
 - named tools/software/platforms from the profile or offer should replace
   vague tooling categories whenever the source contains those concrete names
+- skill display must deduplicate repeated tools across flat chips and grouped
+  comparative labels; role-critical tools shown as skills should also remain
+  visible in experience/project proof when the source profile contains that
+  evidence
 
 If the execution environment does not support native sub-agent spawning, invoke
 these definitions manually: copy the target sub-agent prompt, preserve its file
