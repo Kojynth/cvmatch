@@ -485,7 +485,10 @@ def test_featured_project_filters_noisy_generated_technologies() -> None:
         [
             {
                 "name": "CVMatch",
-                "technologies": "Python, api, seeking, skilled, proactive, summary, are",
+                "technologies": (
+                    "robustness design updates, Python, api, seeking, skilled, "
+                    "proactive, summary, are, you"
+                ),
                 "description": (
                     "CVMatch est une application développée en Python permettant "
                     "d'analyser une offre d'emploi, d'adapter un profil candidat "
@@ -502,8 +505,20 @@ def test_featured_project_filters_noisy_generated_technologies() -> None:
     assert "Application Python/LLM" in rendered
     assert "analyse d'offres d'emploi" in rendered
     assert "tests unitaires avec pytest" in rendered
+    assert "robustness" not in project["technologies"]
+    assert "design updates" not in project["technologies"]
     assert "summary" not in rendered
     assert "are" not in rendered
+
+
+def test_project_templates_label_technology_meta() -> None:
+    template_root = Path("templates/cv_templates")
+    for template_name in ("minimal", "modern", "classic", "creative", "tech"):
+        template = (template_root / f"{template_name}.html").read_text(
+            encoding="utf-8"
+        )
+        assert "labels.project_technologies" in template
+        assert "featured_project.technologies | join(', ')" in template
 
 
 def test_featured_project_prefers_offer_aligned_project_and_keeps_rich_details() -> None:
@@ -853,11 +868,12 @@ def test_noisy_flat_skills_rebuild_as_source_backed_themed_rows() -> None:
     assert "Microsoft SQL Server" in rendered
     assert any(row.startswith("Automatisation :") for row in rows)
     assert "Python" in rendered
-    assert "Playwright" in rendered
-    assert "Cypress" in rendered
-    assert "Selenium" in rendered
-    assert "Agilitest" in rendered
-    assert "Benchmark d'outils" in rendered
+    automation_row = next(row for row in rows if row.startswith("Automatisation :"))
+    assert "Benchmark Playwright / Cypress / Selenium / Agilitest" in automation_row
+    assert "· Playwright ·" not in automation_row
+    assert "· Cypress ·" not in automation_row
+    assert "· Selenium ·" not in automation_row
+    assert "Benchmark d'outils" not in rendered
     assert any(row.startswith("IA & qualité logicielle :") for row in rows)
     assert "LLM" in rendered
     assert "Prompt engineering" in rendered
@@ -868,6 +884,63 @@ def test_noisy_flat_skills_rebuild_as_source_backed_themed_rows() -> None:
     assert "AI-powered" not in rendered
     assert "including functional" not in rendered
     assert "recruteur" not in rendered
+
+
+def test_benchmark_only_tools_are_not_kept_as_direct_skill_claims() -> None:
+    profile_json = {
+        "experiences": [
+            {
+                "title": "Alternant Ingenieur QA",
+                "company": "Careside",
+                "start_date": "09/2023",
+                "end_date": "Present",
+                "description": (
+                    "Explore et benchmarke des solutions d'automatisation et "
+                    "d'industrialisation des tests, notamment Playwright, "
+                    "Cypress, Selenium et Agilitest."
+                ),
+            }
+        ],
+        "skills": [
+            {"name": "Python"},
+            {"name": "Benchmark d'outils d'automatisation"},
+        ],
+    }
+
+    result = coerce_generated_cv_payload(
+        payload={
+            "summary": "Profil QA.",
+            "skills": [
+                {
+                    "category": "Automatisation",
+                    "items": [
+                        "Python",
+                        "Playwright",
+                        "Cypress",
+                        "Selenium",
+                        "Agilitest",
+                    ],
+                }
+            ],
+            "experience": [],
+        },
+        profile_json=profile_json,
+        fallback_generator=_fallback_generator,
+        language_code="fr",
+    )
+
+    automation_block = next(
+        block
+        for block in result["skills"]
+        if block.get("category") == "Automatisation"
+    )
+    automation_items = automation_block["items"]
+    assert "Python" in automation_items
+    assert "Benchmark Playwright / Cypress / Selenium / Agilitest" in automation_items
+    assert "Playwright" not in automation_items
+    assert "Cypress" not in automation_items
+    assert "Selenium" not in automation_items
+    assert "Agilitest" not in automation_items
 
 
 def test_project_technologies_preserve_slash_delimited_tool_names() -> None:

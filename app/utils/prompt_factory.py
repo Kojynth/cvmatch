@@ -200,6 +200,10 @@ OUTPUT RULES:
 - If source text uses vague tooling phrases but PROFILE_JSON also names
   concrete products, rewrite the vague phrasing into those concrete names when
   truthful.
+- If PROFILE_JSON only says the candidate benchmarked/evaluated tools, do not
+  list those tools as direct hands-on skills. Prefer a lower-priority
+  comparative label such as "Benchmark Playwright / Cypress / Selenium" and
+  keep proven skills ahead of it.
 - MANDATORY for each experience item: rewrite entirely — never copy source description text verbatim.
   * summary: 1 compact sentence (scope + context, offer-aligned vocabulary).
   * highlights: 2-4 short plain strings; each must start with a strong action verb,
@@ -236,7 +240,8 @@ OUTPUT RULES:
   * projects <= 3 items.
   * project technologies must contain only concrete profile-backed tools,
     languages, libraries, frameworks, or platforms. Do not copy offer wording
-    into project technologies.
+    into project technologies. Reject quality adjectives or task fragments such
+    as "robustness", "design updates", "AI-powered", or "products".
   * project descriptions must be compact and value-oriented: one sentence or
     one short line explaining what was built, the source-backed technology
     context, and the validation/quality aspect when present.
@@ -387,6 +392,9 @@ OUTPUT RULES:
   inside skills or project technologies. Reject terms such as "seeking",
   "skilled", "proactive", "collaborative", "dynamic", "AI-powered",
   "products", "you", "summary", or "are" as skills/tools.
+- If PROFILE_JSON only says the candidate benchmarked/evaluated tools, do not
+  list those tools as direct hands-on skills. Prefer a lower-priority
+  comparative label such as "Benchmark Playwright / Cypress / Selenium".
 - Structure and ordering:
   * Experience and projects must be in reverse chronological order (most recent first).
   * Use a single consistent date format across the entire CV (prefer MM/YYYY or YYYY only).
@@ -399,6 +407,8 @@ OUTPUT RULES:
   * projects <= 3 items.
   * project technologies must contain only concrete profile-backed tools,
     languages, libraries, frameworks, or platforms.
+    Reject quality adjectives or task fragments such as "robustness",
+    "design updates", "AI-powered", or "products".
   * project descriptions must be compact and value-oriented: one sentence or
     one short line explaining what was built and any validation/quality aspect
     present in PROFILE_JSON.

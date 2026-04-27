@@ -72,6 +72,7 @@ _SECTION_LABELS_BY_LANGUAGE = {
         "soft_skills": "Soft skills",
         "education": "Education",
         "projects": "Projects",
+        "project_technologies": "Project technologies:",
         "languages": "Languages",
         "certifications": "Certifications",
         "interests": "Interests",
@@ -84,6 +85,7 @@ _SECTION_LABELS_BY_LANGUAGE = {
         "soft_skills": "Savoir-être",
         "education": "Formation",
         "projects": "Projets",
+        "project_technologies": "Technologies du projet :",
         "languages": "Langues",
         "certifications": "Certifications",
         "interests": "Centres d'intérêt",
@@ -96,6 +98,7 @@ _SECTION_LABELS_BY_LANGUAGE = {
         "soft_skills": "Habilidades interpersonales",
         "education": "Formación",
         "projects": "Proyectos",
+        "project_technologies": "Tecnologias del proyecto:",
         "languages": "Idiomas",
         "certifications": "Certificaciones",
         "interests": "Intereses",
@@ -108,6 +111,7 @@ _SECTION_LABELS_BY_LANGUAGE = {
         "soft_skills": "Soft Skills",
         "education": "Ausbildung",
         "projects": "Projekte",
+        "project_technologies": "Projekttechnologien:",
         "languages": "Sprachen",
         "certifications": "Zertifizierungen",
         "interests": "Interessen",
@@ -120,6 +124,7 @@ _SECTION_LABELS_BY_LANGUAGE = {
         "soft_skills": "Competenze trasversali",
         "education": "Formazione",
         "projects": "Progetti",
+        "project_technologies": "Tecnologie del progetto:",
         "languages": "Lingue",
         "certifications": "Certificazioni",
         "interests": "Interessi",
@@ -132,6 +137,7 @@ _SECTION_LABELS_BY_LANGUAGE = {
         "soft_skills": "Competências interpessoais",
         "education": "Formação",
         "projects": "Projetos",
+        "project_technologies": "Tecnologias do projeto:",
         "languages": "Idiomas",
         "certifications": "Certificações",
         "interests": "Interesses",
@@ -144,6 +150,7 @@ _SECTION_LABELS_BY_LANGUAGE = {
         "soft_skills": "Soft skills",
         "education": "Opleiding",
         "projects": "Projecten",
+        "project_technologies": "Projecttechnologieen:",
         "languages": "Talen",
         "certifications": "Certificeringen",
         "interests": "Interesses",
@@ -156,6 +163,7 @@ _SECTION_LABELS_BY_LANGUAGE = {
         "soft_skills": "ソフトスキル",
         "education": "学歴",
         "projects": "プロジェクト",
+        "project_technologies": "プロジェクト技術:",
         "languages": "言語",
         "certifications": "資格",
         "interests": "趣味・関心",
@@ -168,6 +176,7 @@ _SECTION_LABELS_BY_LANGUAGE = {
         "soft_skills": "软技能",
         "education": "教育经历",
         "projects": "项目",
+        "project_technologies": "项目技术:",
         "languages": "语言",
         "certifications": "认证",
         "interests": "兴趣",
@@ -707,6 +716,17 @@ def cv_json_to_cv_data(
         )
 
     skills_section: List[Dict[str, Any]] = []
+    def _skill_item_matches_language(item: str) -> bool:
+        if text_matches_target_language(item, lang or "fr", min_tokens=4):
+            return True
+        return bool(
+            re.match(
+                r"(?i)^benchmark\s+[A-Za-z0-9_.+#-]+"
+                r"(?:\s*/\s*[A-Za-z0-9_.+#-]+)+$",
+                item.strip(),
+            )
+        )
+
     for category in cv_json.get("skills", []) or []:
         if not isinstance(category, dict):
             continue
@@ -715,7 +735,7 @@ def cv_json_to_cv_data(
             for item in (category.get("items") or [])
             if isinstance(item, str)
             and item.strip()
-            and text_matches_target_language(item, lang or "fr", min_tokens=4)
+            and _skill_item_matches_language(item)
         ]
         skills_section.append(
             {
@@ -944,6 +964,9 @@ def cv_json_to_markdown(cv_json: Dict[str, Any], language: Optional[str] = None)
         "soft_skills": labels.get("soft_skills") or "Soft skills",
         "education": labels.get("education") or "Education",
         "projects": labels.get("projects") or "Projects",
+        "project_technologies": (
+            labels.get("project_technologies") or "Project technologies:"
+        ),
         "languages": labels.get("languages") or "Languages",
         "certifications": labels.get("certifications") or "Certifications",
     }
@@ -1058,6 +1081,9 @@ def cv_json_to_markdown(cv_json: Dict[str, Any], language: Optional[str] = None)
             desc = proj.get("description") or ""
             if desc:
                 lines.append(desc)
+            technologies = proj.get("technologies") or ""
+            if technologies:
+                lines.append(f"{labels['project_technologies']} {technologies}")
 
     if data.get("languages"):
         lines.append("")

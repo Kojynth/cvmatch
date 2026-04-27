@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 from .cv_offer_term_routing import route_term_to_section
 from .cv_skill_evidence import (
@@ -213,6 +213,35 @@ def _collect_source_probe(profile_json: Dict[str, Any], extra_items: Iterable[An
     return normalize_keyword_for_match(" ".join(parts))
 
 
+def _collect_source_fragments(profile_json: Dict[str, Any]) -> List[str]:
+    fragments: List[str] = []
+
+    def add(value: Any) -> None:
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                fragments.append(text)
+            return
+        if isinstance(value, list):
+            for item in value:
+                add(item)
+            return
+        if isinstance(value, dict):
+            for nested in value.values():
+                add(nested)
+
+    for key in (
+        "skills",
+        "projects",
+        "education",
+        "certifications",
+        "experiences",
+        "experience",
+    ):
+        add((profile_json or {}).get(key))
+    return fragments
+
+
 def _probe_has_any(probe: str, aliases: Iterable[str]) -> bool:
     for alias in aliases or []:
         alias_norm = normalize_keyword_for_match(alias)
@@ -223,6 +252,126 @@ def _probe_has_any(probe: str, aliases: Iterable[str]) -> bool:
 
 def _localized_skill_label(labels: Tuple[str, str], language_code: str) -> str:
     return labels[1] if str(language_code or "").startswith("en") else labels[0]
+
+
+_DIRECT_USE_MARKERS = (
+    "automated test",
+    "automates tests",
+    "automatise",
+    "automatiser",
+    "developed tests",
+    "developpe des tests",
+    "implemented tests",
+    "implemente des tests",
+    "script",
+    "suite de test",
+    "test suite",
+    "tests automatises",
+    "utilise",
+    "utiliser",
+    "using",
+    "used",
+)
+_BENCHMARK_CONTEXT_MARKERS = (
+    "benchmark",
+    "benchmarke",
+    "benchmarker",
+    "compare",
+    "comparatif",
+    "evaluation",
+    "evaluer",
+    "explore",
+    "exploration",
+)
+_AUTOMATION_BENCHMARK_TOOL_SPECS: Tuple[Tuple[Tuple[str, str], Tuple[str, ...]], ...] = (
+    (("Playwright", "Playwright"), ("playwright",)),
+    (("Cypress", "Cypress"), ("cypress",)),
+    (("Selenium", "Selenium"), ("selenium",)),
+    (("Agilitest", "Agilitest"), ("agilitest",)),
+)
+
+
+def _tool_has_context(
+    source_fragments: Sequence[str],
+    tool_aliases: Iterable[str],
+    markers: Iterable[str],
+) -> bool:
+    for fragment in source_fragments:
+        fragment_norm = normalize_keyword_for_match(fragment)
+        if not fragment_norm:
+            continue
+        if not _probe_has_any(fragment_norm, tool_aliases):
+            continue
+        if _probe_has_any(fragment_norm, markers):
+            return True
+    return False
+
+
+def _benchmark_only_tool_labels(
+    profile_json: Dict[str, Any],
+    *,
+    language_code: str = "fr",
+) -> List[str]:
+    profile_probe = _collect_source_probe(profile_json, ())
+    source_fragments = _collect_source_fragments(profile_json)
+    explicit_skill_probe = _collect_source_probe(
+        {"skills": (profile_json or {}).get("skills") or []},
+        (),
+    )
+
+    def profile_has(*aliases: str) -> bool:
+        return _probe_has_any(profile_probe, aliases)
+
+    def explicit_skill_has(*aliases: str) -> bool:
+        return _probe_has_any(explicit_skill_probe, aliases)
+
+    labels: List[str] = []
+    for localized_labels, aliases in _AUTOMATION_BENCHMARK_TOOL_SPECS:
+        if not profile_has(*aliases):
+            continue
+        if explicit_skill_has(*aliases):
+            continue
+        if _tool_has_context(source_fragments, aliases, _DIRECT_USE_MARKERS):
+            continue
+        if _tool_has_context(source_fragments, aliases, _BENCHMARK_CONTEXT_MARKERS):
+            labels.append(_localized_skill_label(localized_labels, language_code))
+    return labels
+
+
+def skills_section_claims_benchmark_only_tools(
+    skills_section: Any,
+    profile_json: Dict[str, Any],
+    *,
+    language_code: str = "fr",
+) -> bool:
+    """Detect direct tool claims when the profile only supports benchmark context."""
+
+    if not isinstance(skills_section, list):
+        return False
+    benchmark_only = _benchmark_only_tool_labels(
+        profile_json,
+        language_code=language_code,
+    )
+    if not benchmark_only:
+        return False
+    benchmark_norms = {
+        normalize_keyword_for_match(label)
+        for label in benchmark_only
+        if normalize_keyword_for_match(label)
+    }
+    for block in skills_section:
+        if not isinstance(block, dict):
+            continue
+        for item in block.get("items") or []:
+            item_norm = normalize_keyword_for_match(item)
+            if not item_norm or item_norm.startswith("benchmark "):
+                continue
+            if item_norm in benchmark_norms or any(
+                normalized_term_in_probe(item_norm, tool_norm)
+                for tool_norm in benchmark_norms
+            ):
+                return True
+    return False
 
 
 def _build_themed_skill_blocks(
@@ -236,6 +385,11 @@ def _build_themed_skill_blocks(
     """Build compact source-backed skill themes when a flat dump needs recovery."""
 
     profile_probe = _collect_source_probe(profile_json, technical_items)
+    source_fragments = _collect_source_fragments(profile_json)
+    explicit_skill_probe = _collect_source_probe(
+        {"skills": (profile_json or {}).get("skills") or []},
+        (),
+    )
     offer_probe = normalize_keyword_for_match(" ".join(str(term) for term in offer_terms or []))
     combined_probe = " ".join(part for part in (profile_probe, offer_probe) if part)
     if not combined_probe:
@@ -243,6 +397,9 @@ def _build_themed_skill_blocks(
 
     def profile_has(*aliases: str) -> bool:
         return _probe_has_any(profile_probe, aliases)
+
+    def explicit_skill_has(*aliases: str) -> bool:
+        return _probe_has_any(explicit_skill_probe, aliases)
 
     def offer_has(*aliases: str) -> bool:
         return _probe_has_any(offer_probe, aliases)
@@ -286,6 +443,44 @@ def _build_themed_skill_blocks(
         "json",
     )
 
+    automation_specs = [
+        (("Python", "Python"), ("python",), (), True),
+    ]
+    benchmark_only_tools: List[str] = []
+    for labels, aliases in _AUTOMATION_BENCHMARK_TOOL_SPECS:
+        if not profile_has(*aliases):
+            continue
+        if explicit_skill_has(*aliases) or _tool_has_context(
+            source_fragments,
+            aliases,
+            _DIRECT_USE_MARKERS,
+        ):
+            automation_specs.append((labels, aliases, (), True))
+        elif _tool_has_context(source_fragments, aliases, _BENCHMARK_CONTEXT_MARKERS):
+            benchmark_only_tools.append(_localized_skill_label(labels, language_code))
+    if benchmark_only_tools:
+        benchmark_label = (
+            f"Benchmark {' / '.join(benchmark_only_tools)}",
+            f"Benchmark {' / '.join(benchmark_only_tools)}",
+        )
+        automation_specs.append(
+            (
+                benchmark_label,
+                ("benchmark", "benchmarke", "benchmarker", *benchmark_only_tools),
+                ("tool benchmark", "benchmark"),
+                automation_context,
+            )
+        )
+    elif profile_has("benchmark", "benchmarke", "benchmarker", "benchmark d outils"):
+        automation_specs.append(
+            (
+                ("Benchmark d'outils", "Tool benchmarking"),
+                ("benchmark", "benchmarke", "benchmarker", "benchmark d outils"),
+                ("tool benchmark", "benchmark"),
+                automation_context,
+            )
+        )
+
     group_specs = [
         (
             ("QA & tests", "QA & testing"),
@@ -314,14 +509,7 @@ def _build_themed_skill_blocks(
         (
             ("Automatisation", "Automation"),
             automation_context,
-            [
-                (("Python", "Python"), ("python",), (), True),
-                (("Playwright", "Playwright"), ("playwright",), (), True),
-                (("Cypress", "Cypress"), ("cypress",), (), True),
-                (("Selenium", "Selenium"), ("selenium",), (), True),
-                (("Agilitest", "Agilitest"), ("agilitest",), (), True),
-                (("Benchmark d'outils", "Tool benchmarking"), ("benchmark", "benchmarke", "benchmarker", "benchmark d outils"), ("tool benchmark", "benchmark"), automation_context),
-            ],
+            automation_specs,
         ),
         (
             ("IA & qualité logicielle", "AI & software quality"),
