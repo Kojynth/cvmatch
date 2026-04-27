@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import datetime
 from typing import Any, Dict
 
@@ -14,6 +15,37 @@ _DAY_MONTH_YEAR_RE = re.compile(r"^(0?[1-9]|[12]\d|3[01])/(0?[1-9]|1[0-2])/\d{4}
 
 def _clean_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+_PRESENT_TOKEN_FALLBACKS = {
+    "a ce jour",
+    "actuel",
+    "actuellement",
+    "current",
+    "currently",
+    "en cours",
+    "maintenant",
+    "now",
+    "ongoing",
+    "present",
+    "to date",
+    "to present",
+    "toujours",
+}
+
+
+def _normalize_present_probe(value: Any) -> str:
+    normalized = unicodedata.normalize("NFKC", str(value or "")).replace("\u00A0", " ")
+    normalized = normalized.strip().lower()
+    decomposed = unicodedata.normalize("NFD", normalized)
+    without_accents = "".join(
+        char for char in decomposed if unicodedata.category(char) != "Mn"
+    )
+    return re.sub(r"\s+", " ", without_accents).strip()
+
+
+def _is_present_token_fallback(value: Any) -> bool:
+    return _normalize_present_probe(value) in _PRESENT_TOKEN_FALLBACKS
 
 
 def infer_date_precision(raw_value: Any) -> str:
@@ -62,7 +94,10 @@ def derive_date_support_fields(start_date: Any, end_date: Any) -> Dict[str, Any]
         normalized_present = (
             normalize_present_token(end_raw) if normalize_present_token else end_raw
         )
-        is_current = str(normalized_present or "").strip().upper() == "PRESENT"
+        is_current = (
+            str(normalized_present or "").strip().upper() == "PRESENT"
+            or _is_present_token_fallback(end_raw)
+        )
         if is_current:
             end_norm = datetime.now().strftime("%Y-%m")
             metadata["end_date_precision"] = "present"

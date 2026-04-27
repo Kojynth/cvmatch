@@ -6,9 +6,14 @@ avec cache et valeurs par défaut sécurisées.
 """
 
 import json
+import logging
 from pathlib import Path
 from typing import Dict, Any
-from loguru import logger
+
+try:
+    from loguru import logger
+except Exception:  # pragma: no cover - exercised in minimal CI environments
+    logger = logging.getLogger(__name__)
 
 # Cache global des règles chargées
 _rules_cache: Dict[str, Dict[str, Any]] = {}
