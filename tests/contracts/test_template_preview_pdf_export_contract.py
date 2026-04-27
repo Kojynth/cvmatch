@@ -217,13 +217,13 @@ def test_fit_tiers_hide_optional_content_before_scaling(monkeypatch) -> None:
     assert ':root[data-page-fit="critical"] .experience-entry:nth-of-type(n+5)' in css
 
 
-def test_auto_fit_fallback_scale_is_readability_capped(monkeypatch) -> None:
+def test_auto_fit_fallback_scale_uses_computed_fit_ratio(monkeypatch) -> None:
     template_preview_window = _load_preview_module(monkeypatch)
 
     script = template_preview_window.CV_AUTO_FIT_SCRIPT
-    assert "MIN_READABLE_PRINT_SCALE = 0.9" in script
-    assert "Math.max(scale, MIN_READABLE_PRINT_SCALE)" in script
-    assert "Math.max(scale, 0.01)" not in script
+    assert "MIN_READABLE_PRINT_SCALE" not in script
+    assert "Math.max(scale, 0.01)" in script
+    assert "Math.max(scale, 0.9)" not in script
 
 
 def test_webengine_print_css_keeps_readable_typography(monkeypatch) -> None:

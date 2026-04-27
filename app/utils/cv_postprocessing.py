@@ -3703,6 +3703,18 @@ def _rewrite_clause_head(clause: str, mapping: Dict[str, str], lang: str) -> str
     return leading_ws + replacement + raw[len(head):]
 
 
+def _strip_french_past_auxiliary_head(value: str) -> str:
+    text = str(value or "")
+    stripped = text.lstrip()
+    leading_ws = text[: len(text) - len(stripped)]
+    if not re.match(r"(?i)^a\s+\S+", stripped):
+        return text
+    without_aux = re.sub(r"(?i)^a\s+", "", stripped, count=1)
+    if stripped[:1].isupper() and without_aux:
+        without_aux = without_aux[:1].upper() + without_aux[1:]
+    return leading_ws + without_aux
+
+
 def _rewrite_past_role_tense(
     cv_json: Dict[str, Any],
     *,
@@ -3738,10 +3750,13 @@ def _rewrite_past_role_tense(
             raw = bullet.strip()
             if not raw:
                 continue
+            original_raw = raw
+            if lang == "fr":
+                raw = _strip_french_past_auxiliary_head(raw)
             parts = _CLAUSE_SPLIT_PATTERN.split(raw)
             if len(parts) == 1:
                 rewritten = _rewrite_clause_head(parts[0], mapping, lang)
-                if rewritten != parts[0]:
+                if rewritten != original_raw:
                     highlights[index] = rewritten + bullet[len(bullet.rstrip()):]
                 continue
             # Odd indices are separators (kept verbatim), even indices are
@@ -3753,7 +3768,7 @@ def _rewrite_past_role_tense(
                 else:
                     rewritten_parts.append(piece)
             joined = "".join(rewritten_parts)
-            if joined != raw:
+            if joined != original_raw:
                 # Preserve any trailing whitespace/punctuation stripped above.
                 trailing = bullet[len(bullet.rstrip()):]
                 highlights[index] = joined + trailing
