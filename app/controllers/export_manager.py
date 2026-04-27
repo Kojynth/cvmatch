@@ -10,6 +10,7 @@ import re
 import tempfile
 import unicodedata
 import logging
+import html as html_lib
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Sequence, Tuple
 
@@ -434,12 +435,44 @@ class ExportManager:
             if is_fallback:
                 html_content = self._inject_fallback_warning(html_content)
 
+            html_content = self._ensure_list_item_sentence_periods(html_content)
+
             logger.info(f"HTML généré avec template {template}")
             return html_content
 
         except Exception as e:
             logger.error(f"Erreur génération HTML : {e}")
             raise
+
+    _LIST_ITEM_RE = re.compile(
+        r"(<li\b[^>]*>)(.*?)(\s*</li>)",
+        re.IGNORECASE | re.DOTALL,
+    )
+    _HTML_TAG_RE = re.compile(r"<[^>]+>")
+    _LI_TRAILING_WRAPPERS = "\"')]}»”’"
+
+    def _ensure_list_item_sentence_periods(self, html_content: str) -> str:
+        """Ensure rendered bullet/list items read as finished sentences."""
+        if not isinstance(html_content, str) or "</li>" not in html_content.lower():
+            return html_content
+
+        def _has_terminal_punctuation(item_html: str) -> bool:
+            visible_text = self._HTML_TAG_RE.sub("", item_html)
+            visible_text = html_lib.unescape(visible_text).strip()
+            if not visible_text:
+                return True
+            probe = visible_text.rstrip(self._LI_TRAILING_WRAPPERS).rstrip()
+            if not probe:
+                return True
+            return probe.endswith((".", "!", "?", "...", "…", "。", "！", "？"))
+
+        def _finish_item(match: re.Match[str]) -> str:
+            open_tag, item_html, close_tag = match.groups()
+            if _has_terminal_punctuation(item_html):
+                return match.group(0)
+            return f"{open_tag}{item_html}.{close_tag}"
+
+        return self._LIST_ITEM_RE.sub(_finish_item, html_content)
 
     def prepare_template_data(self, cv_data: Dict[str, Any]) -> Dict[str, Any]:
         """Prépare les données pour le template."""
@@ -584,6 +617,8 @@ class ExportManager:
         )
         formatted_data["featured_certifications"] = self._build_featured_certifications(
             formatted_data.get("certifications"),
+            job_title=str(job_title_hint).strip(),
+            offer_terms=offer_terms,
             max_items=2,
         )
         formatted_data["languages"] = self._compact_language_entries(
@@ -6568,28 +6603,161 @@ class ExportManager:
         self,
         certifications: Any,
         *,
+        job_title: str = "",
+        offer_terms: Optional[Sequence[str]] = None,
         max_items: int = 2,
     ) -> List[Dict[str, str]]:
         if not isinstance(certifications, list):
             return []
-        featured: List[Dict[str, str]] = []
+        candidates: List[Tuple[float, int, Dict[str, str]]] = []
         for cert in certifications:
             if not isinstance(cert, dict):
                 continue
             name = str(cert.get("name") or "").strip()
             if not name:
                 continue
-            featured.append(
-                {
-                    "name": name,
-                    "organization": str(cert.get("organization") or "").strip(),
-                    "date": str(cert.get("date") or "").strip(),
-                    "url": str(cert.get("url") or "").strip(),
-                }
+            item = {
+                "name": name,
+                "organization": str(cert.get("organization") or "").strip(),
+                "date": str(cert.get("date") or "").strip(),
+                "url": str(cert.get("url") or "").strip(),
+            }
+            candidates.append(
+                (
+                    self._certification_relevance_score(
+                        item,
+                        job_title=job_title,
+                        offer_terms=offer_terms or (),
+                    ),
+                    len(candidates),
+                    item,
+                )
             )
-            if len(featured) >= max(1, int(max_items or 1)):
-                break
-        return featured
+        if not candidates:
+            return []
+        ranked = sorted(candidates, key=lambda row: (-row[0], row[1]))
+        limit = max(1, int(max_items or 1))
+        return [item for _score, _idx, item in ranked[:limit]]
+
+    def _certification_relevance_score(
+        self,
+        certification: Dict[str, str],
+        *,
+        job_title: str = "",
+        offer_terms: Sequence[str] = (),
+    ) -> float:
+        cert_probe = self._normalize_match_probe(
+            " ".join(
+                [
+                    str(certification.get("name") or ""),
+                    str(certification.get("organization") or ""),
+                ]
+            )
+        )
+        target_probe = self._normalize_match_probe(
+            " ".join([str(job_title or ""), *[str(term) for term in offer_terms or ()]])
+        )
+        if not cert_probe or not target_probe:
+            return 0.0
+
+        score = 0.0
+        cert_terms = [
+            token
+            for token in re.split(r"[^a-z0-9+#.]+", cert_probe)
+            if len(token) >= 3
+        ]
+        for term in cert_terms:
+            if self._match_probe_contains_term(target_probe, term):
+                score += 5.0
+
+        role_rules: Tuple[Tuple[Tuple[str, ...], Tuple[str, ...]], ...] = (
+            (
+                ("istqb", "tmap", "cste", "cast", "csqa"),
+                (
+                    "qa",
+                    "quality assurance",
+                    "quality engineer",
+                    "software quality",
+                    "test",
+                    "testing",
+                    "tester",
+                    "defect",
+                    "regression",
+                    "automation",
+                ),
+            ),
+            (
+                ("scrum", "psm", "csm", "safe", "agile"),
+                (
+                    "agile",
+                    "scrum",
+                    "product owner",
+                    "project",
+                    "delivery",
+                    "iteration",
+                    "sprint",
+                ),
+            ),
+            (
+                ("aws", "azure", "gcp", "google cloud", "kubernetes", "cka", "ckad"),
+                (
+                    "cloud",
+                    "devops",
+                    "platform",
+                    "infrastructure",
+                    "sre",
+                    "site reliability",
+                    "deployment",
+                ),
+            ),
+            (
+                ("cissp", "ceh", "security+", "iso 27001", "iso27001"),
+                (
+                    "security",
+                    "cybersecurity",
+                    "cyber",
+                    "risk",
+                    "compliance",
+                    "audit",
+                    "governance",
+                ),
+            ),
+            (
+                ("pmp", "prince2", "capm"),
+                (
+                    "project manager",
+                    "program manager",
+                    "project management",
+                    "planning",
+                    "delivery",
+                ),
+            ),
+            (
+                ("toefl", "toeic", "ielts", "cambridge", "delf", "dalf"),
+                (
+                    "english",
+                    "anglais",
+                    "french",
+                    "francais",
+                    "international",
+                    "bilingual",
+                ),
+            ),
+        )
+        for cert_aliases, role_hints in role_rules:
+            if not any(
+                self._match_probe_contains_term(cert_probe, alias)
+                for alias in cert_aliases
+            ):
+                continue
+            hits = sum(
+                1
+                for hint in role_hints
+                if self._match_probe_contains_term(target_probe, hint)
+            )
+            if hits:
+                score += 4.0 + min(3.0, hits * 0.5)
+        return score
 
     def _compact_experience_entries(
         self,
