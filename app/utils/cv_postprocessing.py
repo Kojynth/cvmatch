@@ -104,6 +104,9 @@ PROJECT_TECH_NOISE_TERMS = {
     "ai powered",
     "are",
     "collaborative",
+    "design",
+    "design update",
+    "design updates",
     "dynamic",
     "project",
     "product",
@@ -113,6 +116,8 @@ PROJECT_TECH_NOISE_TERMS = {
     "recruteur",
     "resume",
     "resumes",
+    "robustness",
+    "robustness design updates",
     "seeking",
     "skilled",
     "summary",
@@ -122,6 +127,15 @@ PROJECT_TECH_NOISE_TERMS = {
     "you",
     "your",
 }
+
+BENCHMARK_TOOL_COMPARISON_PATTERN = re.compile(
+    r"(?i)^benchmark\s+[A-Za-z0-9_.+#-]+"
+    r"(?:\s*/\s*[A-Za-z0-9_.+#-]+){1,5}$"
+)
+
+
+def _looks_like_benchmark_tool_comparison(value: Any) -> bool:
+    return bool(BENCHMARK_TOOL_COMPARISON_PATTERN.fullmatch(str(value or "").strip()))
 
 SKILL_LABEL_PREFIX_PATTERN = re.compile(
     r"(?i)^(?:skills?|comp[eé]tences?|technical skills|competences techniques)\s*[:\-]\s*"
@@ -752,9 +766,10 @@ def sanitize_cv_json_output(
                 text = clean_text_field(candidate, max_length=80)
                 if not text or text_has_review_markers(text):
                     continue
-                if not is_skill_like_phrase(text):
+                is_benchmark_comparison = _looks_like_benchmark_tool_comparison(text)
+                if not is_benchmark_comparison and not is_skill_like_phrase(text):
                     continue
-                if looks_like_noise_skill_term(text):
+                if not is_benchmark_comparison and looks_like_noise_skill_term(text):
                     continue
                 text_norm = normalize_text_for_match(text)
                 text_role_norm = normalize_text_for_role_detection(text)
@@ -3203,6 +3218,7 @@ def _rebuild_skills_section_from_profile(
     try:
         from .cv_skill_recovery import (
             build_skill_blocks_from_profile,
+            skills_section_claims_benchmark_only_tools,
             skills_section_low_signal,
         )
         from .cv_skill_evidence import (
@@ -3268,6 +3284,12 @@ def _rebuild_skills_section_from_profile(
             if supported < 2 and (plausible + hard_unsupported) >= 2:
                 current_is_usable = False
         if current_is_usable and current_skills_need_theming(current_skills):
+            current_is_usable = False
+        if current_is_usable and skills_section_claims_benchmark_only_tools(
+            current_skills,
+            profile_json,
+            language_code=language_code,
+        ):
             current_is_usable = False
     if current_is_usable:
         return

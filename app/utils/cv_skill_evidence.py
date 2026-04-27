@@ -54,6 +54,8 @@ _GENERIC_NOISE_TERMS = {
     "construisons",
     "description",
     "descriptif",
+    "design update",
+    "design updates",
     "dynamic",
     "emploi",
     "ensemble",
@@ -79,6 +81,8 @@ _GENERIC_NOISE_TERMS = {
     "recruteur",
     "role",
     "roles",
+    "robustness",
+    "robustness design updates",
     "seamlessly",
     "secteur",
     "secteurs",
@@ -104,6 +108,17 @@ _GENERIC_NOISE_TERMS = {
     "ms teams",
     "microsoft teams",
 }
+
+_BENCHMARK_TOOL_COMPARISON_PATTERN = re.compile(
+    r"(?i)^benchmark\s+[A-Za-z0-9_.+#-]+"
+    r"(?:\s*/\s*[A-Za-z0-9_.+#-]+){1,5}$"
+)
+
+
+def looks_like_benchmark_tool_comparison(term: Any) -> bool:
+    return bool(
+        _BENCHMARK_TOOL_COMPARISON_PATTERN.fullmatch(str(term or "").strip())
+    )
 
 _SKILL_ACTION_NOISE_HEADS = {
     "building",
@@ -248,6 +263,8 @@ def looks_like_noise_skill_term(term: Any) -> bool:
     norm = normalize_keyword_for_match(term)
     if not norm:
         return True
+    if looks_like_benchmark_tool_comparison(term):
+        return False
     if norm in _GENERIC_NOISE_TERMS:
         return True
     if re.fullmatch(r"\(?h\s*/?\s*f\)?", str(term or "").strip(), flags=re.IGNORECASE):
@@ -408,6 +425,12 @@ def should_keep_skill_term(
     """
 
     if looks_like_noise_skill_term(term):
+        return False
+    if looks_like_benchmark_tool_comparison(term):
+        if not require_profile_evidence:
+            return True
+        if isinstance(profile_json, dict) and profile_json:
+            return skill_term_supported_by_profile(term, profile_json)
         return False
 
     has_profile = isinstance(profile_json, dict) and bool(profile_json)

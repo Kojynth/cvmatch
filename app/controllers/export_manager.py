@@ -37,6 +37,7 @@ _SECTION_LABELS_BY_LANGUAGE = {
         "soft_skills": "Soft skills",
         "education": "Education",
         "projects": "Projects",
+        "project_technologies": "Project technologies:",
         "languages": "Languages",
         "certifications": "Certifications",
         "interests": "Interests",
@@ -50,6 +51,7 @@ _SECTION_LABELS_BY_LANGUAGE = {
         "soft_skills": "Savoir-être",
         "education": "Formation",
         "projects": "Projets",
+        "project_technologies": "Technologies du projet :",
         "languages": "Langues",
         "certifications": "Certifications",
         "interests": "Centres d'intérêt",
@@ -63,6 +65,7 @@ _SECTION_LABELS_BY_LANGUAGE = {
         "soft_skills": "Habilidades interpersonales",
         "education": "Formación",
         "projects": "Proyectos",
+        "project_technologies": "Tecnologias del proyecto:",
         "languages": "Idiomas",
         "certifications": "Certificaciones",
         "interests": "Intereses",
@@ -76,6 +79,7 @@ _SECTION_LABELS_BY_LANGUAGE = {
         "soft_skills": "Soft Skills",
         "education": "Ausbildung",
         "projects": "Projekte",
+        "project_technologies": "Projekttechnologien:",
         "languages": "Sprachen",
         "certifications": "Zertifizierungen",
         "interests": "Interessen",
@@ -89,6 +93,7 @@ _SECTION_LABELS_BY_LANGUAGE = {
         "soft_skills": "Competenze trasversali",
         "education": "Formazione",
         "projects": "Progetti",
+        "project_technologies": "Tecnologie del progetto:",
         "languages": "Lingue",
         "certifications": "Certificazioni",
         "interests": "Interessi",
@@ -102,6 +107,7 @@ _SECTION_LABELS_BY_LANGUAGE = {
         "soft_skills": "Competências interpessoais",
         "education": "Formação",
         "projects": "Projetos",
+        "project_technologies": "Tecnologias do projeto:",
         "languages": "Idiomas",
         "certifications": "Certificações",
         "interests": "Interesses",
@@ -115,6 +121,7 @@ _SECTION_LABELS_BY_LANGUAGE = {
         "soft_skills": "Soft skills",
         "education": "Opleiding",
         "projects": "Projecten",
+        "project_technologies": "Projecttechnologieen:",
         "languages": "Talen",
         "certifications": "Certificeringen",
         "interests": "Interesses",
@@ -128,6 +135,7 @@ _SECTION_LABELS_BY_LANGUAGE = {
         "soft_skills": "ソフトスキル",
         "education": "学歴",
         "projects": "プロジェクト",
+        "project_technologies": "プロジェクト技術:",
         "languages": "言語",
         "certifications": "資格",
         "interests": "趣味・関心",
@@ -141,6 +149,7 @@ _SECTION_LABELS_BY_LANGUAGE = {
         "soft_skills": "软技能",
         "education": "教育经历",
         "projects": "项目",
+        "project_technologies": "项目技术:",
         "languages": "语言",
         "certifications": "认证",
         "interests": "兴趣",
@@ -3386,6 +3395,8 @@ class ExportManager:
             return True
         if norm in {
             "ai powered",
+            "design update",
+            "design updates",
             "descriptif",
             "description",
             "are",
@@ -3398,6 +3409,8 @@ class ExportManager:
             "product",
             "products",
             "recruteur",
+            "robustness",
+            "robustness design updates",
             "seeking",
             "skilled",
             "team spirited",
@@ -3422,16 +3435,23 @@ class ExportManager:
             "building",
             "collaborating",
             "creating",
+            "cree",
+            "crée",
             "delivering",
             "developing",
             "driving",
             "enabling",
             "ensuring",
+            "execute",
+            "executer",
             "implementing",
             "improving",
             "integrating",
             "managing",
             "providing",
+            "qualifie",
+            "realise",
+            "réalise",
             "supporting",
             "validating",
         }:
@@ -6253,12 +6273,17 @@ class ExportManager:
             "ai powered",
             "are",
             "collaborative",
+            "design",
+            "design update",
+            "design updates",
             "dynamic",
             "summary",
             "summaries",
             "proactive",
             "resume",
             "resumes",
+            "robustness",
+            "robustness design updates",
             "cv",
             "project",
             "product",
@@ -6279,7 +6304,11 @@ class ExportManager:
             key = self._normalize_text_key(item)
             if not key or key in seen or key in noisy_terms:
                 continue
-            if len(key.split()) > 4 or self._is_noisy_featured_skill_label(item):
+            if (
+                len(key.split()) > 4
+                or self._is_noisy_featured_skill_label(item)
+                or not self._looks_like_compact_tool_label(item)
+            ):
                 continue
             seen.add(key)
             deduped.append(item)
