@@ -10,6 +10,7 @@ from app.utils.cv_postprocessing import (
     clean_skill_item_residues,
     coerce_generated_cv_payload,
     enforce_cv_offer_adaptation,
+    sanitize_cv_json_output,
 )
 
 
@@ -756,6 +757,52 @@ def test_project_reconciliation_enriches_poor_generated_project_from_profile() -
     assert "seeking" not in rendered
     assert "skilled" not in rendered
     assert "proactive" not in rendered
+
+
+def test_project_technologies_preserve_slash_delimited_tool_names() -> None:
+    cv = {
+        "projects": [
+            {
+                "name": "Tooling",
+                "technologies": "CI/CD, C/C++, Node.js/TypeScript, Python / Django",
+            }
+        ]
+    }
+
+    sanitize_cv_json_output(cv, language_code="en")
+
+    assert (
+        cv["projects"][0]["technologies"]
+        == "CI/CD, C/C++, Node.js/TypeScript, Python, Django"
+    )
+
+
+def test_project_reconciliation_deduplicates_technologies_across_passes() -> None:
+    result = coerce_generated_cv_payload(
+        payload={
+            "summary": "Profile.",
+            "projects": [
+                {
+                    "name": "CVMatch",
+                    "technologies": "Python, LLM",
+                    "description": "Application Python.",
+                }
+            ],
+        },
+        profile_json={
+            "projects": [
+                {
+                    "name": "CVMatch",
+                    "technologies": "Python, LLM",
+                    "description": "Application Python with LLM and pytest validation.",
+                }
+            ]
+        },
+        fallback_generator=_fallback_generator,
+        language_code="en",
+    )
+
+    assert result["projects"][0]["technologies"] == "Python, LLM"
 
 
 def test_rendered_interests_section_is_not_ultra_hidden() -> None:

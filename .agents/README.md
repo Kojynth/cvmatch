@@ -9,6 +9,14 @@ This directory contains repository-local definitions for:
 These files are documentation and invocation support. They do not replace the
 root `AGENTS.md`; they operationalize it.
 
+Shared operating discipline:
+- Diagnose and analyze before editing: reproduce or inspect the symptom, find
+  the impacted contract, then patch the smallest relevant path.
+- Ask a concise clarifying question when task scope, source data, or expected
+  behavior is unclear and a wrong assumption could affect behavior, security,
+  or CV contracts. If local context resolves it safely, state the assumption
+  and proceed.
+
 Recommended invocation order:
 - `subagents/contract-guardian.md` first for any cross-layer contract change.
 - `subagents/llm-runtime-worker.md` only for runtime/model-stage work.

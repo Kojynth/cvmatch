@@ -42,6 +42,9 @@ review, and bulk generation/apply workflows.
 - apply to incorrect domains
 
 # Garde-fous
+- diagnose and analyze before editing: reproduce or inspect the flow, identify
+  the impacted privacy/network/review contract, and ask a concise clarifying
+  question when ambiguity cannot be resolved safely from repository context
 - no direct network code outside `app/integrations`
 - preserve allowlists and safe URL validation
 - keep human-review fallback for ambiguous cases

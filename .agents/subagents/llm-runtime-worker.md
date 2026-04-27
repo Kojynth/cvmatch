@@ -39,6 +39,9 @@ risk.
 - subprocess timeout regressions
 
 # Garde-fous
+- diagnose and analyze before editing: reproduce or inspect the runtime issue,
+  identify the impacted fallback/model contract, and ask a concise clarifying
+  question when ambiguity cannot be resolved safely from repository context
 - preserve deterministic minimum-schema fallback
 - do not change DB or UI contracts unless explicitly coordinated
 - do not expose a new model without registry/runtime/test coherence

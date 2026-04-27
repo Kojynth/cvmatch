@@ -40,6 +40,9 @@ history, and `mass_apply`.
 - false positives on broad diffs
 
 # Garde-fous
+- diagnose and analyze before any verdict: inspect the relevant diff, identify
+  impacted contracts, and ask a concise clarifying question when ambiguity
+  cannot be resolved safely from repository context
 - never approves a cross-layer change without contract tests
 - never edits code
 - never asks for `.gitignore` negated exceptions for `tests/` or

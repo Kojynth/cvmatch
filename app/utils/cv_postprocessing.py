@@ -122,6 +122,7 @@ SKILL_LABEL_PREFIX_PATTERN = re.compile(
 )
 
 SKILL_SPLIT_PATTERN = re.compile(r"[;\n\|•]+")
+PROJECT_TECH_SPLIT_PATTERN = re.compile(r"\s*[,;|]\s*|\s+/\s+")
 SKILL_SENTENCE_NOISE_PATTERN = re.compile(
     r"(?i)\b("
     r"i|we|my|our|je|j ai|nous|mon|notre|candidate|candidat|"
@@ -190,6 +191,17 @@ def _dedup_preserve(items: Sequence[str]) -> List[str]:
         seen.add(key)
         output.append(text)
     return output
+
+
+def _split_project_technology_items(value: Any) -> List[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return []
+    return [
+        chunk.strip()
+        for chunk in PROJECT_TECH_SPLIT_PATTERN.split(raw)
+        if chunk.strip()
+    ]
 
 
 def _trim_text(value: Any, max_chars: int) -> str:
@@ -676,7 +688,7 @@ def sanitize_cv_json_output(
             return ""
         cleaned_items: List[str] = []
         seen_tech: set[str] = set()
-        for chunk in re.split(r"\s*(?:,|;|\||/)\s*", raw):
+        for chunk in _split_project_technology_items(raw):
             text = clean_text_field(chunk, max_length=80).strip(" ,;:-")
             if not text:
                 continue
@@ -3046,6 +3058,26 @@ def _project_profile_has_missing_signal(
     return profile_words >= max(18, current_words + 8)
 
 
+def _merge_project_technology_values(*values: Any) -> str:
+    items: List[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for chunk in _split_project_technology_items(value):
+            text = clean_text_field(
+                chunk,
+                max_length=80,
+                check_review_markers=False,
+            ).strip(" ,;:-")
+            if not text:
+                continue
+            key = _normalize_for_match(text)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            items.append(text)
+    return ", ".join(items)
+
+
 def _merge_project_with_profile_evidence(
     project: Dict[str, Any],
     profile_project: Dict[str, Any],
@@ -3066,10 +3098,10 @@ def _merge_project_with_profile_evidence(
     current_technologies = str(merged.get("technologies") or "").strip()
     profile_technologies = str(profile_project.get("technologies") or "").strip()
     if profile_technologies:
-        if current_technologies:
-            merged["technologies"] = f"{current_technologies}, {profile_technologies}"
-        else:
-            merged["technologies"] = profile_technologies
+        merged["technologies"] = _merge_project_technology_values(
+            current_technologies,
+            profile_technologies,
+        )
     return merged
 
 
@@ -4114,6 +4146,11 @@ def _normalize_cv_punctuation_all(
     def fix_field(container: Dict[str, Any], key: str) -> None:
         value = container.get(key)
         if isinstance(value, str) and value.strip():
+            if key == "technologies":
+                cleaned_technologies = _merge_project_technology_values(value)
+                if cleaned_technologies:
+                    container[key] = cleaned_technologies
+                return
             container[key] = _normalize_punctuation_spacing_text(
                 value,
                 language_code=language_code,
@@ -5294,11 +5331,7 @@ def enforce_cv_offer_adaptation(
                 injected = False
 
                 technologies = str(target.get("technologies") or "").strip()
-                tech_items = [
-                    part.strip()
-                    for part in re.split(r"[,;/|]+", technologies)
-                    if part.strip()
-                ]
+                tech_items = _split_project_technology_items(technologies)
                 tech_probe = normalize_keyword_for_match(" ".join(tech_items))
                 if not normalized_term_present(tech_probe, term_norm):
                     tech_items = _dedup_preserve([*tech_items, term])[:10]
