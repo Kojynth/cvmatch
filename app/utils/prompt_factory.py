@@ -153,6 +153,14 @@ OUTPUT RULES:
 - Skills and skill categories must be driven by JOB_TITLE and requirement-heavy
   JOB_OFFER_TEXT sections for any profession/domain. Do not rely on a fixed
   tech, QA, or company-specific taxonomy.
+- Do not output a raw flat keyword dump when several skill families are evident.
+  Prefer 2-4 compact source-backed categories adapted to the role vocabulary
+  (for example methods/processes, tools/platforms, domain knowledge, delivery),
+  but choose labels from JOB_TITLE and requirement-heavy offer evidence rather
+  than hardcoded templates.
+- Never place offer adjectives, responsibilities, or culture words inside skills
+  or project technologies. Reject terms such as "seeking", "skilled",
+  "proactive", "collaborative", "dynamic", "summary", or "are" as skills/tools.
 - ats_keywords must be a list of strings from the job offer or OFFER_KEYWORDS_JSON.
 - If OFFER_KEYWORDS_JSON is present, prioritize it for relevance and ATS terms.
 - If OFFER_KEYWORDS_JSON.keyword_families or lexical_field is present, reuse that domain vocabulary in summary/skills/experience when factual.
@@ -165,6 +173,9 @@ OUTPUT RULES:
 - render_hints.section_order/emphasis/tone are structured hints.
 - Do not include review or instruction text in any field (no critique, no "this CV needs", no "should").
 - Summary must be candidate-focused (role, strengths, impact). Do not describe employer mission/history.
+- Summary must be compact and non-repetitive: do not restate the same proof
+  terms across multiple sentences. If the positioning sentence mentions a
+  skill/tool, avoid repeating it as a separate keyword list.
 - Summary must mention COMPANY at least once when COMPANY is provided, using a
   natural positioning sentence that explains candidate relevance to the target
   role. Avoid formulaic keyword dumps such as "Profil pertinent pour COMPANY
@@ -217,6 +228,12 @@ OUTPUT RULES:
   * skills <= 4 categories, items <= 6 each, ordered by relevance to JOB_OFFER_TEXT.
   * education <= 3 items.
   * projects <= 3 items.
+  * project technologies must contain only concrete profile-backed tools,
+    languages, libraries, frameworks, or platforms. Do not copy offer wording
+    into project technologies.
+  * project descriptions must be compact and value-oriented: one sentence or
+    one short line explaining what was built, the source-backed technology
+    context, and the validation/quality aspect when present.
   * languages <= 4 items.
   * certifications <= 3 items.
   * ats_keywords <= 15 items.
@@ -357,6 +374,12 @@ OUTPUT RULES:
 - Never use placeholders (no [A COMPLETER], [TO COMPLETE], or bracketed tokens).
 - In field text, never use decorative special characters like \u2022 \u00ab \u00bb ^ {{}} [ ].
 - Skills items must be short noun phrases (no sentences).
+- Do not output a raw flat keyword dump when several skill families are evident.
+  Prefer 2-4 compact source-backed categories adapted to the candidate profile
+  and target language. Do not use hardcoded categories when they do not fit.
+- Never place generic adjectives or prose fragments inside skills or project
+  technologies. Reject terms such as "seeking", "skilled", "proactive",
+  "collaborative", "dynamic", "summary", or "are" as skills/tools.
 - Structure and ordering:
   * Experience and projects must be in reverse chronological order (most recent first).
   * Use a single consistent date format across the entire CV (prefer MM/YYYY or YYYY only).
@@ -367,6 +390,11 @@ OUTPUT RULES:
   * skills <= 4 categories, items <= 8 each.
   * education <= 3 items.
   * projects <= 3 items.
+  * project technologies must contain only concrete profile-backed tools,
+    languages, libraries, frameworks, or platforms.
+  * project descriptions must be compact and value-oriented: one sentence or
+    one short line explaining what was built and any validation/quality aspect
+    present in PROFILE_JSON.
   * languages <= 6 items.
   * certifications <= 4 items.
 - Writing quality:
@@ -382,6 +410,8 @@ OUTPUT RULES:
   * If exact metrics are absent but PROFILE_JSON makes the operational effect clear, you may express a qualitative impact without inventing numbers.
   * Include quantitative evidence when available in PROFILE_JSON.
 - Summary: candidate-focused (role, strengths, key achievements). Do not describe employer.
+- Summary must be compact and non-repetitive: do not restate the same proof
+  terms across multiple sentences.
 - Generate the best standalone professional CV from this profile.
 """.strip()
 

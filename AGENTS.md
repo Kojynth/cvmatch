@@ -6,6 +6,15 @@ profile management, CV and cover-letter generation, export rendering, history,
 and `mass_apply` automation. The project is offline-first, privacy-sensitive,
 and must stay usable on heterogeneous Windows/Linux machines.
 
+## Operating Discipline
+- Always diagnose and analyze before editing: reproduce the symptom when
+  possible, inspect the relevant code path, identify the contract at risk, and
+  keep the change scoped to that diagnosis.
+- If the request, data source, or expected behavior is unclear and repository
+  context cannot resolve it safely, ask a concise clarifying question before
+  changing code. If the ambiguity can be resolved from local context with a
+  low-risk assumption, state the assumption and proceed.
+
 ## Canonical Layout
 - `app/`: desktop shell, domain logic, persistence adapters, integrations,
   services, views, workers.

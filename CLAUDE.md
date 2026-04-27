@@ -1,6 +1,12 @@
 # Quick Operating Notes
 
 - Read `AGENTS.md` first.
+- Diagnose and analyze before editing: reproduce or inspect the symptom, find
+  the contract at risk, then patch the smallest relevant path.
+- Ask a concise clarifying question when the request, source data, or expected
+  behavior is unclear and a wrong assumption could affect behavior, security,
+  or CV contracts. If local context resolves it safely, state the assumption
+  and proceed.
 - This repo is not greenfield. Preserve working flows and migrate incrementally.
 - Keep `mass_apply` in scope even if parts of its source are missing in this
   clone. Do not remove it.

@@ -3,9 +3,14 @@ Normalisation des plages de dates avec support multi-langues.
 Gestion spéciale des tokens "PRESENT" multi-langues.
 """
 
+import logging
 import re
 from typing import Tuple, Optional, Union, List, Dict
-from loguru import logger
+
+try:
+    from loguru import logger
+except Exception:  # pragma: no cover - exercised in minimal CI environments
+    logger = logging.getLogger(__name__)
 
 
 # === TOKENS PRESENT MULTI-LANGUES ===
