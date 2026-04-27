@@ -462,6 +462,7 @@ def test_render_experience_keeps_role_critical_evidence_lines() -> None:
     bullets = prepared["experience"][0]["description"]
     rendered = "\n".join(bullets)
 
+    assert len(bullets) >= 4
     assert len(bullets) <= 4
     assert "cas limites" in rendered
     assert "Postman" in rendered
@@ -478,7 +479,7 @@ def test_featured_project_filters_noisy_generated_technologies() -> None:
         [
             {
                 "name": "CVMatch",
-                "technologies": "Python, api, summary, are",
+                "technologies": "Python, api, seeking, skilled, proactive, summary, are",
                 "description": (
                     "CVMatch est une application développée en Python permettant "
                     "d'analyser une offre d'emploi, d'adapter un profil candidat "
@@ -497,6 +498,79 @@ def test_featured_project_filters_noisy_generated_technologies() -> None:
     assert "tests unitaires avec pytest" in rendered
     assert "summary" not in rendered
     assert "are" not in rendered
+
+
+def test_featured_project_prefers_offer_aligned_project_and_keeps_rich_details() -> None:
+    manager = ExportManager()
+    project = manager._build_featured_project(
+        [
+            {
+                "name": "Reporting commercial",
+                "technologies": "Tableau, Power BI, Excel, SQL",
+                "url": "https://example.com/reporting",
+                "duration": "2023",
+                "description": (
+                    "Construit des tableaux de bord commerciaux et suit les KPI "
+                    "pour une équipe opérationnelle."
+                ),
+            },
+            {
+                "name": "CVMatch",
+                "technologies": "Python",
+                "description": (
+                    "CVMatch est une application développée en Python permettant "
+                    "d'analyser une offre d'emploi, d'adapter un profil candidat "
+                    "et de générer un CV ciblé. Le projet repose sur des LLM, "
+                    "une validation des sorties et des tests unitaires avec pytest."
+                ),
+            },
+        ],
+        job_title="Software Engineer",
+        offer_terms=[
+            "Python",
+            "LLM",
+            "validation des sorties",
+            "tests unitaires",
+            "génération de CV ciblés",
+        ],
+    )
+
+    assert project is not None
+    assert project["name"] == "CVMatch"
+    assert project["technologies"] == ["Python", "LLM", "pytest"]
+    assert project["render_detail_budget"] == 2
+    rendered = " ".join(project["description_lines"])
+    assert "Application Python/LLM" in rendered
+    assert "génération de CV ciblés" in rendered
+    assert "validation des sorties" in rendered
+    assert "tests unitaires avec pytest" in rendered
+
+
+def test_featured_project_can_keep_two_project_detail_lines_when_source_is_rich() -> None:
+    manager = ExportManager()
+    project = manager._build_featured_project(
+        [
+            {
+                "name": "Data Quality Toolkit",
+                "technologies": "Python, SQL",
+                "description": (
+                    "Développé un outil Python pour analyser la qualité des données "
+                    "et détecter les incohérences avant exploitation. Validé les "
+                    "résultats avec des requêtes SQL et des tests de non-régression."
+                ),
+            }
+        ],
+        job_title="Data Analyst",
+        offer_terms=["Python", "SQL", "qualité des données"],
+    )
+
+    assert project is not None
+    assert project["name"] == "Data Quality Toolkit"
+    assert project["render_detail_budget"] == 2
+    assert len(project["description_lines"]) == 2
+    rendered = " ".join(project["description_lines"])
+    assert "outil Python" in rendered
+    assert "requêtes SQL" in rendered
 
 
 def test_targeted_one_page_render_drops_interests_under_space_pressure() -> None:
@@ -561,6 +635,56 @@ def test_past_french_bullets_drop_auxiliary_a_prefix() -> None:
     assert highlights[1].startswith("Structuré")
 
 
+def test_experience_reconciliation_supplements_short_generated_current_role() -> None:
+    profile_json = {
+        "experiences": [
+            {
+                "title": "Alternant Ingénieur QA",
+                "company": "Careside",
+                "start_date": "09/2023",
+                "end_date": "Présent",
+                "description": (
+                    "Conçois, exécute et suit des plans de test sur 3 applications critiques. "
+                    "Réalise des tests API avec Postman ainsi que des vérifications en base "
+                    "de données sur MongoDB, PostgreSQL et Microsoft SQL Server. "
+                    "Crée 3 agents IA pour assister les activités QA : génération de données "
+                    "de test, aide à la conception de plans de test et benchmark d'outils "
+                    "d'automatisation comme Playwright, Cypress, Selenium et Agilitest."
+                ),
+            }
+        ],
+    }
+
+    result = coerce_generated_cv_payload(
+        payload={
+            "summary": "Profil QA.",
+            "experience": [
+                {
+                    "title": "Alternant Ingénieur QA",
+                    "company": "Careside",
+                    "start_date": "09/2023",
+                    "end_date": "Présent",
+                    "highlights": [
+                        "Exécute et suit des plans de test sur 3 applications critiques.",
+                        "Réalise des tests API avec Postman.",
+                    ],
+                }
+            ],
+        },
+        profile_json=profile_json,
+        fallback_generator=_fallback_generator,
+        language_code="fr",
+    )
+
+    highlights = result["experience"][0]["highlights"]
+    rendered = " ".join(highlights)
+
+    assert len(highlights) >= 3
+    assert "Postman" in rendered
+    assert "agents IA" in rendered
+    assert "génération de données de test" in rendered
+
+
 def test_coerce_generated_payload_recovers_profile_projects_and_interests() -> None:
     profile_json = {
         "projects": [
@@ -583,6 +707,55 @@ def test_coerce_generated_payload_recovers_profile_projects_and_interests() -> N
     assert result["projects"]
     assert result["projects"][0]["name"] == "CVmatch"
     assert result["interests"] == ["Natation", "Histoire"]
+
+
+def test_project_reconciliation_enriches_poor_generated_project_from_profile() -> None:
+    profile_json = {
+        "projects": [
+            {
+                "name": "CVMatch",
+                "technologies": "Python",
+                "description": (
+                    "CVMatch est une application développée en Python permettant "
+                    "d'analyser une offre d'emploi, d'adapter un profil candidat "
+                    "et de générer un CV ciblé. Le projet repose sur des LLM, "
+                    "une validation des sorties et des tests unitaires avec pytest."
+                ),
+            }
+        ],
+    }
+
+    result = coerce_generated_cv_payload(
+        payload={
+            "summary": "Profil QA.",
+            "projects": [
+                {
+                    "name": "CVMatch",
+                    "technologies": "Python, seeking, skilled, proactive",
+                    "description": (
+                        "Application Python : analyse d'offres d'emploi, "
+                        "adaptation de profil candidat."
+                    ),
+                }
+            ],
+        },
+        profile_json=profile_json,
+        fallback_generator=_fallback_generator,
+        language_code="fr",
+    )
+
+    project = ExportManager()._build_featured_project(result["projects"])
+
+    assert project is not None
+    assert project["technologies"] == ["Python", "LLM", "pytest"]
+    rendered = " ".join(project["description_lines"])
+    assert "Application Python/LLM" in rendered
+    assert "génération de CV ciblés" in rendered
+    assert "validation des sorties" in rendered
+    assert "tests unitaires avec pytest" in rendered
+    assert "seeking" not in rendered
+    assert "skilled" not in rendered
+    assert "proactive" not in rendered
 
 
 def test_rendered_interests_section_is_not_ultra_hidden() -> None:

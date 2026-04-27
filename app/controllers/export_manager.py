@@ -11,7 +11,7 @@ import tempfile
 import unicodedata
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Sequence, Tuple
 
 try:
     from jinja2 import Environment, FileSystemLoader
@@ -562,8 +562,16 @@ class ExportManager:
                 ),
                 max_items=3,
             )
+        offer_terms = self._collect_offer_terms_for_render(formatted_data)
+        job_title_hint = (
+            formatted_data.get("job_title")
+            or formatted_data.get("target_job_title")
+            or ""
+        )
         formatted_data["featured_project"] = self._build_featured_project(
             formatted_data.get("projects"),
+            job_title=str(job_title_hint).strip(),
+            offer_terms=offer_terms,
         )
         formatted_data["featured_certifications"] = self._build_featured_certifications(
             formatted_data.get("certifications"),
@@ -586,12 +594,6 @@ class ExportManager:
         )
         max_skill_items = 10
         max_roles = 4 if space_pressure <= 1 else 3
-        offer_terms = self._collect_offer_terms_for_render(formatted_data)
-        job_title_hint = (
-            formatted_data.get("job_title")
-            or formatted_data.get("target_job_title")
-            or ""
-        )
         formatted_data["experience"] = self._compact_experience_entries(
             formatted_data.get("experience_primary")
             or formatted_data.get("experience"),
@@ -3366,7 +3368,14 @@ class ExportManager:
             "descriptif",
             "description",
             "are",
+            "dynamic",
+            "collaborative",
             "summary",
+            "proactive",
+            "seeking",
+            "skilled",
+            "team spirited",
+            "team-spirited",
             "engineer sql",
             "job description",
             "role summary",
@@ -6199,13 +6208,20 @@ class ExportManager:
         seen: set[str] = set()
         noisy_terms = {
             "are",
+            "collaborative",
+            "dynamic",
             "summary",
             "summaries",
+            "proactive",
             "resume",
             "resumes",
             "cv",
             "project",
             "projet",
+            "seeking",
+            "skilled",
+            "team spirited",
+            "team-spirited",
         }
         for item in items:
             item = self._restore_display_acronyms(
@@ -6264,6 +6280,8 @@ class ExportManager:
         project: Dict[str, Any],
         *,
         technologies: List[str],
+        max_lines: int = 2,
+        char_budget: int = 360,
     ) -> List[str]:
         description = str(project.get("description") or "").strip()
         if not description:
@@ -6313,11 +6331,123 @@ class ExportManager:
 
         return self._select_whole_sentences(
             self._split_sentences(description),
-            max_items=2,
-            char_budget=280,
+            max_items=max(1, int(max_lines or 1)),
+            char_budget=max(180, int(char_budget or 0)),
         )
 
-    def _build_featured_project(self, projects: Any) -> Optional[Dict[str, Any]]:
+    def _project_information_units(self, project: Dict[str, Any]) -> int:
+        units = 0
+        if str(project.get("name") or "").strip():
+            units += 1
+        if str(project.get("url") or "").strip():
+            units += 1
+        if str(project.get("duration") or "").strip():
+            units += 1
+
+        technologies = self._collect_project_technologies(project, max_items=6)
+        if technologies:
+            units += min(3, len(technologies))
+
+        description = str(project.get("description") or "").strip()
+        if description:
+            sentences = self._split_sentences(description)
+            units += min(4, len(sentences) or 1)
+            if any(len(sentence) >= 120 for sentence in sentences):
+                units += 1
+
+        return max(1, min(units, 10))
+
+    def _project_alignment_score(
+        self,
+        project: Dict[str, Any],
+        *,
+        job_title: str = "",
+        offer_terms: Optional[Sequence[str]] = None,
+    ) -> float:
+        parts = [
+            str(project.get("name") or ""),
+            str(project.get("description") or ""),
+            str(project.get("technologies") or ""),
+            str(project.get("duration") or ""),
+        ]
+        probe = self._normalize_match_probe(" ".join(parts))
+        if not probe:
+            return 0.0
+
+        score = 0.0
+        if job_title and self._match_probe_contains_term(probe, job_title):
+            score += 3.0
+
+        seen_terms: set[str] = set()
+        for term in offer_terms or []:
+            norm = self._normalize_text_key(term)
+            if not norm or norm in seen_terms:
+                continue
+            seen_terms.add(norm)
+            if self._match_probe_contains_term(probe, term):
+                score += 2.0 if " " in str(term).strip() else 1.0
+
+        for token in (
+            "amelior",
+            "automatis",
+            "build",
+            "controle",
+            "develop",
+            "generate",
+            "generation",
+            "improve",
+            "pipeline",
+            "reduce",
+            "test",
+            "validation",
+        ):
+            if token in probe:
+                score += 0.35
+
+        try:
+            from ..domain.generation.tool_signals import collect_named_tool_hints
+        except Exception:
+            collect_named_tool_hints = None
+        if collect_named_tool_hints:
+            named_tools = collect_named_tool_hints(
+                {"projects": [project]},
+                max_items=8,
+            )
+            if named_tools:
+                score += min(1.8, len(named_tools) * 0.4)
+
+        return score
+
+    def _rank_projects_for_render(
+        self,
+        projects: List[Dict[str, Any]],
+        *,
+        job_title: str = "",
+        offer_terms: Optional[Sequence[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        scored: List[Tuple[float, int, int, Dict[str, Any]]] = []
+        for idx, project in enumerate(projects):
+            if not isinstance(project, dict):
+                continue
+            score = self._project_alignment_score(
+                project,
+                job_title=job_title,
+                offer_terms=offer_terms,
+            )
+            info_units = self._project_information_units(project)
+            scored.append((score, info_units, -idx, project))
+        if not scored:
+            return []
+        scored.sort(key=lambda row: (row[0], row[1], row[2]), reverse=True)
+        return [row[3] for row in scored]
+
+    def _build_featured_project(
+        self,
+        projects: Any,
+        *,
+        job_title: str = "",
+        offer_terms: Optional[Sequence[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
         if not isinstance(projects, list):
             return None
         candidates = [
@@ -6328,18 +6458,19 @@ class ExportManager:
         if not candidates:
             return None
 
-        def _score(project: Dict[str, Any]) -> int:
-            return sum(
-                1
-                for field in ("description", "technologies", "url", "duration")
-                if str(project.get(field) or "").strip()
-            )
-
-        best = sorted(candidates, key=_score, reverse=True)[0]
+        ranked_projects = self._rank_projects_for_render(
+            candidates,
+            job_title=job_title,
+            offer_terms=offer_terms,
+        )
+        best = ranked_projects[0] if ranked_projects else candidates[0]
+        info_units = self._project_information_units(best)
         technologies = self._collect_project_technologies(best, max_items=4)
         description_lines = self._build_compact_project_description_lines(
             best,
             technologies=technologies,
+            max_lines=2 if info_units >= 5 else 1,
+            char_budget=360 if info_units >= 5 else 260,
         )
         return {
             "name": str(best.get("name") or "").strip(),
@@ -6347,6 +6478,12 @@ class ExportManager:
             "url": str(best.get("url") or "").strip(),
             "technologies": technologies,
             "description_lines": description_lines,
+            "render_alignment_score": self._project_alignment_score(
+                best,
+                job_title=job_title,
+                offer_terms=offer_terms,
+            ),
+            "render_detail_budget": 2 if info_units >= 5 else 1,
         }
 
     def _build_featured_certifications(
@@ -6473,7 +6610,7 @@ class ExportManager:
             if ranked_keys and exp_key == ranked_keys[0]:
                 role_budget = (
                     4
-                    if (len(source_description) >= 7 or info_units >= 7)
+                    if (len(source_description) >= 4 or info_units >= 4)
                     else max(role_budget, 3)
                 )
             elif most_recent_key and exp_key == most_recent_key:

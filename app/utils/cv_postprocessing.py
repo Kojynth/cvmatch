@@ -100,6 +100,23 @@ ROLE_LIKE_SKILL_TOKENS = {
     "intern",
 }
 
+PROJECT_TECH_NOISE_TERMS = {
+    "are",
+    "collaborative",
+    "dynamic",
+    "project",
+    "proactive",
+    "projet",
+    "resume",
+    "resumes",
+    "seeking",
+    "skilled",
+    "summary",
+    "summaries",
+    "team spirited",
+    "team-spirited",
+}
+
 SKILL_LABEL_PREFIX_PATTERN = re.compile(
     r"(?i)^(?:skills?|comp[eé]tences?|technical skills|competences techniques)\s*[:\-]\s*"
 )
@@ -471,10 +488,13 @@ def sanitize_cv_json_output(
     fallback_category = "Skills" if language_code == "en" else "Competences"
 
     try:
-        from .cv_skill_evidence import looks_like_noise_skill_term
+        from .cv_skill_evidence import looks_like_noise_skill_term, should_keep_skill_term
     except Exception:
         def looks_like_noise_skill_term(_term: Any) -> bool:
             return False
+
+        def should_keep_skill_term(_term: Any) -> bool:
+            return True
 
     def normalize_text_for_match(value: Any) -> str:
         text = str(value or "").strip().casefold()
@@ -649,6 +669,29 @@ def sanitize_cv_json_output(
             if len(token) < 2:
                 return False
         return True
+
+    def clean_project_technologies(value: Any) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        cleaned_items: List[str] = []
+        seen_tech: set[str] = set()
+        for chunk in re.split(r"\s*(?:,|;|\||/)\s*", raw):
+            text = clean_text_field(chunk, max_length=80).strip(" ,;:-")
+            if not text:
+                continue
+            norm = normalize_text_for_match(text)
+            if not norm or norm in seen_tech or norm in PROJECT_TECH_NOISE_TERMS:
+                continue
+            if len(norm.split()) > 4:
+                continue
+            if looks_like_noise_skill_term(text):
+                continue
+            if not should_keep_skill_term(text):
+                continue
+            seen_tech.add(norm)
+            cleaned_items.append(text)
+        return ", ".join(cleaned_items)
 
     # Clean top-level text fields
     contact = cv_json.get("contact")
@@ -845,7 +888,7 @@ def sanitize_cv_json_output(
                 entry.get("description") or "",
                 dedupe_narrative=True,
             ),
-            "technologies": clean_text_field(entry.get("technologies") or ""),
+            "technologies": clean_project_technologies(entry.get("technologies") or ""),
             "url": clean_text_field(entry.get("url") or ""),
             "duration": clean_text_field(entry.get("duration") or ""),
         }
@@ -2457,9 +2500,43 @@ def _reconcile_experience_section(
             )
             if not text:
                 continue
-            if summary_norm and _is_same_narrative(summary_text, text):
+            if (
+                summary_norm
+                and len(cleaned_highlights) >= 3
+                and _is_same_narrative(summary_text, text)
+            ):
                 continue
             cleaned_highlights.append(text)
+
+        if expected_description and len(cleaned_highlights) < 3:
+            supplemental_highlights = extract_experience_highlights(
+                expected_description,
+                company=entry.get("company") or "",
+                language_code=language_code,
+            )
+            for supplemental in supplemental_highlights:
+                text = _polish_experience_fragment(
+                    supplemental,
+                    company=entry.get("company") or "",
+                    language_code=language_code,
+                    prefer_articleless=True,
+                )
+                if not text:
+                    continue
+                if (
+                    summary_norm
+                    and len(cleaned_highlights) >= 3
+                    and _is_same_narrative(summary_text, text)
+                ):
+                    continue
+                candidate_lines = _dedup_fuzzy_highlights(
+                    _dedup_preserve([*cleaned_highlights, text])
+                )
+                if len(candidate_lines) == len(cleaned_highlights):
+                    continue
+                cleaned_highlights = candidate_lines
+                if len(cleaned_highlights) >= 4:
+                    break
 
         entry["summary"] = _trim_text(summary_text, 420)
         deduped_highlights = _dedup_fuzzy_highlights(_dedup_preserve(cleaned_highlights))
@@ -2917,6 +2994,85 @@ def _extract_profile_projects(profile_json: Dict[str, Any]) -> List[Dict[str, st
     return rows
 
 
+def _score_profile_project_match(
+    project: Dict[str, Any], profile_project: Dict[str, Any]
+) -> float:
+    project_name = _normalize_for_match(project.get("name"))
+    profile_name = _normalize_for_match(profile_project.get("name"))
+    if not project_name or not profile_name:
+        return 0.0
+    if project_name == profile_name:
+        return 1.0
+    return _text_similarity(project_name, profile_name)
+
+
+def _project_profile_has_missing_signal(
+    project: Dict[str, Any],
+    profile_project: Dict[str, Any],
+) -> bool:
+    current_probe = _normalize_for_match(
+        " ".join(
+            str(project.get(key) or "")
+            for key in ("description", "technologies", "name")
+        )
+    )
+    profile_probe = _normalize_for_match(
+        " ".join(
+            str(profile_project.get(key) or "")
+            for key in ("description", "technologies", "name")
+        )
+    )
+    if not profile_probe:
+        return False
+
+    missing_markers = (
+        "llm",
+        "pytest",
+        "tests unitaires",
+        "validation",
+        "sorties",
+        "generation",
+        "cv cible",
+        "pipeline",
+    )
+    if any(
+        marker in profile_probe and marker not in current_probe
+        for marker in missing_markers
+    ):
+        return True
+
+    current_words = len(current_probe.split())
+    profile_words = len(profile_probe.split())
+    return profile_words >= max(18, current_words + 8)
+
+
+def _merge_project_with_profile_evidence(
+    project: Dict[str, Any],
+    profile_project: Dict[str, Any],
+) -> Dict[str, Any]:
+    merged = dict(project)
+    for field in ("name", "url", "duration"):
+        if not str(merged.get(field) or "").strip() and profile_project.get(field):
+            merged[field] = profile_project[field]
+
+    current_description = str(merged.get("description") or "").strip()
+    profile_description = str(profile_project.get("description") or "").strip()
+    if profile_description and (
+        not current_description
+        or _project_profile_has_missing_signal(merged, profile_project)
+    ):
+        merged["description"] = profile_description
+
+    current_technologies = str(merged.get("technologies") or "").strip()
+    profile_technologies = str(profile_project.get("technologies") or "").strip()
+    if profile_technologies:
+        if current_technologies:
+            merged["technologies"] = f"{current_technologies}, {profile_technologies}"
+        else:
+            merged["technologies"] = profile_technologies
+    return merged
+
+
 def _extract_profile_interests(profile_json: Dict[str, Any]) -> List[str]:
     rows: List[str] = []
     if not isinstance(profile_json, dict):
@@ -2952,6 +3108,37 @@ def _reconcile_projects_and_interests_sections(
                 "Project reconciliation appended %s missing profile entries.",
                 min(2, len(profile_projects)),
             )
+    else:
+        profile_projects = _extract_profile_projects(profile_json)
+        if profile_projects:
+            reconciled_projects: List[Dict[str, Any]] = []
+            changed_count = 0
+            for project in projects:
+                if not isinstance(project, dict):
+                    continue
+                best_profile = None
+                best_score = 0.0
+                for profile_project in profile_projects:
+                    score = _score_profile_project_match(project, profile_project)
+                    if score > best_score:
+                        best_score = score
+                        best_profile = profile_project
+                if best_profile is not None and best_score >= 0.72:
+                    merged_project = _merge_project_with_profile_evidence(
+                        project, best_profile
+                    )
+                    if merged_project != project:
+                        changed_count += 1
+                    reconciled_projects.append(merged_project)
+                else:
+                    reconciled_projects.append(project)
+            if reconciled_projects:
+                cv_json["projects"] = reconciled_projects
+            if changed_count:
+                logger.warning(
+                    "Project reconciliation enriched %s profile-backed entries.",
+                    changed_count,
+                )
 
     interests = cv_json.get("interests")
     if not isinstance(interests, list) or not interests:
@@ -2979,16 +3166,22 @@ def _rebuild_skills_section_from_profile(
             build_skill_blocks_from_profile,
             skills_section_low_signal,
         )
-        from .cv_skill_evidence import should_keep_skill_term
+        from .cv_skill_evidence import skills_section_has_supported_signal
     except Exception:
         return
 
     current_skills = cv_json.get("skills")
-    current_is_usable = (
-        isinstance(current_skills, list)
-        and current_skills
-        and not skills_section_low_signal(current_skills, profile_json)
-    )
+    current_is_usable = False
+    if isinstance(current_skills, list) and current_skills:
+        current_is_usable = not skills_section_low_signal(current_skills, profile_json)
+        if current_is_usable:
+            supported, plausible, hard_unsupported = (
+                skills_section_has_supported_signal(current_skills, profile_json)
+            )
+            if supported < 2 and (plausible + hard_unsupported) >= 2:
+                current_is_usable = False
+    if current_is_usable:
+        return
 
     recovered = build_skill_blocks_from_profile(
         profile_json,
@@ -2998,71 +3191,11 @@ def _rebuild_skills_section_from_profile(
     if not recovered:
         return
 
-    if not current_is_usable:
-        cv_json["skills"] = recovered
-        logger.warning(
-            "Skills reconciliation rebuilt %s profile-backed blocks.",
-            len(recovered),
-        )
-        return
-
-    technical_label = "Technical Skills" if language_code == "en" else "Competences techniques"
-    soft_label = "Soft Skills" if language_code == "en" else "Qualites"
-    soft_categories = {
-        "soft skill",
-        "soft skills",
-        "qualites",
-        "qualités",
-        "qualites personnelles",
-        "qualités personnelles",
-        "qualities",
-        "strengths",
-    }
-    buckets: Dict[str, Dict[str, Any]] = {
-        "technical": {"category": technical_label, "items": []},
-        "soft": {"category": soft_label, "items": []},
-    }
-    seen: set[str] = set()
-
-    def append_block(block: Any, *, require_profile_support: bool = False) -> None:
-        if not isinstance(block, dict):
-            return
-        category = str(block.get("category") or "").strip()
-        category_norm = _normalize_for_match(category)
-        bucket_key = "soft" if category_norm in soft_categories else "technical"
-        items = block.get("items") or block.get("skills") or block.get("skills_list") or []
-        if not isinstance(items, list):
-            return
-        for item in items:
-            name = ""
-            if isinstance(item, dict):
-                name = str(item.get("name") or item.get("skill") or "").strip()
-            elif isinstance(item, str):
-                name = item.strip()
-            key = _normalize_for_match(name)
-            if not name or not key or key in seen:
-                continue
-            if require_profile_support and not should_keep_skill_term(
-                name,
-                profile_json,
-                require_profile_evidence=True,
-            ):
-                continue
-            seen.add(key)
-            buckets[bucket_key]["items"].append(name)
-
-    for block in recovered:
-        append_block(block)
-    for block in current_skills:
-        append_block(block, require_profile_support=True)
-
-    merged = [block for block in buckets.values() if block.get("items")]
-    if merged:
-        cv_json["skills"] = merged
-        logger.info(
-            "Skills reconciliation merged %s profile-backed blocks into existing skills.",
-            len(recovered),
-        )
+    cv_json["skills"] = recovered
+    logger.warning(
+        "Skills reconciliation rebuilt %s profile-backed blocks.",
+        len(recovered),
+    )
 
 
 def reconcile_cv_sections_with_profile(
