@@ -1,4 +1,4 @@
-﻿from .text_cleaner import sanitize_widget_tree
+from .text_cleaner import sanitize_widget_tree
 """
 Template Preview Window
 =======================
@@ -518,7 +518,6 @@ CV_AUTO_FIT_SCRIPT = """
   const PAGE_MARGIN = 12 * PX_PER_MM;
   const TARGET_WIDTH = PAGE_WIDTH - (PAGE_MARGIN * 2);
   const TARGET_HEIGHT = PAGE_HEIGHT - (PAGE_MARGIN * 2);
-  const MIN_READABLE_PRINT_SCALE = 0.9;
   const TIERS = ["base", "compact", "tight", "ultra", "critical"];
 
   function fitToPage() {
@@ -568,13 +567,13 @@ CV_AUTO_FIT_SCRIPT = """
     if (!Number.isFinite(scale) || scale <= 0) {
       scale = 1;
     }
-    scale = Math.max(scale, MIN_READABLE_PRINT_SCALE);
+    scale = Math.max(scale, 0.01);
     root.style.setProperty("--print-scale", scale.toFixed(3));
     return {
       tier: root.dataset.pageFit || "ultra",
       scale,
       rawScale,
-      cappedScale: scale > rawScale,
+      cappedScale: false,
       height: metrics.height,
       width: metrics.width,
       targetHeight: TARGET_HEIGHT,

@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 from typing import Any, Dict, List, Optional
 
 from ..controllers.export_manager import ExportManager
-from .language_policy import text_matches_target_language
+from .language_policy import normalize_language_code, text_matches_target_language
 
 
 _CONTACT_PLACEHOLDER_LABEL_RE = re.compile(r"^(?:lien|link)\s*\d*$", re.IGNORECASE)
@@ -45,6 +45,10 @@ _RENDER_POSITIONING_PATTERNS = {
             re.IGNORECASE,
         ),
         re.compile(
+            r"^\s*Profile\s+aligned(?:\s+with\s+(?P<company>.+?))?\s*[:\-]\s*(?P<terms>.+?)\.\s*$",
+            re.IGNORECASE,
+        ),
+        re.compile(
             r"^\s*Profile\s+aligned(?:\s+with\s+(?P<company>.+?))?\s+through\s+(?P<terms>.+?)\.\s*$",
             re.IGNORECASE,
         ),
@@ -58,6 +62,130 @@ _RENDER_POSITIONING_PATTERNS = {
         ),
     ),
 }
+
+_SECTION_LABELS_BY_LANGUAGE = {
+    "en": {
+        "contact": "Contact",
+        "profile": "Profile",
+        "experience": "Experience",
+        "skills": "Skills",
+        "soft_skills": "Soft skills",
+        "education": "Education",
+        "projects": "Projects",
+        "languages": "Languages",
+        "certifications": "Certifications",
+        "interests": "Interests",
+    },
+    "fr": {
+        "contact": "Contact",
+        "profile": "Profil",
+        "experience": "Expérience",
+        "skills": "Compétences",
+        "soft_skills": "Savoir-être",
+        "education": "Formation",
+        "projects": "Projets",
+        "languages": "Langues",
+        "certifications": "Certifications",
+        "interests": "Centres d'intérêt",
+    },
+    "es": {
+        "contact": "Contacto",
+        "profile": "Perfil",
+        "experience": "Experiencia",
+        "skills": "Habilidades",
+        "soft_skills": "Habilidades interpersonales",
+        "education": "Formación",
+        "projects": "Proyectos",
+        "languages": "Idiomas",
+        "certifications": "Certificaciones",
+        "interests": "Intereses",
+    },
+    "de": {
+        "contact": "Kontakt",
+        "profile": "Profil",
+        "experience": "Berufserfahrung",
+        "skills": "Kenntnisse",
+        "soft_skills": "Soft Skills",
+        "education": "Ausbildung",
+        "projects": "Projekte",
+        "languages": "Sprachen",
+        "certifications": "Zertifizierungen",
+        "interests": "Interessen",
+    },
+    "it": {
+        "contact": "Contatti",
+        "profile": "Profilo",
+        "experience": "Esperienza",
+        "skills": "Competenze",
+        "soft_skills": "Competenze trasversali",
+        "education": "Formazione",
+        "projects": "Progetti",
+        "languages": "Lingue",
+        "certifications": "Certificazioni",
+        "interests": "Interessi",
+    },
+    "pt": {
+        "contact": "Contacto",
+        "profile": "Perfil",
+        "experience": "Experiência",
+        "skills": "Competências",
+        "soft_skills": "Competências interpessoais",
+        "education": "Formação",
+        "projects": "Projetos",
+        "languages": "Idiomas",
+        "certifications": "Certificações",
+        "interests": "Interesses",
+    },
+    "nl": {
+        "contact": "Contact",
+        "profile": "Profiel",
+        "experience": "Werkervaring",
+        "skills": "Vaardigheden",
+        "soft_skills": "Soft skills",
+        "education": "Opleiding",
+        "projects": "Projecten",
+        "languages": "Talen",
+        "certifications": "Certificeringen",
+        "interests": "Interesses",
+    },
+    "ja": {
+        "contact": "連絡先",
+        "profile": "プロフィール",
+        "experience": "職歴",
+        "skills": "スキル",
+        "soft_skills": "ソフトスキル",
+        "education": "学歴",
+        "projects": "プロジェクト",
+        "languages": "言語",
+        "certifications": "資格",
+        "interests": "趣味・関心",
+    },
+    "zh": {
+        "contact": "联系方式",
+        "profile": "个人简介",
+        "experience": "工作经历",
+        "skills": "技能",
+        "soft_skills": "软技能",
+        "education": "教育经历",
+        "projects": "项目",
+        "languages": "语言",
+        "certifications": "认证",
+        "interests": "兴趣",
+    },
+}
+
+
+def _render_language_code(language: Optional[str]) -> str:
+    return normalize_language_code(language or "fr")
+
+
+def _section_labels_for_language(language_code: str) -> Dict[str, str]:
+    return dict(
+        _SECTION_LABELS_BY_LANGUAGE.get(
+            _render_language_code(language_code),
+            _SECTION_LABELS_BY_LANGUAGE["en"],
+        )
+    )
 
 
 def _restore_display_acronyms(value: Any) -> str:
@@ -108,7 +236,7 @@ def _match_render_positioning_sentence(
     text = re.sub(r"\s+", " ", str(value or "").strip()).strip()
     if not text:
         return None
-    lang_key = "en" if str(language_code or "").lower().startswith("en") else "fr"
+    lang_key = _render_language_code(language_code)
     for pattern in _RENDER_POSITIONING_PATTERNS.get(lang_key, ()):
         match = pattern.match(text)
         if match:
@@ -192,7 +320,9 @@ def _strip_ats_unsafe_bullet_markers(value: Any) -> str:
     text = str(value or "").strip()
     if not text:
         return ""
-    text = re.sub(r"^[\s\-\*\u2022\u25aa\u279c\u2713\u25ba\u25b8\u25e6\u2023]+", "", text)
+    text = re.sub(
+        r"^[\s\-\*\u2022\u25aa\u279c\u2713\u25ba\u25b8\u25e6\u2023]+", "", text
+    )
     return text.strip()
 
 
@@ -387,7 +517,10 @@ def _build_target_role_line(
     *,
     is_en: bool,
 ) -> str:
-    parts = [_restore_display_acronyms(str(part or "").strip()) for part in (job_title, company)]
+    parts = [
+        _restore_display_acronyms(str(part or "").strip())
+        for part in (job_title, company)
+    ]
     parts = [part for part in parts if part]
     if not parts:
         return ""
@@ -468,7 +601,9 @@ def _build_contact_methods(
 
     def _append(kind: str, label: str, value: Any, href: Any = "") -> None:
         display_value = str(value or "").strip()
-        resolved_href = str(href or "").strip() or _normalize_contact_href(display_value)
+        resolved_href = str(href or "").strip() or _normalize_contact_href(
+            display_value
+        )
         if not display_value:
             return
         if kind != "location" and not resolved_href:
@@ -540,20 +675,9 @@ def cv_json_to_cv_data(
             if not url:
                 continue
             contact_links.append({"label": label or f"Lien {idx}", "url": url})
-    lang = (language or "").strip().lower()
+    lang = _render_language_code(language)
     is_en = lang.startswith("en")
-    labels = {
-        "contact": "Contact" if is_en else "Contact",
-        "profile": "Profile" if is_en else "Profil",
-        "experience": "Experience" if is_en else "Expérience",
-        "skills": "Skills" if is_en else "Compétences",
-        "soft_skills": "Soft skills" if is_en else "Savoir-être",
-        "education": "Education" if is_en else "Formation",
-        "projects": "Projects" if is_en else "Projets",
-        "languages": "Languages" if is_en else "Langues",
-        "certifications": "Certifications" if is_en else "Certifications",
-        "interests": "Interests" if is_en else "Centres d'intérêt",
-    }
+    labels = _section_labels_for_language(lang)
 
     def _entry_recency_rank(entry: Dict[str, Any]) -> int:
         def _rank(raw: Any) -> int:
@@ -561,7 +685,10 @@ def cv_json_to_cv_data(
             if not text:
                 return 0
             lowered = text.casefold()
-            if any(token in lowered for token in ("present", "current", "en cours", "aujourd")):
+            if any(
+                token in lowered
+                for token in ("present", "current", "en cours", "aujourd")
+            ):
                 return 999912
             month_year = re.search(r"\b(?P<m>0[1-9]|1[0-2])/(?P<y>\d{4})\b", text)
             if month_year:
@@ -573,7 +700,12 @@ def cv_json_to_cv_data(
 
         if not isinstance(entry, dict):
             return 0
-        return _rank(entry.get("end_date")) or _rank(entry.get("start_date")) or _rank(entry.get("year"))
+        return (
+            _rank(entry.get("end_date"))
+            or _rank(entry.get("start_date"))
+            or _rank(entry.get("year"))
+        )
+
     skills_section: List[Dict[str, Any]] = []
     for category in cv_json.get("skills", []) or []:
         if not isinstance(category, dict):
@@ -681,7 +813,9 @@ def cv_json_to_cv_data(
         level_name = _display_language_level(item.get("level") or "", is_en=is_en)
         certification = str(item.get("certification") or "").strip()
         if certification:
-            level_name = f"{level_name} ({certification})" if level_name else certification
+            level_name = (
+                f"{level_name} ({certification})" if level_name else certification
+            )
         languages_section.append(
             {
                 "name": language_name,
@@ -773,7 +907,8 @@ def cv_json_to_cv_data(
         "target_role_line": target_role_line,
         "profile_summary": (
             cleaned_summary
-            if cleaned_summary and text_matches_target_language(cleaned_summary, lang or "fr")
+            if cleaned_summary
+            and text_matches_target_language(cleaned_summary, lang or "fr")
             else ""
         ),
         "profile_positioning_sentence": (
@@ -792,7 +927,7 @@ def cv_json_to_cv_data(
         "certifications": certifications_section,
         "interests": cv_json.get("interests") or [],
         "labels": labels,
-        "language": "en" if is_en else "fr",
+        "language": lang,
     }
 
 
@@ -888,7 +1023,9 @@ def cv_json_to_markdown(cv_json: Dict[str, Any], language: Optional[str] = None)
             if names:
                 lines.append(f"- {category}: {', '.join(names)}")
 
-    soft_skills = [item for item in data.get("soft_skills") or [] if isinstance(item, str)]
+    soft_skills = [
+        item for item in data.get("soft_skills") or [] if isinstance(item, str)
+    ]
     if soft_skills:
         lines.append("")
         lines.append(f"## {labels['soft_skills']}")

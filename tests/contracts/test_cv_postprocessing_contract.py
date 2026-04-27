@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.controllers.export_manager import ExportManager
+from app.utils.cv_json_renderer import cv_json_to_cv_data
 from app.utils.cv_postprocessing import (
     clean_skill_item_residues,
     coerce_generated_cv_payload,
@@ -345,26 +346,80 @@ def test_render_featured_skills_ranks_profile_evidence_against_offer() -> None:
 
     prepared = manager.prepare_template_data(cv_data)
 
-    rendered = "\n".join(prepared["featured_skills"])
+    skills = prepared["featured_skills"]
+    rendered = "\n".join(skills)
     assert "Compétences techniques :" not in rendered
-    assert "QA & tests :" in rendered
-    assert "Plans de test" in rendered
-    assert "Non-régression" in rendered
-    assert "API & data : Postman · Tests API · SQL · PostgreSQL · MongoDB · SQL Server" in rendered
-    assert "Automatisation :" in rendered
-    assert "Python" in rendered
-    assert "Playwright" in rendered
-    assert "Cypress" in rendered
-    assert "Selenium" in rendered
-    assert "Agilitest" in rendered
-    assert "Delivery QA :" in rendered
-    assert "Jira" in rendered
-    assert "Xray" in rendered
-    assert "Gherkin" in rendered
+    assert "QA & tests :" not in rendered
+    assert "API & data :" not in rendered
+    assert "Automatisation :" not in rendered
+    assert "Delivery QA :" not in rendered
+    assert "Benchmark Playwright / Cypress / Selenium / Agilitest" in skills
+    assert "Playwright" not in skills
+    assert "Cypress" not in skills
+    assert "Selenium" not in skills
+    assert "Microsoft SQL Server" in skills
+    assert "Postman" in skills
+    assert "PostgreSQL" in skills
+    assert "MongoDB" in skills
+    assert "Jira" in skills
+    assert "Python" in skills
     assert "UX Design" not in rendered
     assert "Cloud computing" not in rendered
     assert "Architecture cloud AWS" not in rendered
     assert "Tableau" not in rendered
+
+
+def test_render_featured_skills_stays_flat_without_generated_categories() -> None:
+    manager = ExportManager()
+    cv_data = {
+        "name": "Alice Example",
+        "language": "fr",
+        "job_title": "Software Engineer, QA",
+        "profile_summary": "Profil QA.",
+        "skills": [
+            {
+                "category": "Compétences techniques",
+                "skills_list": [
+                    {"name": "Cypress"},
+                    {"name": "Selenium"},
+                    {"name": "Playwright"},
+                    {"name": "Benchmark d'outils d'automatisation"},
+                    {"name": "Postman"},
+                    {"name": "SQL"},
+                    {"name": "PostgreSQL"},
+                    {"name": "MongoDB"},
+                    {"name": "Microsoft SQL Server"},
+                    {"name": "Engineer SQL"},
+                ],
+            }
+        ],
+        "experience": [
+            {
+                "title": "Alternant Ingénieur QA",
+                "company": "Careside",
+                "start_date": "09/2023",
+                "end_date": "Présent",
+                "description": (
+                    "Réalise des tests API avec Postman et des vérifications SQL "
+                    "sur PostgreSQL, MongoDB et Microsoft SQL Server. "
+                    "Explore et benchmarke Playwright, Cypress, Selenium et Agilitest."
+                ),
+            }
+        ],
+    }
+
+    prepared = manager.prepare_template_data(cv_data)
+    skills = prepared["featured_skills"]
+    rendered = "\n".join(skills)
+
+    assert "API & data :" not in rendered
+    assert "Automatisation :" not in rendered
+    assert "Benchmark Playwright / Cypress / Selenium / Agilitest" in skills
+    assert "Playwright" not in skills
+    assert "Cypress" not in skills
+    assert "Selenium" not in skills
+    assert "Engineer SQL" not in rendered
+    assert "Benchmark Cypress / Selenium" not in rendered
 
 
 def test_render_experience_keeps_role_critical_evidence_lines() -> None:
@@ -415,6 +470,95 @@ def test_render_experience_keeps_role_critical_evidence_lines() -> None:
     assert "agents IA" in rendered
     assert "génération de données de test" in rendered
     assert "benchmark d'outils d'automatisation" in rendered
+
+
+def test_featured_project_filters_noisy_generated_technologies() -> None:
+    manager = ExportManager()
+    project = manager._build_featured_project(
+        [
+            {
+                "name": "CVMatch",
+                "technologies": "Python, api, summary, are",
+                "description": (
+                    "CVMatch est une application développée en Python permettant "
+                    "d'analyser une offre d'emploi, d'adapter un profil candidat "
+                    "et de générer un CV ciblé. Le projet repose sur des LLM, "
+                    "une validation des sorties et des tests unitaires avec pytest."
+                ),
+            }
+        ]
+    )
+
+    assert project is not None
+    assert project["technologies"] == ["Python", "LLM", "pytest"]
+    rendered = " ".join(project["description_lines"])
+    assert "Application Python/LLM" in rendered
+    assert "analyse d'offres d'emploi" in rendered
+    assert "tests unitaires avec pytest" in rendered
+    assert "summary" not in rendered
+    assert "are" not in rendered
+
+
+def test_targeted_one_page_render_drops_interests_under_space_pressure() -> None:
+    manager = ExportManager()
+    prepared = manager.prepare_template_data(
+        {
+            "name": "Alice Example",
+            "language": "fr",
+            "job_title": "Software Engineer, QA",
+            "ats_keywords": ["API testing", "automation"],
+            "profile_summary": "Profil QA.",
+            "experience": [
+                {
+                    "title": "QA Engineer",
+                    "company": "ACME",
+                    "start_date": "09/2023",
+                    "end_date": "Présent",
+                    "description": ["Réalise des tests API avec Postman."],
+                }
+            ],
+            "projects": [
+                {
+                    "name": "CVMatch",
+                    "technologies": "Python",
+                    "description": "Application Python de génération de CV ciblés.",
+                }
+            ],
+            "education": [{"degree": "Master", "institution": "School", "year": "2024"}],
+            "languages": [{"name": "Anglais", "level": "B2"}],
+            "interests": ["Histoire", "Natation en compétition", "Fitness"],
+        }
+    )
+
+    assert prepared["featured_project"]
+    assert prepared["interests"] == []
+
+
+def test_past_french_bullets_drop_auxiliary_a_prefix() -> None:
+    result = coerce_generated_cv_payload(
+        payload={
+            "summary": "Profil QA.",
+            "experience": [
+                {
+                    "title": "Stage Sales Support",
+                    "company": "ACME",
+                    "start_date": "06/2023",
+                    "end_date": "08/2023",
+                    "highlights": [
+                        "A automatisé les calculs pour limiter les erreurs.",
+                        "A structuré les retours utilisateurs.",
+                    ],
+                }
+            ],
+        },
+        profile_json={},
+        fallback_generator=_fallback_generator,
+        language_code="fr",
+    )
+
+    highlights = result["experience"][0]["highlights"]
+    assert highlights[0].startswith("Automatisé")
+    assert highlights[1].startswith("Structuré")
 
 
 def test_coerce_generated_payload_recovers_profile_projects_and_interests() -> None:
@@ -513,3 +657,155 @@ def test_pdf_text_order_keeps_experience_bullets_before_education() -> None:
             output_path.unlink()
         except OSError:
             pass
+
+
+def test_renderer_preserves_english_colon_positioning_sentence() -> None:
+    cv_json = {
+        "target_job_title": "QA Engineer",
+        "target_company": "Mistral AI",
+        "contact": {"full_name": "Alice Example", "email": "alice@example.com"},
+        "summary": (
+            "QA engineer focused on release quality. "
+            "Profile aligned with Mistral AI: foundation in API testing."
+        ),
+        "experience": [],
+        "skills": [],
+    }
+
+    data = cv_json_to_cv_data(cv_json, language="en")
+
+    assert data["profile_summary"] == "QA engineer focused on release quality."
+    assert (
+        data["profile_positioning_sentence"]
+        == "Profile aligned with Mistral AI: foundation in API testing."
+    )
+
+
+def test_non_french_locale_does_not_force_french_render_fallbacks() -> None:
+    manager = ExportManager()
+    cv_json = {
+        "contact": {"full_name": "Alice Example", "email": "alice@example.com"},
+        "summary": "Perfil QA.",
+        "experience": [],
+        "skills": [],
+    }
+    data = cv_json_to_cv_data(cv_json, language="es")
+
+    assert data["language"] == "es"
+    assert data["labels"]["skills"] == "Habilidades"
+
+    source_lines = [
+        "API testing with Postman and database checks on PostgreSQL.",
+    ]
+    evidence_lines = manager._source_backed_experience_evidence_lines(
+        source_lines,
+        offer_terms=["API testing", "database"],
+        language_code="es",
+    )
+    assert evidence_lines == source_lines
+
+    grouped = manager._group_featured_skills_for_display(
+        ["Postman", "SQL"],
+        {
+            "skills": [
+                {
+                    "category": "Habilidades",
+                    "skills_list": [{"name": "Postman"}, {"name": "SQL"}],
+                }
+            ],
+            "experience": [
+                {
+                    "title": "QA",
+                    "company": "ACME",
+                    "description": ["Plans de test, Postman, SQL, Jira, Xray"],
+                }
+            ],
+            "experience_all": [
+                {
+                    "title": "QA",
+                    "company": "ACME",
+                    "description": ["Plans de test, Postman, SQL, Jira, Xray"],
+                }
+            ],
+        },
+        offer_terms=["QA", "testing", "API", "release"],
+        job_title="QA Engineer",
+        language_code="es",
+    )
+    assert grouped == ["Postman", "SQL"]
+
+
+def test_contextual_positioning_does_not_claim_offer_only_experience() -> None:
+    manager = ExportManager()
+    formatted = {
+        "language": "en",
+        "company": "Mistral AI",
+        "job_title": "QA Engineer",
+        "ats_keywords": [
+            "API testing",
+            "SQL",
+            "defect analysis",
+            "test automation",
+        ],
+        "skills": [{"category": "Skills", "skills_list": [{"name": "Manual testing"}]}],
+        "featured_skills": ["Manual testing"],
+        "experience": [
+            {
+                "title": "QA tester",
+                "company": "ACME",
+                "description": ["Executed manual test plans and wrote release notes."],
+            }
+        ],
+        "experience_all": [
+            {
+                "title": "QA tester",
+                "company": "ACME",
+                "description": ["Executed manual test plans and wrote release notes."],
+            }
+        ],
+    }
+
+    sentence = manager._build_targeted_summary_sentence(
+        formatted,
+        rendered_signatures=[],
+        used_keys=set(),
+    )
+
+    assert "experience in API testing" not in sentence
+    assert "SQL checks" not in sentence
+    assert "defect analysis" not in sentence
+
+
+def test_intro_line_filter_keeps_action_evidence_starting_with_platform_or_group() -> None:
+    manager = ExportManager()
+
+    assert (
+        manager._score_experience_render_line(
+            "Platform migration reduced release risk across three products.",
+            company="ACME",
+            job_title="QA Engineer",
+            offer_terms=["release", "risk"],
+            language_code="en",
+        )
+        > -50
+    )
+    assert (
+        manager._score_experience_render_line(
+            "Group test cases by risk before release.",
+            company="ACME",
+            job_title="QA Engineer",
+            offer_terms=["release", "risk"],
+            language_code="en",
+        )
+        > -50
+    )
+    assert (
+        manager._score_experience_render_line(
+            "Company: platform for patient workflow.",
+            company="ACME",
+            job_title="QA Engineer",
+            offer_terms=["release", "risk"],
+            language_code="en",
+        )
+        <= -50
+    )
