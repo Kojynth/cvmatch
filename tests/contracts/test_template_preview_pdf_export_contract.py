@@ -224,6 +224,9 @@ def test_auto_fit_fallback_scale_uses_computed_fit_ratio(monkeypatch) -> None:
     assert "MIN_READABLE_PRINT_SCALE" not in script
     assert "Math.max(scale, 0.01)" in script
     assert "Math.max(scale, 0.9)" not in script
+    assert "withPrintMeasureWidth" in script
+    assert 'setProperty("width", `${TARGET_WIDTH}px`, "important")' in script
+    assert 'setProperty("min-width", `${TARGET_WIDTH}px`, "important")' in script
 
 
 def test_webengine_print_css_keeps_readable_typography(monkeypatch) -> None:
@@ -234,6 +237,16 @@ def test_webengine_print_css_keeps_readable_typography(monkeypatch) -> None:
     assert "font-size: 12.6px !important;" in css
     assert "font-size: 10.3px !important;" not in css
     assert ':root[data-page-fit="critical"] .section-content' in css
+
+
+def test_webengine_print_css_uses_zoom_without_transform_double_scaling(
+    monkeypatch,
+) -> None:
+    template_preview_window = _load_preview_module(monkeypatch)
+
+    css = template_preview_window.ONE_PAGE_PRINT_CSS
+    assert "zoom: var(--print-scale);" in css
+    assert "translateX(-50%) scale(var(--print-scale))" not in css
 
 
 def test_hidden_pdf_view_load_triggers_print_without_visible_preview_branch(
