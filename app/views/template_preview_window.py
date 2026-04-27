@@ -313,10 +313,7 @@ ONE_PAGE_PRINT_CSS = """
     width: calc(186mm / var(--print-scale));
     max-width: calc(186mm / var(--print-scale));
     margin: 0 auto !important;
-    position: relative;
-    left: 50%;
-    transform: translateX(-50%) scale(var(--print-scale));
-    transform-origin: top center;
+    zoom: var(--print-scale);
     border: none !important;
     border-radius: 0 !important;
     box-shadow: none !important;
@@ -530,13 +527,38 @@ CV_AUTO_FIT_SCRIPT = """
       return { tier: "base", scale: 1 };
     }
 
-    const measure = () => {
+    const withPrintMeasureWidth = (callback) => {
+      const saved = {};
+      for (const property of ["width", "max-width", "min-width", "box-sizing"]) {
+        saved[property] = {
+          value: container.style.getPropertyValue(property),
+          priority: container.style.getPropertyPriority(property),
+        };
+      }
+      container.style.setProperty("width", `${TARGET_WIDTH}px`, "important");
+      container.style.setProperty("max-width", `${TARGET_WIDTH}px`, "important");
+      container.style.setProperty("min-width", `${TARGET_WIDTH}px`, "important");
+      container.style.setProperty("box-sizing", "border-box", "important");
+      try {
+        return callback();
+      } finally {
+        for (const [property, previous] of Object.entries(saved)) {
+          if (previous.value) {
+            container.style.setProperty(property, previous.value, previous.priority);
+          } else {
+            container.style.removeProperty(property);
+          }
+        }
+      }
+    };
+
+    const measure = () => withPrintMeasureWidth(() => {
       const rect = container.getBoundingClientRect();
       return {
         height: Math.max(container.scrollHeight || 0, Math.ceil(rect.height || 0)),
         width: Math.max(container.scrollWidth || 0, Math.ceil(rect.width || 0)),
       };
-    };
+    });
 
     root.dataset.pageFit = "base";
     root.style.setProperty("--print-scale", "1");
