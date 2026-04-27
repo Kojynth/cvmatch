@@ -101,12 +101,16 @@ ROLE_LIKE_SKILL_TOKENS = {
 }
 
 PROJECT_TECH_NOISE_TERMS = {
+    "ai powered",
     "are",
     "collaborative",
     "dynamic",
     "project",
+    "product",
+    "products",
     "proactive",
     "projet",
+    "recruteur",
     "resume",
     "resumes",
     "seeking",
@@ -115,6 +119,8 @@ PROJECT_TECH_NOISE_TERMS = {
     "summaries",
     "team spirited",
     "team-spirited",
+    "you",
+    "your",
 }
 
 SKILL_LABEL_PREFIX_PATTERN = re.compile(
@@ -127,7 +133,8 @@ SKILL_SENTENCE_NOISE_PATTERN = re.compile(
     r"(?i)\b("
     r"i|we|my|our|je|j ai|nous|mon|notre|candidate|candidat|"
     r"worked|responsible|mission|"
-    r"should|must|need|needs|please|job offer|offre|profile json|instruction"
+    r"should|must|need|needs|please|including|implicites?|recruteur|"
+    r"job offer|offre|profile json|instruction"
     r")\b"
 )
 DOTTED_TECH_SKILL_PATTERN = re.compile(
@@ -3198,9 +3205,57 @@ def _rebuild_skills_section_from_profile(
             build_skill_blocks_from_profile,
             skills_section_low_signal,
         )
-        from .cv_skill_evidence import skills_section_has_supported_signal
+        from .cv_skill_evidence import (
+            looks_like_noise_skill_term,
+            skills_section_has_supported_signal,
+        )
     except Exception:
         return
+
+    def current_skills_need_theming(skills_section: Any) -> bool:
+        if not isinstance(skills_section, list) or not skills_section:
+            return False
+        generic_categories = {
+            "competence",
+            "competences",
+            "competence technique",
+            "competences techniques",
+            "hard skill",
+            "hard skills",
+            "skill",
+            "skills",
+            "technical skill",
+            "technical skills",
+        }
+        non_soft_blocks: List[Dict[str, Any]] = []
+        item_count = 0
+        noisy_count = 0
+        long_count = 0
+        generic_count = 0
+        for block in skills_section:
+            if not isinstance(block, dict):
+                continue
+            category_norm = _normalize_for_match(block.get("category") or "")
+            if category_norm in {"soft skills", "soft skill", "qualites"}:
+                continue
+            non_soft_blocks.append(block)
+            if category_norm in generic_categories:
+                generic_count += 1
+            for item in block.get("items") or []:
+                if not isinstance(item, str) or not item.strip():
+                    continue
+                item_count += 1
+                item_norm = _normalize_for_match(item)
+                if looks_like_noise_skill_term(item):
+                    noisy_count += 1
+                if len(item_norm.split()) >= 5 or re.search(
+                    r"\b(?:including|recruteur|ai powered|products?|you)\b",
+                    item_norm,
+                ):
+                    long_count += 1
+        if not non_soft_blocks or item_count < 6:
+            return False
+        return bool(generic_count and (len(non_soft_blocks) <= 1 or noisy_count or long_count))
 
     current_skills = cv_json.get("skills")
     current_is_usable = False
@@ -3212,6 +3267,8 @@ def _rebuild_skills_section_from_profile(
             )
             if supported < 2 and (plausible + hard_unsupported) >= 2:
                 current_is_usable = False
+        if current_is_usable and current_skills_need_theming(current_skills):
+            current_is_usable = False
     if current_is_usable:
         return
 
