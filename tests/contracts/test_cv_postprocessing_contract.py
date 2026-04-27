@@ -71,8 +71,13 @@ def test_sparse_final_payload_recovers_profile_backed_experience_and_skills() ->
     assert result["experience"]
     assert result["experience"][0]["title"] == "Software Quality Engineer"
     assert result["skills"]
-    assert result["skills"][0]["category"] == "Technical Skills"
-    technical_items = result["skills"][0]["items"]
+    categories = [block["category"] for block in result["skills"]]
+    assert "Automation" in categories
+    technical_items = [
+        item
+        for block in result["skills"]
+        for item in block.get("items", [])
+    ]
     assert "Playwright" in technical_items
     assert "Selenium" in technical_items
 
@@ -757,6 +762,112 @@ def test_project_reconciliation_enriches_poor_generated_project_from_profile() -
     assert "seeking" not in rendered
     assert "skilled" not in rendered
     assert "proactive" not in rendered
+
+
+def test_noisy_flat_skills_rebuild_as_source_backed_themed_rows() -> None:
+    profile_json = {
+        "experiences": [
+            {
+                "title": "Alternant Ingénieur QA",
+                "company": "Careside",
+                "start_date": "09/2023",
+                "end_date": "Présent",
+                "description": (
+                    "Conçoit, exécute et suit des plans de test sur 3 applications "
+                    "critiques avec analyse des risques fonctionnels, cas limites "
+                    "et qualification d'anomalies. Réalise des tests API avec "
+                    "Postman et vérifie les données SQL sur PostgreSQL, MongoDB "
+                    "et Microsoft SQL Server. Explore et benchmarke Playwright, "
+                    "Cypress, Selenium et Agilitest pour les activités "
+                    "d'automatisation."
+                ),
+            }
+        ],
+        "skills": [
+            {"name": "SQL"},
+            {"name": "Python"},
+            {"name": "Postman"},
+        ],
+        "projects": [
+            {
+                "name": "CVMatch",
+                "technologies": "Python, LLM, pytest, JSON",
+                "description": (
+                    "Application Python/LLM de prompt engineering pour analyser "
+                    "des offres d'emploi, adapter un profil candidat, générer des "
+                    "CV ciblés et valider les sorties avec des tests unitaires "
+                    "pytest et des payloads JSON."
+                ),
+            }
+        ],
+    }
+
+    result = coerce_generated_cv_payload(
+        payload={
+            "summary": "Profil QA.",
+            "skills": [
+                {
+                    "category": "Compétences techniques",
+                    "items": [
+                        (
+                            "Benchmark Cypress / Selenium / Agilitest / "
+                            "Playwright Microsoft SQL Server Postman AI-powered "
+                            "PostgreSQL MongoDB implicites du recruteur du "
+                            "prompt engineering including functional SQL"
+                        )
+                    ],
+                }
+            ],
+        },
+        profile_json=profile_json,
+        fallback_generator=_fallback_generator,
+        language_code="fr",
+        job_title="Software Engineer, QA",
+        offer_terms=[
+            "functional testing",
+            "API testing",
+            "edge cases",
+            "test automation",
+            "AI products",
+            "Python",
+        ],
+    )
+    prepared = ExportManager().prepare_template_data(
+        cv_json_to_cv_data(result, language="fr")
+    )
+
+    rows = prepared["featured_skills"]
+    rendered = "\n".join(rows)
+
+    assert any(row.startswith("QA & tests :") for row in rows)
+    assert "Plans de test" in rendered
+    assert "Tests fonctionnels" in rendered
+    assert "Tests API" in rendered
+    assert "Analyse des risques" in rendered
+    assert "Cas limites" in rendered
+    assert "Qualification d'anomalies" in rendered
+    assert any(row.startswith("API & data :") for row in rows)
+    assert "Postman" in rendered
+    assert "PostgreSQL" in rendered
+    assert "MongoDB" in rendered
+    assert "Microsoft SQL Server" in rendered
+    assert any(row.startswith("Automatisation :") for row in rows)
+    assert "Python" in rendered
+    assert "Playwright" in rendered
+    assert "Cypress" in rendered
+    assert "Selenium" in rendered
+    assert "Agilitest" in rendered
+    assert "Benchmark d'outils" in rendered
+    assert any(row.startswith("IA & qualité logicielle :") for row in rows)
+    assert "LLM" in rendered
+    assert "Prompt engineering" in rendered
+    assert "Validation de sorties" in rendered
+    assert "pytest" in rendered
+    assert "JSON" in rendered
+    assert " · " in rendered
+    assert "AI-powered" not in rendered
+    assert "including functional" not in rendered
+    assert "recruteur" not in rendered
 
 
 def test_project_technologies_preserve_slash_delimited_tool_names() -> None:

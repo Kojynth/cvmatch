@@ -715,7 +715,7 @@ def cv_json_to_cv_data(
             for item in (category.get("items") or [])
             if isinstance(item, str)
             and item.strip()
-            and text_matches_target_language(item, lang or "fr")
+            and text_matches_target_language(item, lang or "fr", min_tokens=4)
         ]
         skills_section.append(
             {

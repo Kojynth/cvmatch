@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Tuple
 
 from .cv_offer_term_routing import route_term_to_section
 from .cv_skill_evidence import (
@@ -15,7 +15,7 @@ from .cv_skill_evidence import (
     skills_section_has_supported_signal,
 )
 from .cv_skill_ranking import rank_skill_blocks_by_relevance
-from .keyword_alignment import normalize_keyword_for_match
+from .keyword_alignment import normalize_keyword_for_match, normalized_term_in_probe
 
 try:
     from ..domain.generation.tool_signals import collect_named_tool_hints
@@ -183,6 +183,220 @@ def _extend_candidates(
         return
 
 
+def _collect_source_probe(profile_json: Dict[str, Any], extra_items: Iterable[Any]) -> str:
+    parts: List[str] = []
+
+    def add(value: Any) -> None:
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                parts.append(text)
+            return
+        if isinstance(value, list):
+            for item in value:
+                add(item)
+            return
+        if isinstance(value, dict):
+            for nested in value.values():
+                add(nested)
+
+    add(list(extra_items or []))
+    for key in (
+        "skills",
+        "projects",
+        "education",
+        "certifications",
+        "experiences",
+        "experience",
+    ):
+        add((profile_json or {}).get(key))
+    return normalize_keyword_for_match(" ".join(parts))
+
+
+def _probe_has_any(probe: str, aliases: Iterable[str]) -> bool:
+    for alias in aliases or []:
+        alias_norm = normalize_keyword_for_match(alias)
+        if alias_norm and normalized_term_in_probe(probe, alias_norm):
+            return True
+    return False
+
+
+def _localized_skill_label(labels: Tuple[str, str], language_code: str) -> str:
+    return labels[1] if str(language_code or "").startswith("en") else labels[0]
+
+
+def _build_themed_skill_blocks(
+    profile_json: Dict[str, Any],
+    technical_items: List[str],
+    *,
+    offer_terms: Iterable[Any],
+    language_code: str,
+    max_items_per_block: int,
+) -> List[Dict[str, Any]]:
+    """Build compact source-backed skill themes when a flat dump needs recovery."""
+
+    profile_probe = _collect_source_probe(profile_json, technical_items)
+    offer_probe = normalize_keyword_for_match(" ".join(str(term) for term in offer_terms or []))
+    combined_probe = " ".join(part for part in (profile_probe, offer_probe) if part)
+    if not combined_probe:
+        return []
+
+    def profile_has(*aliases: str) -> bool:
+        return _probe_has_any(profile_probe, aliases)
+
+    def offer_has(*aliases: str) -> bool:
+        return _probe_has_any(offer_probe, aliases)
+
+    qa_context = profile_has(
+        "qa",
+        "test",
+        "tests",
+        "recette",
+        "anomalie",
+        "plan de test",
+        "qualite logicielle",
+    )
+    data_context = profile_has(
+        "sql",
+        "base de donnees",
+        "database",
+        "postman",
+        "postgresql",
+        "mongodb",
+        "sql server",
+    )
+    automation_context = profile_has(
+        "automatisation",
+        "automation",
+        "python",
+        "playwright",
+        "cypress",
+        "selenium",
+        "agilitest",
+        "benchmark",
+    )
+    ai_context = profile_has(
+        "ia",
+        "ai",
+        "llm",
+        "machine learning",
+        "prompt engineering",
+        "pytest",
+        "validation des sorties",
+        "json",
+    )
+
+    group_specs = [
+        (
+            ("QA & tests", "QA & testing"),
+            qa_context,
+            [
+                (("Plans de test", "Test plans"), ("plan de test", "plans de test", "test plan"), (), True),
+                (("Tests fonctionnels", "Functional testing"), ("test fonctionnel", "tests fonctionnels"), ("functional testing",), qa_context),
+                (("Tests API", "API testing"), ("test api", "tests api", "postman", "api testing"), ("api testing", "apis"), qa_context or data_context),
+                (("Non-régression", "Regression testing"), ("non regression", "non-régression", "regression testing", "xray"), ("regression",), qa_context),
+                (("Analyse des risques", "Risk analysis"), ("analyse des risques", "risque", "risques"), ("risk analysis", "risk"), qa_context),
+                (("Cas limites", "Edge cases"), ("cas limite", "cas limites", "edge case"), ("edge case", "edge cases"), qa_context),
+                (("Qualification d'anomalies", "Defect qualification"), ("qualification d anomalie", "anomalie", "anomalies", "defect"), (), qa_context),
+            ],
+        ),
+        (
+            ("API & data", "API & data"),
+            data_context,
+            [
+                (("Postman", "Postman"), ("postman",), (), True),
+                (("SQL", "SQL"), ("sql",), (), True),
+                (("PostgreSQL", "PostgreSQL"), ("postgresql", "postgres"), (), True),
+                (("MongoDB", "MongoDB"), ("mongodb",), (), True),
+                (("Microsoft SQL Server", "Microsoft SQL Server"), ("microsoft sql server", "sql server"), (), True),
+            ],
+        ),
+        (
+            ("Automatisation", "Automation"),
+            automation_context,
+            [
+                (("Python", "Python"), ("python",), (), True),
+                (("Playwright", "Playwright"), ("playwright",), (), True),
+                (("Cypress", "Cypress"), ("cypress",), (), True),
+                (("Selenium", "Selenium"), ("selenium",), (), True),
+                (("Agilitest", "Agilitest"), ("agilitest",), (), True),
+                (("Benchmark d'outils", "Tool benchmarking"), ("benchmark", "benchmarke", "benchmarker", "benchmark d outils"), ("tool benchmark", "benchmark"), automation_context),
+            ],
+        ),
+        (
+            ("IA & qualité logicielle", "AI & software quality"),
+            ai_context,
+            [
+                (("LLM", "LLM"), ("llm", "llms", "large language model"), (), True),
+                (("Prompt engineering", "Prompt engineering"), ("prompt engineering",), ("prompt engineering",), ai_context),
+                (("Validation de sorties", "Output validation"), ("validation des sorties", "valider les sorties", "sorties produites", "output validation"), ("output validation",), ai_context),
+                (("pytest", "pytest"), ("pytest",), (), True),
+                (("JSON", "JSON"), ("json",), (), True),
+            ],
+        ),
+        (
+            ("Data & BI", "Data & BI"),
+            profile_has("tableau", "power bi", "looker", "dashboard", "kpi", "data analytics"),
+            [
+                (("Tableau", "Tableau"), ("tableau",), (), True),
+                (("Power BI", "Power BI"), ("power bi", "powerbi"), (), True),
+                (("Looker", "Looker"), ("looker",), (), True),
+                (("Dashboards", "Dashboards"), ("dashboard", "dashboards", "tableau de bord"), ("dashboard",), True),
+                (("KPI", "KPI"), ("kpi",), (), True),
+            ],
+        ),
+        (
+            ("Delivery & collaboration", "Delivery & collaboration"),
+            profile_has("jira", "xray", "gherkin", "agile", "scrum", "documentation"),
+            [
+                (("Jira", "Jira"), ("jira",), (), True),
+                (("Xray", "Xray"), ("xray",), (), True),
+                (("Gherkin", "Gherkin"), ("gherkin",), (), True),
+                (("Documentation QA", "QA documentation"), ("documentation qa", "documentation"), ("documentation",), qa_context),
+                (("Agile/Scrum", "Agile/Scrum"), ("agile", "scrum"), (), True),
+                (("Suivi d'anomalies", "Defect tracking"), ("suivi d anomalie", "suivi des anomalies", "anomalie"), (), qa_context),
+            ],
+        ),
+    ]
+
+    blocks: List[Dict[str, Any]] = []
+    globally_seen: set[str] = set()
+    for category_labels, group_context, specs in group_specs:
+        if not group_context:
+            continue
+        items: List[str] = []
+        for labels, profile_aliases, offer_aliases, allow_offer_reframe in specs:
+            direct = profile_has(*profile_aliases)
+            reframed = (
+                bool(allow_offer_reframe)
+                and bool(offer_aliases)
+                and offer_has(*offer_aliases)
+            )
+            if not direct and not reframed:
+                continue
+            label = _localized_skill_label(labels, language_code)
+            key = normalize_keyword_for_match(label)
+            if not key or key in globally_seen:
+                continue
+            globally_seen.add(key)
+            items.append(label)
+            if len(items) >= max(1, int(max_items_per_block or 1)):
+                break
+        if len(items) < 2:
+            continue
+        blocks.append(
+            {
+                "category": _localized_skill_label(category_labels, language_code),
+                "items": items,
+            }
+        )
+
+    if not blocks:
+        return []
+
+    return blocks[:4]
+
+
 def build_skill_blocks_from_profile(
     profile_json: Dict[str, Any],
     *,
@@ -248,7 +462,18 @@ def build_skill_blocks_from_profile(
     soft_items = _dedup_preserve(soft_candidates)
 
     blocks: List[Dict[str, Any]] = []
-    if technical_items:
+    preserve_block_order = False
+    themed_blocks = _build_themed_skill_blocks(
+        profile,
+        technical_items,
+        offer_terms=offer_terms,
+        language_code=language_code,
+        max_items_per_block=max_items_per_block,
+    )
+    if themed_blocks:
+        blocks.extend(themed_blocks)
+        preserve_block_order = True
+    elif technical_items:
         blocks.append(
             {
                 "category": (
@@ -280,7 +505,9 @@ def build_skill_blocks_from_profile(
             )
         )
 
-    ranked = rank_skill_blocks_by_relevance(blocks, list(offer_terms or []))
+    ranked = [] if preserve_block_order else rank_skill_blocks_by_relevance(
+        blocks, list(offer_terms or [])
+    )
     selected_blocks = ranked if ranked else blocks
 
     technical_limit = max(1, int(max_items_per_block))

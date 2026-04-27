@@ -804,6 +804,24 @@ class ExportManager:
                     return True
                 return False
 
+            def _clean_render_skill_name(name: Any, category_label: Any) -> str:
+                cleaned = _clean_skill_candidate(name, None)
+                if cleaned:
+                    return cleaned
+                if self._is_generic_skill_category_label(category_label):
+                    return ""
+                fallback = self._restore_display_acronyms(
+                    self._normalize_render_text(name)
+                ).strip(" ,;:-")
+                if (
+                    not fallback
+                    or len(fallback) > 80
+                    or any(mark in fallback for mark in ("!", "?", "\n", "."))
+                    or self._is_noisy_featured_skill_label(fallback)
+                ):
+                    return ""
+                return fallback
+
             # Si c'est une liste simple, la convertir en structure categorisee
             if skills and len(skills) > 0 and isinstance(skills[0], str):
                 cleaned_simple_skills = []
@@ -846,7 +864,9 @@ class ExportManager:
                             else:
                                 name = str(item)
                                 level = None
-                            cleaned_name = _clean_skill_candidate(name, None)
+                            cleaned_name = _clean_render_skill_name(
+                                name, category_label
+                            )
                             item_key = _normalize_text_key(cleaned_name)
                             if (
                                 cleaned_name
@@ -878,7 +898,7 @@ class ExportManager:
                         else:
                             name = str(item)
                             level = None
-                        name = _clean_skill_candidate(name, None)
+                        name = _clean_render_skill_name(name, category_label)
                         item_key = _normalize_text_key(name)
                         if (
                             name
@@ -3365,17 +3385,25 @@ class ExportManager:
         if not tokens:
             return True
         if norm in {
+            "ai powered",
             "descriptif",
             "description",
             "are",
             "dynamic",
             "collaborative",
+            "functional",
+            "including functional",
             "summary",
             "proactive",
+            "product",
+            "products",
+            "recruteur",
             "seeking",
             "skilled",
             "team spirited",
             "team-spirited",
+            "you",
+            "your",
             "engineer sql",
             "job description",
             "role summary",
@@ -3422,6 +3450,8 @@ class ExportManager:
             "tests",
             "tool",
             "tools",
+            "product",
+            "products",
         }:
             return True
         return False
@@ -3617,6 +3647,19 @@ class ExportManager:
             return False
         normalized = self._normalize_text_key(text)
         if not normalized:
+            return False
+        if normalized in {
+            "ai powered",
+            "functional",
+            "including functional",
+            "product",
+            "products",
+            "recruteur",
+            "seeking",
+            "skilled",
+            "you",
+            "your",
+        }:
             return False
         if normalized in {
             "automation",
@@ -4779,9 +4822,9 @@ class ExportManager:
                 if not names:
                     continue
                 if category:
-                    row = f"{category} : {' / '.join(names)}"
+                    row = f"{category} : {' · '.join(names)}"
                 else:
-                    row = " / ".join(names)
+                    row = " · ".join(names)
                 row_key = self._normalize_text_key(row)
                 if not row_key or row_key in category_seen:
                     continue
@@ -6207,6 +6250,7 @@ class ExportManager:
         deduped: List[str] = []
         seen: set[str] = set()
         noisy_terms = {
+            "ai powered",
             "are",
             "collaborative",
             "dynamic",
@@ -6217,11 +6261,16 @@ class ExportManager:
             "resumes",
             "cv",
             "project",
+            "product",
+            "products",
             "projet",
+            "recruteur",
             "seeking",
             "skilled",
             "team spirited",
             "team-spirited",
+            "you",
+            "your",
         }
         for item in items:
             item = self._restore_display_acronyms(

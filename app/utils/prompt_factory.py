@@ -158,9 +158,10 @@ OUTPUT RULES:
   (for example methods/processes, tools/platforms, domain knowledge, delivery),
   but choose labels from JOB_TITLE and requirement-heavy offer evidence rather
   than hardcoded templates.
-- Never place offer adjectives, responsibilities, or culture words inside skills
-  or project technologies. Reject terms such as "seeking", "skilled",
-  "proactive", "collaborative", "dynamic", "summary", or "are" as skills/tools.
+- Never place offer adjectives, responsibilities, culture words, pronouns, or
+  marketing fragments inside skills or project technologies. Reject terms such
+  as "seeking", "skilled", "proactive", "collaborative", "dynamic",
+  "AI-powered", "products", "you", "summary", or "are" as skills/tools.
 - ats_keywords must be a list of strings from the job offer or OFFER_KEYWORDS_JSON.
 - If OFFER_KEYWORDS_JSON is present, prioritize it for relevance and ATS terms.
 - If OFFER_KEYWORDS_JSON.keyword_families or lexical_field is present, reuse that domain vocabulary in summary/skills/experience when factual.
@@ -176,6 +177,11 @@ OUTPUT RULES:
 - Summary must be compact and non-repetitive: do not restate the same proof
   terms across multiple sentences. If the positioning sentence mentions a
   skill/tool, avoid repeating it as a separate keyword list.
+- Summary should be 2-3 compact candidate-focused sentences at most: profile
+  scope, strongest grounded proof, then target-company alignment when relevant.
+  Do not add raw lines such as "Featured project", "Projet mis en avant", or
+  comma-separated project keywords inside the summary; project proof belongs in
+  the projects section.
 - Summary must mention COMPANY at least once when COMPANY is provided, using a
   natural positioning sentence that explains candidate relevance to the target
   role. Avoid formulaic keyword dumps such as "Profil pertinent pour COMPANY
@@ -377,9 +383,10 @@ OUTPUT RULES:
 - Do not output a raw flat keyword dump when several skill families are evident.
   Prefer 2-4 compact source-backed categories adapted to the candidate profile
   and target language. Do not use hardcoded categories when they do not fit.
-- Never place generic adjectives or prose fragments inside skills or project
-  technologies. Reject terms such as "seeking", "skilled", "proactive",
-  "collaborative", "dynamic", "summary", or "are" as skills/tools.
+- Never place generic adjectives, prose fragments, pronouns, or marketing words
+  inside skills or project technologies. Reject terms such as "seeking",
+  "skilled", "proactive", "collaborative", "dynamic", "AI-powered",
+  "products", "you", "summary", or "are" as skills/tools.
 - Structure and ordering:
   * Experience and projects must be in reverse chronological order (most recent first).
   * Use a single consistent date format across the entire CV (prefer MM/YYYY or YYYY only).
@@ -412,6 +419,9 @@ OUTPUT RULES:
 - Summary: candidate-focused (role, strengths, key achievements). Do not describe employer.
 - Summary must be compact and non-repetitive: do not restate the same proof
   terms across multiple sentences.
+- Do not add raw lines such as "Featured project", "Projet mis en avant", or
+  comma-separated project keywords inside the summary; project proof belongs in
+  the projects section.
 - Generate the best standalone professional CV from this profile.
 """.strip()
 
