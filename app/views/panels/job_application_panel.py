@@ -26,7 +26,7 @@ from ...controllers.main_window.view_models import ProfileSnapshot
 from ...logging.safe_logger import get_safe_logger
 from ...models.job_application import ApplicationStatus
 from ...models.user_profile import UserProfile
-from ...services.dialogs import show_error, show_info, show_success, show_warning
+from ...services.dialogs import confirm, show_error, show_info, show_success, show_warning
 from ...utils.emoji_utils import get_display_text
 from ...utils.parsers import DocumentParser
 from ...widgets.text_only_edit import TextOnlyEdit
@@ -180,7 +180,7 @@ class JobApplicationPanel(QWidget):
         return widget
 
     def _get_profile_cv_language_options(self):
-        """Return FR/EN CV language choices declared in the profile."""
+        """Return CV language choices declared in the profile."""
         try:
             from ...utils.multilang_cv_support import extract_profile_language_options
 
@@ -195,7 +195,86 @@ class JobApplicationPanel(QWidget):
             )
         except Exception:
             options = []
-        return [(code, label) for code, label in options if code in {"fr", "en"}]
+        return options
+
+    def _get_profile_cv_language_codes(self) -> set[str]:
+        return {code for code, _label in self._get_profile_cv_language_options()}
+
+    @staticmethod
+    def _language_display_label(language_code: str) -> str:
+        code = str(language_code or "").strip().lower()
+        if not code:
+            return ""
+        try:
+            from ...utils.multilang_cv_support import ISO_TO_DISPLAY_LABEL
+
+            return str(ISO_TO_DISPLAY_LABEL.get(code) or code.upper())
+        except Exception:
+            return code.upper()
+
+    @staticmethod
+    def _detect_offer_language(offer_payload: Dict[str, Any] | None) -> str:
+        data = offer_payload if isinstance(offer_payload, dict) else {}
+        analysis = data.get("analysis")
+        analysis = analysis if isinstance(analysis, dict) else {}
+        try:
+            from ...utils.language_policy import (
+                detect_language_from_text_default,
+                normalize_language_code,
+            )
+
+            for source in (data, analysis):
+                for key in (
+                    "cv_language",
+                    "target_language",
+                    "language_code",
+                    "language",
+                ):
+                    value = str(source.get(key) or "").strip()
+                    if value:
+                        return normalize_language_code(value)
+            text = str(data.get("text") or "").strip()
+            if text:
+                return detect_language_from_text_default(text)
+        except Exception:
+            pass
+        return ""
+
+    def _remove_non_profile_language_options(self, combo: QComboBox) -> None:
+        profile_codes = self._get_profile_cv_language_codes()
+        for index in range(combo.count() - 1, -1, -1):
+            code = str(combo.itemData(index) or "").strip().lower()
+            if code and code not in profile_codes:
+                combo.removeItem(index)
+
+    def _sync_cv_language_combo_with_offer(self, offer_language: str) -> None:
+        """Select the offer language when the profile declares it.
+
+        If the offer language is absent from the profile, add a temporary
+        explicit offer-language option so the visible target matches the
+        generation override that will be confirmed before launch.
+        """
+        widget = getattr(self, "generation_widget", None)
+        combo = getattr(widget, "cv_language_combo", None)
+        if combo is None:
+            return
+
+        self._remove_non_profile_language_options(combo)
+        profile_options = self._get_profile_cv_language_options()
+        profile_codes = {code for code, _label in profile_options}
+        if not profile_options:
+            combo.setEnabled(False)
+            return
+
+        language = str(offer_language or "").strip().lower()
+        if language and language in profile_codes:
+            self._set_combo_to_data(combo, language)
+        elif language:
+            label = self._language_display_label(language)
+            combo.addItem(f"{label} (langue de l'offre)", language)
+            combo.setCurrentIndex(combo.count() - 1)
+
+        combo.setEnabled(combo.count() > 1)
 
     @staticmethod
     def _set_combo_to_data(combo, value: str) -> bool:
@@ -215,8 +294,15 @@ class JobApplicationPanel(QWidget):
         except Exception:
             return ""
 
-    def _apply_selected_cv_language_to_offer_payload(self, widget, offer_payload):
-        cv_language = self._selected_cv_language(widget)
+    def _apply_selected_cv_language_to_offer_payload(
+        self,
+        widget,
+        offer_payload,
+        cv_language: str = "",
+    ):
+        cv_language = (
+            (cv_language or self._selected_cv_language(widget)).strip().lower()
+        )
         widget.current_cv_language = cv_language
         if not cv_language:
             return offer_payload
@@ -231,6 +317,46 @@ class JobApplicationPanel(QWidget):
         analysis_payload["target_language"] = cv_language
         payload["analysis"] = analysis_payload
         return payload
+
+    def _confirm_unprofiled_offer_language(
+        self,
+        *,
+        offer_language: str,
+        document_label: str,
+    ) -> bool:
+        profile_options = self._get_profile_cv_language_options()
+        if not profile_options:
+            return True
+        profile_labels = ", ".join(label for _code, label in profile_options)
+        offer_label = self._language_display_label(offer_language)
+        return confirm(
+            (
+                f"L'offre semble redigee en {offer_label}, une langue absente "
+                f"des langues maitrisees/renseignees dans le profil "
+                f"({profile_labels}).\n\n"
+                f"Voulez-vous generer {document_label} en {offer_label} ?"
+            ),
+            title="Langue de generation a confirmer",
+            parent=self,
+        )
+
+    def _resolve_generation_language_for_offer(
+        self,
+        widget,
+        offer_payload: Dict[str, Any],
+        *,
+        document_label: str,
+    ) -> str | None:
+        offer_language = self._detect_offer_language(offer_payload)
+        profile_codes = self._get_profile_cv_language_codes()
+        if profile_codes and offer_language and offer_language not in profile_codes:
+            if not self._confirm_unprofiled_offer_language(
+                offer_language=offer_language,
+                document_label=document_label,
+            ):
+                return None
+            return offer_language
+        return self._selected_cv_language(widget) or offer_language
 
     def create_generation_widget(self):
         """Create the CV generation widget wired to the worker pipeline."""
@@ -478,14 +604,14 @@ class JobApplicationPanel(QWidget):
         if worker_kind == "cv":
             widget.current_worker = None
             widget.generate_btn.setEnabled(True)
-            widget.generate_btn.setText("GÃ©nÃ©rer le CV adaptÃ©")
+            widget.generate_btn.setText("Générer le CV adapté")
             if hasattr(widget, "generate_letter_btn") and getattr(widget, "current_letter_worker", None) is None:
                 widget.generate_letter_btn.setEnabled(True)
-                widget.generate_letter_btn.setText("GÃ©nÃ©rer la lettre de motivation")
+                widget.generate_letter_btn.setText("Générer la lettre de motivation")
         else:
             widget.current_letter_worker = None
             widget.generate_letter_btn.setEnabled(True)
-            widget.generate_letter_btn.setText("GÃ©nÃ©rer la lettre de motivation")
+            widget.generate_letter_btn.setText("Générer la lettre de motivation")
             if getattr(widget, "current_worker", None) is None:
                 widget.generate_btn.setEnabled(True)
 
@@ -493,8 +619,8 @@ class JobApplicationPanel(QWidget):
         widget._preview_regen_in_progress = False
         self._hide_generation_dialog(widget)
         show_info(
-            "GÃ©nÃ©ration arrÃªtÃ©e Ã  la demande de l'utilisateur.",
-            title="GÃ©nÃ©ration annulÃ©e",
+            "Génération arrêtée à la demande de l'utilisateur.",
+            title="Génération annulée",
             parent=self,
         )
 
@@ -546,21 +672,17 @@ class JobApplicationPanel(QWidget):
             widget.offer_data = None
 
             self.set_offer_data_to_generation(None)
+            self._sync_cv_language_combo_with_offer("")
 
             return
 
         job_title = widget.job_title_edit.text().strip()
         company = widget.company_edit.text().strip()
         lower_text = text.lower()
+        detected_language = self._detect_offer_language({"text": text})
 
         analysis = {
-            "language": (
-                "fr"
-                if any(
-                    token in lower_text for token in [" le ", " la ", " de ", " du "]
-                )
-                else "en"
-            ),
+            "language": detected_language or "fr",
             "tech_keywords": [
                 kw
                 for kw in [
@@ -592,6 +714,7 @@ class JobApplicationPanel(QWidget):
         }
 
         self.set_offer_data_to_generation(widget.offer_data)
+        self._sync_cv_language_combo_with_offer(detected_language)
 
     def set_offer_data_to_generation(self, offer_data):
         """Store offer information on the generation widget and update hints."""
@@ -664,6 +787,15 @@ class JobApplicationPanel(QWidget):
             )
             return
 
+        raw_offer_payload = dict(widget.offer_data)
+        target_language = self._resolve_generation_language_for_offer(
+            widget,
+            raw_offer_payload,
+            document_label="le CV",
+        )
+        if target_language is None:
+            return
+
         self._prune_model_cache_before_generation(widget)
 
         widget._preview_regen_in_progress = bool(from_preview)
@@ -688,7 +820,8 @@ class JobApplicationPanel(QWidget):
 
         offer_payload = self._apply_selected_cv_language_to_offer_payload(
             widget,
-            dict(widget.offer_data),
+            raw_offer_payload,
+            target_language,
         )
         if isinstance(application_id_override, int):
             target_application_id = application_id_override
@@ -833,12 +966,22 @@ class JobApplicationPanel(QWidget):
             )
             return
 
+        raw_offer_payload = dict(widget.offer_data)
+        target_language = self._resolve_generation_language_for_offer(
+            widget,
+            raw_offer_payload,
+            document_label="la lettre de motivation",
+        )
+        if target_language is None:
+            return
+
         self._prune_model_cache_before_generation(widget)
 
         widget._preview_regen_in_progress = bool(from_preview)
         offer_payload = self._apply_selected_cv_language_to_offer_payload(
             widget,
-            dict(widget.offer_data),
+            raw_offer_payload,
+            target_language,
         )
         template = (
             widget.template_combo.currentText()
@@ -1433,7 +1576,7 @@ class JobApplicationPanel(QWidget):
         """Gère le changement de modèle IA."""
         logger.info(f"Modèle sélectionné: {model_id}")
 
-        # Mettre à  jour le profil utilisateur si nÃƒ©cessaire
+        # Mettre à jour le profil utilisateur si nécessaire
         try:
             from ...utils.model_manager import model_manager
 
