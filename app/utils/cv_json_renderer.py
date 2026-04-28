@@ -9,10 +9,9 @@ from typing import Any, Dict, List, Optional
 
 from ..controllers.export_manager import ExportManager
 from .cv_language_audit import (
-    is_cv_narrative_language_mismatch,
-    looks_like_english_cv_narrative,
+    is_cv_narrative_language_compatible,
 )
-from .language_policy import normalize_language_code, text_matches_target_language
+from .language_policy import normalize_language_code
 
 
 _CONTACT_PLACEHOLDER_LABEL_RE = re.compile(r"^(?:lien|link)\s*\d*$", re.IGNORECASE)
@@ -696,15 +695,11 @@ def cv_json_to_cv_data(
         text = str(value or "").strip()
         if not text:
             return True
-        if is_cv_narrative_language_mismatch(text, target_language=lang or "fr"):
-            return False
-        if text_matches_target_language(
+        return is_cv_narrative_language_compatible(
             text,
-            lang or "fr",
+            target_language=lang or "fr",
             min_tokens=min_tokens,
-        ):
-            return True
-        return lang.startswith("en") and looks_like_english_cv_narrative(text)
+        )
 
     def _entry_recency_rank(entry: Dict[str, Any]) -> int:
         def _rank(raw: Any) -> int:

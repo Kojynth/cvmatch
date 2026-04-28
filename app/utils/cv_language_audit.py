@@ -7,8 +7,10 @@ import unicodedata
 from typing import Any, Dict, List, Tuple
 
 from .language_policy import (
+    _language_marker_scores,
     is_mixed_or_mismatched_language,
     normalize_language_code,
+    text_matches_target_language,
 )
 
 
@@ -58,37 +60,7 @@ ENGLISH_NARRATIVE_MARKERS = {
     "validation",
     "delivery",
 }
-ENGLISH_CV_ACTION_HEADS = {
-    "achieved",
-    "analyzed",
-    "automated",
-    "built",
-    "coordinated",
-    "created",
-    "delivered",
-    "designed",
-    "developed",
-    "documented",
-    "drove",
-    "executed",
-    "implemented",
-    "improved",
-    "led",
-    "managed",
-    "optimized",
-    "prepared",
-    "qualified",
-    "reduced",
-    "restructured",
-    "reviewed",
-    "reworked",
-    "streamlined",
-    "supported",
-    "tested",
-    "took",
-    "tracked",
-    "validated",
-}
+SCRIPT_TARGET_LANGUAGES = {"ja", "zh", "ko", "ar", "ru", "el"}
 
 
 def _contains_cross_language_markers(text: str, *, target_language: str) -> bool:
@@ -125,34 +97,58 @@ def _looks_like_french_narrative_with_english_terms(text: str) -> bool:
     return fr_count >= 2 and fr_count >= en_count
 
 
+def _has_strong_foreign_language_evidence(text: str, *, target_language: str) -> bool:
+    target = normalize_language_code(target_language)
+    scores = _language_marker_scores(text)
+    target_score = int(scores.get(target) or 0)
+    foreign_scores = [
+        int(score or 0) for lang, score in scores.items() if lang != target
+    ]
+    foreign_best = max(foreign_scores, default=0)
+    if foreign_best <= 0:
+        return False
+    if foreign_best >= 3 and foreign_best > target_score:
+        return True
+    return foreign_best >= 2 and target_score == 0
+
+
 def is_cv_narrative_language_mismatch(text: Any, *, target_language: str) -> bool:
     value = str(text or "").strip()
     if not value:
         return False
     target = normalize_language_code(target_language)
+    if target in SCRIPT_TARGET_LANGUAGES:
+        return is_mixed_or_mismatched_language(value, target)
     if _contains_cross_language_markers(value, target_language=target):
         return True
     if target == "en" and _looks_like_french_narrative_with_english_terms(value):
         return True
-    if target == "en":
-        if looks_like_english_cv_narrative(value):
-            return False
-        return is_mixed_or_mismatched_language(value, target)
-    if is_mixed_or_mismatched_language(value, target):
+    if _has_strong_foreign_language_evidence(value, target_language=target):
         return True
     return False
 
 
-def looks_like_english_cv_narrative(text: Any) -> bool:
-    tokens = _folded_tokens(str(text or ""))
-    if len(tokens) < 3:
-        return False
-    if _looks_like_french_narrative_with_english_terms(str(text or "")):
-        return False
-    first = tokens[0]
-    if first in ENGLISH_CV_ACTION_HEADS:
+def is_cv_narrative_language_compatible(
+    text: Any,
+    *,
+    target_language: str,
+    min_tokens: int = 3,
+) -> bool:
+    target = normalize_language_code(target_language)
+    value = str(text or "").strip()
+    if not value:
         return True
-    return first.endswith("ed") and len(first) > 4
+    if is_cv_narrative_language_mismatch(value, target_language=target):
+        return False
+    if target in SCRIPT_TARGET_LANGUAGES:
+        return text_matches_target_language(
+            value,
+            target,
+            min_tokens=min_tokens,
+        )
+    if text_matches_target_language(value, target, min_tokens=min_tokens):
+        return True
+    return not _has_strong_foreign_language_evidence(value, target_language=target)
 
 
 def audit_cv_language_consistency(

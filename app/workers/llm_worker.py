@@ -3451,15 +3451,14 @@ OUTPUT RULES:
 
         try:
             from ..utils.cv_language_audit import (
+                is_cv_narrative_language_compatible,
                 is_cv_narrative_language_mismatch,
-                looks_like_english_cv_narrative,
             )
             from ..utils.cv_postprocessing import (
                 _best_profile_match,
                 _extract_profile_experiences,
                 clean_narrative_text,
             )
-            from ..utils.language_policy import text_matches_target_language
         except Exception:
             return cv_json
 
@@ -3487,18 +3486,9 @@ OUTPUT RULES:
             text = str(value or "").strip()
             if not text:
                 return False
-            if is_cv_narrative_language_mismatch(
+            return is_cv_narrative_language_compatible(
                 text,
                 target_language=language_code,
-            ):
-                return False
-            if text_matches_target_language(
-                text,
-                language_code,
-            ):
-                return True
-            return language_code.startswith("en") and looks_like_english_cv_narrative(
-                text
             )
 
         def _needs_rewrite(entry: Dict[str, Any]) -> bool:
