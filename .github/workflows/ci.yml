@@ -18,7 +18,7 @@ jobs:
       - name: Install minimal test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest pydantic sqlmodel keyring
+          python -m pip install pytest pydantic sqlmodel keyring jinja2
       - name: Repo hygiene
         run: python scripts/diagnostics/check_repo_hygiene.py
       - name: Syntax validation
