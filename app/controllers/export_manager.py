@@ -2562,10 +2562,11 @@ class ExportManager:
         normalized_text = normalize_keyword_for_match(text)
         if not normalized_text:
             return -100.0
+        language_guard = _normalize_output_language_code(language_code) in {"en", "fr"}
         try:
             from ..utils.cv_language_audit import is_cv_narrative_language_compatible
 
-            if not is_cv_narrative_language_compatible(
+            if language_guard and not is_cv_narrative_language_compatible(
                 text,
                 target_language=language_code,
                 min_tokens=4,
@@ -5497,13 +5498,13 @@ class ExportManager:
             if is_en:
                 if company_name and role_name:
                     return (
-                        f"Relevant strengths for the {role_name} role at "
-                        f"{company_name} include {terms_text}."
+                        f"Profile aligned with the {role_name} role at "
+                        f"{company_name}: foundation in {terms_text}."
                     )
                 if company_name:
-                    return f"Relevant strengths for {company_name} include {terms_text}."
+                    return f"Profile aligned with {company_name}: foundation in {terms_text}."
                 return (
-                    f"Relevant strengths for the target role include {terms_text}."
+                    f"Profile aligned with the target role: foundation in {terms_text}."
                 )
             if company_name and role_name:
                 return (

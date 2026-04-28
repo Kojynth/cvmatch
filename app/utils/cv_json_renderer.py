@@ -319,8 +319,8 @@ def _build_render_positioning_sentence(
     is_en = str(language_code or "").lower().startswith("en")
     if is_en:
         if company_name:
-            return f"Relevant strengths for {company_name} include {cleaned_terms}."
-        return f"Relevant strengths for the target role include {cleaned_terms}."
+            return f"Profile aligned with {company_name}: {cleaned_terms}."
+        return f"Profile aligned with the target role: {cleaned_terms}."
     if company_name:
         return f"Profil aligné avec {company_name} : {cleaned_terms}."
     return f"Profil aligné avec le poste visé : {cleaned_terms}."

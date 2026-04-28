@@ -898,7 +898,7 @@ def build_targeted_summary_focus_sentence(
     is_en = str(language_code or "").lower().startswith("en")
     if company_name:
         if is_en:
-            return f"Relevant strengths for {company_name} include {joined}."
+            return f"Profile aligned with {company_name}: {joined}."
         return f"Profil aligné avec {company_name} : {joined}."
     return build_summary_focus_sentence(
         focus_terms,
