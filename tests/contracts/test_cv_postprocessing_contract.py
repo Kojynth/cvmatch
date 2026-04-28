@@ -521,6 +521,58 @@ def test_project_templates_label_technology_meta() -> None:
         assert "featured_project.technologies | join(', ')" in template
 
 
+def test_featured_certifications_promote_role_aligned_certificate() -> None:
+    prepared = ExportManager().prepare_template_data(
+        {
+            "language": "fr",
+            "job_title": "QA Engineer",
+            "certifications": [
+                {"name": "Tosa"},
+                {"name": "Scrum Master I"},
+                {"name": "ISTQB Foundation"},
+            ],
+        }
+    )
+
+    names = [item["name"] for item in prepared["featured_certifications"]]
+    assert names[0] == "ISTQB Foundation"
+    assert "ISTQB Foundation" in names
+
+
+def test_rendered_list_items_are_finalized_with_sentence_periods() -> None:
+    html = ExportManager()._ensure_list_item_sentence_periods(
+        """
+        <ul>
+          <li class="experience-highlight">Execute API checks</li>
+          <li>Already finished.</li>
+          <li><span class="cert-name">ISTQB Foundation</span></li>
+          <li><span class="empty"></span></li>
+        </ul>
+        """
+    )
+
+    assert '<li class="experience-highlight">Execute API checks.</li>' in html
+    assert "<li>Already finished.</li>" in html
+    assert '<span class="cert-name">ISTQB Foundation</span>.</li>' in html
+    assert '<li><span class="empty"></span></li>' in html
+
+    rendered = ExportManager().generate_html(
+        {
+            "name": "Alice Example",
+            "language": "fr",
+            "experience": [
+                {
+                    "title": "QA Engineer",
+                    "company": "ACME",
+                    "description": ["Execute API checks"],
+                }
+            ],
+        },
+        "modern",
+    )
+    assert "Execute API checks.</li>" in rendered
+
+
 def test_featured_project_prefers_offer_aligned_project_and_keeps_rich_details() -> None:
     manager = ExportManager()
     project = manager._build_featured_project(

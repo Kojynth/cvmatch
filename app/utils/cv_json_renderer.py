@@ -8,7 +8,10 @@ from urllib.parse import urlparse
 from typing import Any, Dict, List, Optional
 
 from ..controllers.export_manager import ExportManager
-from .language_policy import normalize_language_code, text_matches_target_language
+from .cv_language_audit import (
+    is_cv_narrative_language_compatible,
+)
+from .language_policy import normalize_language_code
 
 
 _CONTACT_PLACEHOLDER_LABEL_RE = re.compile(r"^(?:lien|link)\s*\d*$", re.IGNORECASE)
@@ -688,6 +691,16 @@ def cv_json_to_cv_data(
     is_en = lang.startswith("en")
     labels = _section_labels_for_language(lang)
 
+    def _matches_render_language(value: Any, *, min_tokens: int = 3) -> bool:
+        text = str(value or "").strip()
+        if not text:
+            return True
+        return is_cv_narrative_language_compatible(
+            text,
+            target_language=lang or "fr",
+            min_tokens=min_tokens,
+        )
+
     def _entry_recency_rank(entry: Dict[str, Any]) -> int:
         def _rank(raw: Any) -> int:
             text = str(raw or "").strip()
@@ -717,7 +730,7 @@ def cv_json_to_cv_data(
 
     skills_section: List[Dict[str, Any]] = []
     def _skill_item_matches_language(item: str) -> bool:
-        if text_matches_target_language(item, lang or "fr", min_tokens=4):
+        if _matches_render_language(item, min_tokens=4):
             return True
         return bool(
             re.match(
@@ -761,7 +774,7 @@ def cv_json_to_cv_data(
             )
             if not cleaned:
                 return
-            if not text_matches_target_language(cleaned, lang or "fr"):
+            if not _matches_render_language(cleaned):
                 return
             if normalized in {
                 "delivered key contributions in this role.",
@@ -814,7 +827,7 @@ def cv_json_to_cv_data(
             for detail in (item.get("details") or [])
             if isinstance(detail, str)
             and detail.strip()
-            and text_matches_target_language(detail, lang or "fr")
+            and _matches_render_language(detail)
         ]
         education_section.append(
             {
@@ -853,10 +866,7 @@ def cv_json_to_cv_data(
                 "name": item.get("name") or "",
                 "description": (
                     item.get("description") or ""
-                    if text_matches_target_language(
-                        item.get("description") or "",
-                        lang or "fr",
-                    )
+                    if _matches_render_language(item.get("description") or "")
                     else ""
                 ),
                 "technologies": item.get("technologies") or "",
@@ -891,7 +901,7 @@ def cv_json_to_cv_data(
             name = str(item.get("name") or item.get("label") or "").strip()
         else:
             name = str(item or "").strip()
-        if name and text_matches_target_language(name, lang or "fr"):
+        if name and _matches_render_language(name):
             soft_skills_section.append(name)
 
     cleaned_summary = _clean_render_summary(
@@ -928,13 +938,13 @@ def cv_json_to_cv_data(
         "profile_summary": (
             cleaned_summary
             if cleaned_summary
-            and text_matches_target_language(cleaned_summary, lang or "fr")
+            and _matches_render_language(cleaned_summary)
             else ""
         ),
         "profile_positioning_sentence": (
             positioning_summary
             if positioning_summary
-            and text_matches_target_language(positioning_summary, lang or "fr")
+            and _matches_render_language(positioning_summary)
             and not _text_contains_sentence(cleaned_summary, positioning_summary)
             else ""
         ),

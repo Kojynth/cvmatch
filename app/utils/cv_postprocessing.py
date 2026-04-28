@@ -3732,7 +3732,7 @@ def _normalize_experience_date_formats(
 
     lang = str(language_code or "fr").strip().lower().split("-", 1)[0] or "fr"
     present_tokens = {
-        "fr": "Actuellement",
+        "fr": "Présent",
         "en": "Present",
         "de": "Aktuell",
         "es": "Actualidad",
