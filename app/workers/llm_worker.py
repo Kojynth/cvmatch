@@ -1,4 +1,4 @@
-﻿"""
+"""
 LLM Worker
 ==========
 
@@ -813,7 +813,12 @@ def _format_profile_detailed_data(
                 lines.extend(f"- {item}" for item in rendered_links)
 
     def add_block(
-        title: str, items: Any, max_items: int = 8, max_item_chars: int = 280
+        title: str,
+        items: Any,
+        max_items: int = 8,
+        max_item_chars: int = 280,
+        max_details: int = 3,
+        max_detail_chars: int = 240,
     ) -> None:
         seq = _coerce_list(items)
         if not seq:
@@ -854,26 +859,42 @@ def _format_profile_detailed_data(
                     added += 1
                 details = entry.get("achievements") or entry.get("description") or []
                 detail_list = _coerce_list(details) if details else []
-                for detail in detail_list[:3]:
+                for detail in detail_list[:max_details]:
                     if isinstance(detail, str) and detail.strip():
-                        lines.append(f"  - {_trim_text(detail, 240)}")
+                        lines.append(f"  - {_trim_text(detail, max_detail_chars)}")
             elif isinstance(entry, str) and entry.strip():
                 lines.append(f"- {_trim_text(entry, max_item_chars)}")
                 added += 1
 
     add_block(
-        "EXPERIENCES (profil detaille)", experiences, max_items=10, max_item_chars=320
+        "EXPERIENCES (profil detaille)",
+        experiences,
+        max_items=10,
+        max_item_chars=320,
+        max_details=2,
+        max_detail_chars=900,
     )
     add_block("FORMATION (profil detaille)", education, max_items=8, max_item_chars=260)
+    add_block(
+        "PROJETS (profil detaille)",
+        projects,
+        max_items=6,
+        max_item_chars=320,
+        max_details=2,
+        max_detail_chars=1000,
+    )
 
     if skills:
         lines.append("COMPETENCES (profil detaille):")
+        compact_skills: List[str] = []
         if isinstance(skills, list):
-            for entry in skills[:8]:
+            for entry in skills:
                 if isinstance(entry, dict):
                     category = (
                         entry.get("category") or entry.get("name") or "Competences"
                     ).strip()
+                    direct_name = str(entry.get("name") or "").strip()
+                    direct_level = str(entry.get("level") or "").strip()
                     items = (
                         entry.get("items")
                         or entry.get("skills_list")
@@ -891,8 +912,28 @@ def _format_profile_detailed_data(
                                 names.append(item.strip())
                     if names:
                         lines.append(f"- {category}: {', '.join(names[:16])}")
+                    elif direct_name:
+                        label = direct_name
+                        if direct_level:
+                            label = f"{label} ({direct_level})"
+                        compact_skills.append(label)
                 elif isinstance(entry, str) and entry.strip():
-                    lines.append(f"- {entry.strip()}")
+                    compact_skills.append(entry.strip())
+            if compact_skills:
+                seen_skill_keys = set()
+                deduped_skills: List[str] = []
+                for skill in compact_skills:
+                    key = skill.lower()
+                    if key in seen_skill_keys:
+                        continue
+                    seen_skill_keys.add(key)
+                    deduped_skills.append(skill)
+                    if len(deduped_skills) >= 120:
+                        break
+                for start in range(0, len(deduped_skills), 12):
+                    chunk = deduped_skills[start : start + 12]
+                    if chunk:
+                        lines.append(f"- {', '.join(chunk)}")
         else:
             lines.append(f"- {_trim_text(skills, 800)}")
 
@@ -918,7 +959,6 @@ def _format_profile_detailed_data(
         elif isinstance(soft_skills, str) and soft_skills.strip():
             lines.append(f"- {_trim_text(soft_skills, 400)}")
 
-    add_block("PROJETS (profil detaille)", projects, max_items=6, max_item_chars=260)
     add_block(
         "CERTIFICATIONS (profil detaille)",
         certifications,
@@ -3883,7 +3923,20 @@ OUTPUT RULES:
     def _enforce_cover_letter_offer_alignment(
         self, letter: str, offer_data: dict
     ) -> str:
-        return letter
+        try:
+            from ..utils.cover_letter_output import (
+                normalize_company_mentions,
+                sanitize_generated_cover_letter,
+            )
+
+            cleaned = sanitize_generated_cover_letter(letter)
+            company = ""
+            if isinstance(self.offer_data, dict):
+                company = str(self.offer_data.get("company") or "").strip()
+            return normalize_company_mentions(cleaned, company)
+        except Exception as exc:
+            logger.warning("Cover letter postprocess failed: %s", exc)
+            return letter
 
     def critique_and_rewrite_cover_letter(
         self,

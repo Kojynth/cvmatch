@@ -145,6 +145,18 @@ _FORMULAIC_SUMMARY_OPENERS = (
     re.compile(r"^\s*profil\s+professionnel\b", re.IGNORECASE),
     re.compile(r"^\s*parcours\s+professionnel\b", re.IGNORECASE),
     re.compile(r"^\s*professional\s+background\b", re.IGNORECASE),
+    re.compile(
+        r"^\s*application\s+for\s+.+?\s+at\s+.+?\s*,?\s+with\s+"
+        r"(?:practical|hands[-\s]?on)\s+experience\s+aligned\s+to\s+"
+        r"the\s+job\s+requirements\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^\s*candidate\s+profile\s+aligned\s+with\s+the\s+target\s+role\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\baligned\s+to\s+the\s+job\s+requirements\b", re.IGNORECASE),
+    re.compile(r"\bhands[-\s]?on\s+experience\s+in\s+in\b", re.IGNORECASE),
     re.compile(r"\bwith\s+hands[-\s]?on\s+experience\s+in\b", re.IGNORECASE),
 )
 
@@ -705,6 +717,7 @@ def build_cv_quality_audit(
         and not bullet_length_issues
         and not ats_text_issues
         and not verb_tense_issues
+        and not formulaic_summary_sections
         and not clipped_sentence_issues
     )
 

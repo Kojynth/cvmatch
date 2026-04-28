@@ -362,9 +362,11 @@ def build_alignment_retry_guidance(
             quality_rewrite.append(
                 "Rewrite every experience into 2-4 concise ATS-safe highlights using plain text only, with one idea per line. Target 35 words or fewer and never exceed 40 words; reformulate dense bullets instead of splitting them mechanically."
             )
-        if quality_audit.get("summary_length_issues"):
+        if quality_audit.get("summary_length_issues") or quality_audit.get(
+            "formulaic_summary_sections"
+        ):
             quality_rewrite.append(
-                "Keep the summary compact, candidate-focused, and free of employer history or long paragraphs."
+                "Rewrite the summary as concrete candidate positioning in the target language; avoid generic application metadata, employer history, and long paragraphs."
             )
         if quality_audit.get("personal_pronoun_sections"):
             quality_rewrite.append(

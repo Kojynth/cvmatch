@@ -19,6 +19,20 @@ _URL_SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.\-]*://", re.IGNORECASE)
 _PHONE_LIKE_RE = re.compile(r"^\+?[\d\s().\-]{6,}$")
 _EMAIL_LIKE_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _SAFE_CONTACT_SCHEMES = {"http", "https", "mailto", "tel"}
+_FORMULAIC_RENDER_SUMMARY_PATTERNS = (
+    re.compile(
+        r"^\s*application\s+for\s+.+?\s+at\s+.+?\s*,?\s+with\s+"
+        r"(?:practical|hands[-\s]?on)\s+experience\s+aligned\s+to\s+"
+        r"the\s+job\s+requirements\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^\s*candidate\s+profile\s+aligned\s+with\s+the\s+target\s+role\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\baligned\s+to\s+the\s+job\s+requirements\b", re.IGNORECASE),
+    re.compile(r"\bhands[-\s]?on\s+experience\s+in\s+in\b", re.IGNORECASE),
+)
 _RENDER_POSITIONING_PATTERNS = {
     "fr": (
         re.compile(
@@ -305,8 +319,8 @@ def _build_render_positioning_sentence(
     is_en = str(language_code or "").lower().startswith("en")
     if is_en:
         if company_name:
-            return f"Profile aligned with {company_name}: {cleaned_terms}."
-        return f"Profile aligned with the target role: {cleaned_terms}."
+            return f"Relevant strengths for {company_name} include {cleaned_terms}."
+        return f"Relevant strengths for the target role include {cleaned_terms}."
     if company_name:
         return f"Profil aligné avec {company_name} : {cleaned_terms}."
     return f"Profil aligné avec le poste visé : {cleaned_terms}."
@@ -520,7 +534,10 @@ def _clean_render_summary(value: Any, *, language_code: str) -> str:
         pass
     text = _strip_render_positioning_sentences(text, language_code=language_code)
     text = re.sub(r"\s+", " ", text).strip()
-    return _dedupe_sentences(text)
+    cleaned = _dedupe_sentences(text)
+    if any(pattern.search(cleaned) for pattern in _FORMULAIC_RENDER_SUMMARY_PATTERNS):
+        return ""
+    return cleaned
 
 
 def _build_target_role_line(
@@ -764,6 +781,7 @@ def cv_json_to_cv_data(
         reverse=True,
     ):
         description: List[str] = []
+        source_description: List[str] = []
 
         def _append_experience_line(value: Any) -> None:
             cleaned = _strip_ats_unsafe_bullet_markers(value)
@@ -774,14 +792,15 @@ def cv_json_to_cv_data(
             )
             if not cleaned:
                 return
-            if not _matches_render_language(cleaned):
-                return
             if normalized in {
                 "delivered key contributions in this role.",
                 "contributions principales realisees sur ce poste.",
             }:
                 return
             if normalized.startswith("delivered key contributions as "):
+                return
+            source_description.append(cleaned)
+            if not _matches_render_language(cleaned):
                 return
             description.append(cleaned)
 
@@ -799,6 +818,7 @@ def cv_json_to_cv_data(
                 if isinstance(value, str) and value.strip():
                     _append_experience_line(value)
         description = _dedupe_description_lines(description)[:12]
+        source_description = _dedupe_description_lines(source_description)[:12]
         experience_section.append(
             {
                 "title": item.get("title") or "",
@@ -812,6 +832,7 @@ def cv_json_to_cv_data(
                     str(item.get("location") or ""),
                 ),
                 "description": description,
+                "_render_source_description": source_description,
             }
         )
 

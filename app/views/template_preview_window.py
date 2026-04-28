@@ -26,6 +26,7 @@ from PySide6.QtWebEngineCore import QWebEngineProfile
 from loguru import logger
 
 from ..controllers.export_manager import ExportManager
+from ..utils.cover_letter_output import normalize_company_mentions
 from ..utils.generation_audit import build_generation_audit as build_generation_audit_payload
 from ..widgets.audit_header_widget import AuditHeaderWidget
 
@@ -55,6 +56,10 @@ LETTER_TEMPLATES = {
         "style": "Lettre sobre",
     },
 }
+
+LETTER_SUBJECT_LINE_RE = re.compile(
+    r"^\s*(?:objet|subject)\s*:\s*(.+?)\s*$", re.IGNORECASE
+)
 
 CV_BASE_LAYOUT_CSS = """
 :root {
@@ -2150,6 +2155,52 @@ class TemplatePreviewWindow(QMainWindow):
             """
             self.letter_web_view.setHtml(error_html)
 
+    @staticmethod
+    def _cover_letter_compare_key(value: str) -> str:
+        return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
+
+    @classmethod
+    def _prepare_cover_letter_for_render(
+        cls,
+        raw_text: str,
+        *,
+        fallback_subject: str,
+        candidate_name: str,
+        company: str,
+    ) -> tuple[str, str]:
+        text = normalize_company_mentions(str(raw_text or ""), company)
+        if not text.strip() or text.lstrip().startswith("<"):
+            return normalize_company_mentions(fallback_subject, company), text
+
+        subject = normalize_company_mentions(fallback_subject, company)
+        body_lines = []
+        subject_seen = False
+        for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+            subject_match = LETTER_SUBJECT_LINE_RE.match(line)
+            if subject_match:
+                if not subject_seen:
+                    extracted_subject = subject_match.group(1).strip()
+                    if extracted_subject:
+                        subject = normalize_company_mentions(extracted_subject, company)
+                    subject_seen = True
+                continue
+            body_lines.append(line)
+
+        while body_lines and not body_lines[-1].strip():
+            body_lines.pop()
+
+        candidate_key = cls._cover_letter_compare_key(candidate_name)
+        if candidate_key:
+            while (
+                body_lines
+                and cls._cover_letter_compare_key(body_lines[-1]) == candidate_key
+            ):
+                body_lines.pop()
+                while body_lines and not body_lines[-1].strip():
+                    body_lines.pop()
+
+        return subject, "\n".join(body_lines).strip()
+
     def generate_letter_html(self) -> str:
         """Genere le HTML de la lettre de motivation."""
         cover_letter = self.cv_data.get("cover_letter") or ""
@@ -2157,7 +2208,8 @@ class TemplatePreviewWindow(QMainWindow):
         def _safe(value: str) -> str:
             return html_lib.escape(str(value)) if value else ""
 
-        name = _safe(self.cv_data.get("name") or "Candidat")
+        name_raw = str(self.cv_data.get("name") or "Candidat")
+        name = _safe(name_raw)
         email = _safe(self.cv_data.get("email") or "")
         phone = _safe(self.cv_data.get("phone") or "")
         location = _safe(self.cv_data.get("location") or "")
@@ -2168,8 +2220,12 @@ class TemplatePreviewWindow(QMainWindow):
         date_label = datetime.now().strftime("%d/%m/%Y")
 
         subject = "Candidature"
-        if job_title:
-            subject = f"Candidature - {job_title}"
+        if job_title_raw and company_raw:
+            subject = f"Candidature - {job_title_raw} ({company_raw})"
+        elif job_title_raw:
+            subject = f"Candidature - {job_title_raw}"
+        elif company_raw:
+            subject = f"Candidature - {company_raw}"
 
         contact_parts = [part for part in (email, phone, location) if part]
         contact_html = " | ".join(contact_parts)
@@ -2185,7 +2241,13 @@ class TemplatePreviewWindow(QMainWindow):
             for line in recipient_lines
         )
 
-        body_html = self._cover_letter_to_html(cover_letter)
+        subject, cover_letter_body = self._prepare_cover_letter_for_render(
+            cover_letter,
+            fallback_subject=subject,
+            candidate_name=name_raw,
+            company=company_raw,
+        )
+        body_html = self._cover_letter_to_html(cover_letter_body)
 
         return f"""
 <!DOCTYPE html>

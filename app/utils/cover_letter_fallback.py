@@ -32,6 +32,30 @@ from .keyword_alignment import (
 from .cv_fallback_generator import collect_candidate_keywords, _dedup_preserve
 
 
+def _subject_with_offer_company(
+    *,
+    role_label: str,
+    company: str,
+    language_code: str,
+) -> str:
+    company_name = str(company or "").strip()
+    role = str(role_label or "").strip()
+    if language_code == "en":
+        subject = f"Application - {role}" if role else "Application"
+        return (
+            f"Subject: {subject} ({company_name})"
+            if company_name
+            else f"Subject: {subject}"
+        )
+
+    subject = f"Candidature - {role}" if role else "Candidature"
+    return (
+        f"Objet: {subject} ({company_name})"
+        if company_name
+        else f"Objet: {subject}"
+    )
+
+
 def _rank_experience_labels(
     experiences: List[Dict[str, Any]],
     offer_keywords: List[str],
@@ -186,8 +210,13 @@ def generate_fallback_cover_letter(
             experience_sentence = ""
 
         closing_name = name or "Candidate"
+        subject_line = _subject_with_offer_company(
+            role_label=role_label,
+            company=company,
+            language_code="en",
+        )
         return (
-            f"Subject: Application - {role_label}\n\n"
+            f"{subject_line}\n\n"
             "Dear Hiring Manager,\n\n"
             f"I am applying for the {role_label} position at {company_label}. "
             f"{keywords_sentence}\n\n"
@@ -218,8 +247,13 @@ def generate_fallback_cover_letter(
         experience_sentence = ""
 
     closing_name = name or "Candidat"
+    subject_line = _subject_with_offer_company(
+        role_label=role_label,
+        company=company,
+        language_code="fr",
+    )
     return (
-        f"Objet: Candidature - {role_label}\n\n"
+        f"{subject_line}\n\n"
         "Madame, Monsieur,\n\n"
         f"Je vous adresse ma candidature pour le poste {role_label} au sein de {company_label}. "
         f"{keywords_sentence}\n\n"
@@ -272,8 +306,13 @@ def generate_fallback_cover_letter_simple(
             else "My profile is aligned with the key requirements of the role."
         )
         closing_name = profile_name or "Candidate"
+        subject_line = _subject_with_offer_company(
+            role_label=role_label,
+            company=company,
+            language_code="en",
+        )
         return (
-            f"Subject: Application - {role_label}\n\n"
+            f"{subject_line}\n\n"
             "Dear Hiring Manager,\n\n"
             f"I am applying for the {role_label} position at {company_label}. "
             f"{keywords_sentence}\n\n"
@@ -289,8 +328,13 @@ def generate_fallback_cover_letter_simple(
         else "Mon profil est aligne avec les besoins cles du poste."
     )
     closing_name = profile_name or "Candidat"
+    subject_line = _subject_with_offer_company(
+        role_label=role_label,
+        company=company,
+        language_code="fr",
+    )
     return (
-        f"Objet: Candidature - {role_label}\n\n"
+        f"{subject_line}\n\n"
         "Madame, Monsieur,\n\n"
         f"Je vous adresse ma candidature pour le poste {role_label} au sein de {company_label}. "
         f"{keywords_sentence}\n\n"

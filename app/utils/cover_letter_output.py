@@ -10,10 +10,28 @@ _THINK_TAG_RE = re.compile(r"(?i)</?think\b[^>]*>")
 _CHATML_TOKEN_RE = re.compile(r"<\|im_(?:start|end)\|>")
 _PLACEHOLDER_LINE_RE = re.compile(r"^\s*<\s*(paragraph|paragraphe)\b", re.IGNORECASE)
 _SUBJECT_LINE_RE = re.compile(r"^\s*(subject:|objet:)", re.IGNORECASE)
+_DUPLICATE_SPACE_RE = re.compile(r"\s+")
 _SALUTATION_LINE_RE = re.compile(
     r"^\s*(dear\b|madame\b|monsieur\b|madame,\s*monsieur\b)",
     re.IGNORECASE,
 )
+
+
+def normalize_company_mentions(text: str, company: str) -> str:
+    """Preserve the exact company spelling from the offer in generated letters."""
+    content = str(text or "")
+    company_name = _DUPLICATE_SPACE_RE.sub(" ", str(company or "").strip())
+    if not content or len(company_name) < 2:
+        return content
+
+    parts = company_name.split(" ")
+    escaped = r"\s+".join(re.escape(part) for part in parts if part)
+    if not escaped:
+        return content
+    pattern = re.compile(rf"(?i)(?<![\w]){escaped}(?![\w])")
+    return pattern.sub(company_name, content)
+
+
 _CLOSING_LINE_RE = re.compile(
     r"^\s*(sincerely\b|best regards\b|kind regards\b|cordialement\b|salutations\b|je vous prie d['’]agreer\b)",
     re.IGNORECASE,
@@ -89,11 +107,16 @@ def sanitize_generated_cover_letter(text: str) -> str:
             lines = [lines[0]]
 
     cleaned_lines: List[str] = []
+    subject_seen = False
     for line in lines:
         if _PLACEHOLDER_LINE_RE.search(line):
             continue
         if _PROMPT_MARKER_RE.search(line):
             break
+        if _SUBJECT_LINE_RE.search(line):
+            if subject_seen:
+                continue
+            subject_seen = True
         cleaned_lines.append(line)
 
     closing_idx: Optional[int] = None
