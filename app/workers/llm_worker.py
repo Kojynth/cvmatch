@@ -3381,7 +3381,7 @@ OUTPUT RULES:
                     stage="postprocess_base",
                 )
 
-            return coerce_generated_cv_payload(
+            coerced = coerce_generated_cv_payload(
                 payload=cv_json or {},
                 profile_json=profile_json,
                 fallback_generator=safe_fallback_generator,
@@ -3425,9 +3425,262 @@ OUTPUT RULES:
                 ),
                 offer_terms=offer_terms_for_reconcile,
             )
+            try:
+                return self._rewrite_mismatched_final_experiences_from_profile(coerced)
+            except Exception as rewrite_exc:
+                logger.warning(
+                    "Final experience language rewrite postprocess failed: %s",
+                    rewrite_exc,
+                )
+                return coerced
         except Exception as exc:
             logger.warning("_postprocess_final_candidate_wrapper failed: %s", exc)
             return cv_json or {}
+
+    def _rewrite_mismatched_final_experiences_from_profile(
+        self,
+        cv_json: dict,
+    ) -> dict:
+        if not isinstance(cv_json, dict):
+            return cv_json or {}
+        experiences = cv_json.get("experience")
+        if not isinstance(experiences, list) or not experiences:
+            return cv_json
+        if not callable(getattr(self.qwen_manager, "generate_structured_json", None)):
+            return cv_json
+
+        try:
+            from ..utils.cv_language_audit import (
+                is_cv_narrative_language_mismatch,
+                looks_like_english_cv_narrative,
+            )
+            from ..utils.cv_postprocessing import (
+                _best_profile_match,
+                _extract_profile_experiences,
+                clean_narrative_text,
+            )
+            from ..utils.language_policy import text_matches_target_language
+        except Exception:
+            return cv_json
+
+        language_code = self._resolve_language_code()
+        profile_json = getattr(self, "_pipeline_profile_json", {}) or {}
+        if not isinstance(profile_json, dict) or not profile_json:
+            try:
+                profile_json = self._build_profile_json()
+            except Exception:
+                profile_json = {}
+        profile_experiences = _extract_profile_experiences(profile_json)
+
+        def _iter_text_lines(value: Any) -> List[str]:
+            if isinstance(value, str):
+                return [value.strip()] if value.strip() else []
+            if isinstance(value, list):
+                return [
+                    str(item).strip()
+                    for item in value
+                    if isinstance(item, str) and str(item).strip()
+                ]
+            return []
+
+        def _matches_target(value: Any) -> bool:
+            text = str(value or "").strip()
+            if not text:
+                return False
+            if is_cv_narrative_language_mismatch(
+                text,
+                target_language=language_code,
+            ):
+                return False
+            if text_matches_target_language(
+                text,
+                language_code,
+            ):
+                return True
+            return language_code.startswith("en") and looks_like_english_cv_narrative(
+                text
+            )
+
+        def _needs_rewrite(entry: Dict[str, Any]) -> bool:
+            summary = str(entry.get("summary") or "").strip()
+            highlights = _iter_text_lines(entry.get("highlights"))
+            descriptions = _iter_text_lines(entry.get("description"))
+            visible_lines = [summary, *highlights, *descriptions]
+            if any(
+                line
+                and is_cv_narrative_language_mismatch(
+                    line,
+                    target_language=language_code,
+                )
+                for line in visible_lines
+            ):
+                return True
+            if summary and _matches_target(summary):
+                return False
+            return bool(descriptions) and not any(
+                _matches_target(line) for line in descriptions
+            )
+
+        def _entry_is_current(entry: Dict[str, Any]) -> bool:
+            try:
+                from ..utils.profile_json import derive_date_support_fields
+
+                support = derive_date_support_fields(
+                    entry.get("start_date") or "",
+                    entry.get("end_date") or "",
+                )
+                return bool(support.get("is_current"))
+            except Exception:
+                end_value = str(entry.get("end_date") or "").strip().casefold()
+                return end_value in {"present", "current", "now", "aujourd'hui"}
+
+        candidates: List[Dict[str, Any]] = []
+        for index, entry in enumerate(experiences):
+            if not isinstance(entry, dict) or not _needs_rewrite(entry):
+                continue
+            matched_profile = _best_profile_match(entry, profile_experiences)
+            description_source = ""
+            if isinstance(matched_profile, dict):
+                description_source = str(
+                    matched_profile.get("description") or ""
+                ).strip()
+            if not description_source:
+                description_source = " ".join(_iter_text_lines(entry.get("description")))
+            source_description = clean_narrative_text(description_source)
+            if len(source_description.split()) < 6:
+                continue
+            current_highlights = [
+                item
+                for item in _iter_text_lines(entry.get("highlights"))
+                if _matches_target(item)
+            ]
+            current_summary = str(entry.get("summary") or "").strip()
+            if not _matches_target(current_summary):
+                current_summary = ""
+            is_current = _entry_is_current(entry)
+            candidates.append(
+                {
+                    "index": index,
+                    "title": str(entry.get("title") or "").strip(),
+                    "company": str(entry.get("company") or "").strip(),
+                    "start_date": str(entry.get("start_date") or "").strip(),
+                    "end_date": str(entry.get("end_date") or "").strip(),
+                    "location": str(entry.get("location") or "").strip(),
+                    "target_tense": "present" if is_current else "past",
+                    "current_summary": current_summary,
+                    "current_highlights": current_highlights,
+                    "source_description": source_description,
+                }
+            )
+
+        if not candidates:
+            return cv_json
+
+        messages = self._build_final_experience_language_rewrite_messages(
+            candidates,
+            language_code=language_code,
+        )
+        try:
+            raw = self.qwen_manager.generate_structured_json(
+                messages["system"],
+                messages["user"],
+                generation_overrides={
+                    **self._non_strict_json_generation_overrides("generator"),
+                    "max_new_tokens": 1200,
+                },
+                role="generator",
+            )
+            rewritten = self._parse_json_response(raw)
+        except Exception as exc:
+            logger.warning("Final experience language rewrite unavailable: %s", exc)
+            return cv_json
+
+        items = rewritten.get("items") if isinstance(rewritten, dict) else None
+        if not isinstance(items, list):
+            return cv_json
+
+        updated = 0
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            try:
+                index = int(item.get("index"))
+            except Exception:
+                continue
+            if index < 0 or index >= len(experiences):
+                continue
+            target_entry = experiences[index]
+            if not isinstance(target_entry, dict):
+                continue
+            summary = str(item.get("summary") or "").strip()
+            highlights = [
+                str(value).strip()
+                for value in (item.get("highlights") or [])
+                if isinstance(value, str) and str(value).strip()
+            ]
+            filtered_highlights = [value for value in highlights if _matches_target(value)]
+            existing_target_highlights = [
+                value
+                for value in _iter_text_lines(target_entry.get("highlights"))
+                if _matches_target(value)
+            ]
+            applied = False
+            if summary and _matches_target(summary):
+                target_entry["summary"] = summary
+                applied = True
+            elif not _matches_target(target_entry.get("summary")):
+                target_entry["summary"] = ""
+            if filtered_highlights:
+                target_entry["highlights"] = filtered_highlights[:4]
+                target_entry["description"] = filtered_highlights[:4]
+                applied = True
+            elif applied:
+                target_entry["highlights"] = existing_target_highlights[:4]
+                target_entry["description"] = []
+            if applied:
+                updated += 1
+
+        if updated:
+            logger.info(
+                "Final experience language rewrite applied: target=%s count=%s",
+                language_code,
+                updated,
+            )
+        return cv_json
+
+    def _build_final_experience_language_rewrite_messages(
+        self,
+        candidates: List[Dict[str, Any]],
+        *,
+        language_code: str,
+    ) -> Dict[str, str]:
+        candidate_block = json.dumps(candidates, ensure_ascii=False, indent=2)
+        system_prompt = (
+            "You are a CV experience rewriter. Return JSON only. "
+            "Rewrite SOURCE_DESCRIPTION into LANGUAGE for each item. "
+            "Preserve facts exactly and do not invent employers, dates, metrics, tools, scope, or achievements. "
+            "Keep proper nouns, company names, product names, acronyms, URLs, and locations unchanged."
+        )
+        user_prompt = f"""
+LANGUAGE: {language_code}
+
+EXPERIENCES_TO_REWRITE:
+{candidate_block}
+
+OUTPUT RULES:
+- Return JSON only with this shape: {{"items": [{{"index": 0, "summary": "...", "highlights": ["...", "..."]}}]}}
+- Keep the same index values.
+- summary: exactly 1 compact recruiter-facing sentence in LANGUAGE.
+- highlights: 2 to 4 short ATS-safe lines in LANGUAGE when SOURCE_DESCRIPTION supports them.
+- Translate SOURCE_DESCRIPTION fully into LANGUAGE when needed.
+- Do not leave mixed-language fragments.
+- Preserve chronology and facts; do not add facts absent from SOURCE_DESCRIPTION or CURRENT_* fields.
+- Respect TARGET_TENSE: present for current roles, past for ended roles.
+- Start each highlight with a clear action verb in LANGUAGE.
+- Do not copy SOURCE_DESCRIPTION verbatim.
+- Do not use placeholders or bracketed notes.
+""".strip()
+        return {"system": system_prompt, "user": user_prompt}
 
     # Alignment scoring
     def _score_cv_offer_alignment(

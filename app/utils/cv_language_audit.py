@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any, Dict, List, Tuple
 
 from .language_policy import (
@@ -12,14 +13,32 @@ from .language_policy import (
 
 
 FRENCH_NARRATIVE_MARKERS = {
-    "avec",
-    "des",
+    "le",
+    "la",
     "les",
+    "de",
+    "des",
+    "du",
+    "un",
+    "une",
+    "avec",
     "pour",
     "dans",
+    "apres",
+    "precedent",
+    "repris",
+    "refondu",
+    "fichier",
+    "suivi",
     "suivre",
     "rediger",
     "redaction",
+    "automatisation",
+    "ameliorer",
+    "lisibilite",
+    "utilisabilite",
+    "tresorerie",
+    "structure",
     "plans",
     "tests",
     "anomalies",
@@ -39,6 +58,37 @@ ENGLISH_NARRATIVE_MARKERS = {
     "validation",
     "delivery",
 }
+ENGLISH_CV_ACTION_HEADS = {
+    "achieved",
+    "analyzed",
+    "automated",
+    "built",
+    "coordinated",
+    "created",
+    "delivered",
+    "designed",
+    "developed",
+    "documented",
+    "drove",
+    "executed",
+    "implemented",
+    "improved",
+    "led",
+    "managed",
+    "optimized",
+    "prepared",
+    "qualified",
+    "reduced",
+    "restructured",
+    "reviewed",
+    "reworked",
+    "streamlined",
+    "supported",
+    "tested",
+    "took",
+    "tracked",
+    "validated",
+}
 
 
 def _contains_cross_language_markers(text: str, *, target_language: str) -> bool:
@@ -50,6 +100,59 @@ def _contains_cross_language_markers(text: str, *, target_language: str) -> bool
     if target_language == "en":
         return fr_count >= 2 and en_count >= 2
     return en_count >= 2 and fr_count >= 2
+
+
+def _ascii_fold(text: str) -> str:
+    return (
+        unicodedata.normalize("NFKD", str(text or ""))
+        .encode("ascii", "ignore")
+        .decode("ascii")
+        .casefold()
+    )
+
+
+def _folded_tokens(text: str) -> List[str]:
+    return re.findall(r"[a-z]+", _ascii_fold(text))
+
+
+def _looks_like_french_narrative_with_english_terms(text: str) -> bool:
+    """Reject French narrative that only looks English because of role/tool labels."""
+    tokens = _folded_tokens(text)
+    if len(tokens) < 5:
+        return False
+    fr_count = sum(1 for token in tokens if token in FRENCH_NARRATIVE_MARKERS)
+    en_count = sum(1 for token in tokens if token in ENGLISH_NARRATIVE_MARKERS)
+    return fr_count >= 2 and fr_count >= en_count
+
+
+def is_cv_narrative_language_mismatch(text: Any, *, target_language: str) -> bool:
+    value = str(text or "").strip()
+    if not value:
+        return False
+    target = normalize_language_code(target_language)
+    if _contains_cross_language_markers(value, target_language=target):
+        return True
+    if target == "en" and _looks_like_french_narrative_with_english_terms(value):
+        return True
+    if target == "en":
+        if looks_like_english_cv_narrative(value):
+            return False
+        return is_mixed_or_mismatched_language(value, target)
+    if is_mixed_or_mismatched_language(value, target):
+        return True
+    return False
+
+
+def looks_like_english_cv_narrative(text: Any) -> bool:
+    tokens = _folded_tokens(str(text or ""))
+    if len(tokens) < 3:
+        return False
+    if _looks_like_french_narrative_with_english_terms(str(text or "")):
+        return False
+    first = tokens[0]
+    if first in ENGLISH_CV_ACTION_HEADS:
+        return True
+    return first.endswith("ed") and len(first) > 4
 
 
 def audit_cv_language_consistency(
@@ -91,6 +194,15 @@ def audit_cv_language_consistency(
                     for item in highlights
                     if isinstance(item, str) and str(item).strip()
                 )
+            description = entry.get("description")
+            if isinstance(description, str) and description.strip():
+                fragments.append(description)
+            elif isinstance(description, list):
+                fragments.extend(
+                    str(item).strip()
+                    for item in description
+                    if isinstance(item, str) and str(item).strip()
+                )
             add_sample(f"experience_{idx}", " ".join(fragments))
 
     projects = payload.get("projects")
@@ -124,8 +236,7 @@ def audit_cv_language_consistency(
     mixed_sections = [
         section_name
         for section_name, text in section_samples
-        if is_mixed_or_mismatched_language(text, target)
-        or _contains_cross_language_markers(text, target_language=target)
+        if is_cv_narrative_language_mismatch(text, target_language=target)
     ]
 
     return {

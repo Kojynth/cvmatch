@@ -925,6 +925,32 @@ class FinalCVPhase:
                     "Final clip-repair/dedup cleanup skipped: %s", cleanup_exc
                 )
 
+            try:
+                from .cv_language_audit import audit_cv_language_consistency
+
+                final_language_audit = audit_cv_language_consistency(
+                    state.cv_json_final if isinstance(state.cv_json_final, dict) else {},
+                    target_language=state.language_code,
+                )
+                if isinstance(state.alignment_audit, dict):
+                    state.alignment_audit.update(final_language_audit)
+                if final_language_audit.get("language_ok") is False:
+                    sections = ", ".join(
+                        str(item)
+                        for item in final_language_audit.get(
+                            "mixed_language_sections", []
+                        )
+                        if str(item).strip()
+                    )
+                    warning = (
+                        "Final CV language repair still has mixed sections"
+                        + (f": {sections}" if sections else "")
+                    )
+                    warnings.append(warning)
+                    logger.warning(warning)
+            except Exception as language_exc:
+                logger.warning("Final CV language audit skipped: %s", language_exc)
+
             logger.info("Final CVJSON generation done")
 
             return PhaseResult(
