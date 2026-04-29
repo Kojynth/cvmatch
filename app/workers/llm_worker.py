@@ -1441,6 +1441,7 @@ class CVGenerationWorker(QThread):
         if stage_model_id:
             payload["stage_model_id"] = str(stage_model_id).strip()
 
+        self._release_parent_model_before_stage_subprocess(stage)
         self._ensure_stage_memory_ready(stage, stage_model_id)
 
         with open(input_path, "w", encoding="utf-8") as handle:
@@ -1722,6 +1723,44 @@ class CVGenerationWorker(QThread):
             try:
                 input_path.unlink(missing_ok=True)
                 output_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    def _release_parent_model_before_stage_subprocess(self, stage: str) -> None:
+        """Free any parent-process model before a cold-loaded stage subprocess."""
+
+        manager = getattr(self, "qwen_manager", None)
+        if manager is None:
+            return
+
+        has_loaded_model = False
+        try:
+            has_loaded_model = bool(
+                getattr(manager, "model_loaded", False)
+                or getattr(manager, "_model", None) is not None
+                or getattr(manager, "_tokenizer", None) is not None
+            )
+        except Exception:
+            has_loaded_model = False
+
+        try:
+            if has_loaded_model and hasattr(manager, "unload_model"):
+                logger.info(
+                    "Releasing parent model before stage subprocess: stage=%s",
+                    stage,
+                )
+                manager.unload_model(reason=f"before stage subprocess {stage}")
+            elif hasattr(manager, "cleanup_memory"):
+                manager.cleanup_memory()
+        except Exception as exc:
+            logger.warning(
+                "Parent model release before stage subprocess failed: stage=%s error=%s",
+                stage,
+                exc,
+            )
+            try:
+                if hasattr(manager, "cleanup_memory"):
+                    manager.cleanup_memory()
             except Exception:
                 pass
 
