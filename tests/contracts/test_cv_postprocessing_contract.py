@@ -470,13 +470,16 @@ def test_render_experience_keeps_role_critical_evidence_lines() -> None:
 
     assert len(bullets) >= 4
     assert len(bullets) <= 4
-    assert "cas limites" in rendered
+    assert "cas limites" not in rendered
+    assert "edge cases" not in rendered
     assert "Postman" in rendered
-    assert "PostgreSQL, MongoDB et SQL Server" in rendered
-    assert "conformité RGPD" in rendered
-    assert "agents IA" in rendered
+    assert "MongoDB" in rendered
+    assert "PostgreSQL" in rendered
+    assert "Microsoft SQL Server" in rendered
     assert "génération de données de test" in rendered
-    assert "benchmark d'outils d'automatisation" in rendered
+    assert "Playwright" in rendered
+    assert "Cypress" in rendered
+    assert "risques de conception" in rendered
 
 
 def test_featured_project_filters_noisy_generated_technologies() -> None:
@@ -502,8 +505,9 @@ def test_featured_project_filters_noisy_generated_technologies() -> None:
     assert project is not None
     assert project["technologies"] == ["Python", "LLM", "pytest"]
     rendered = " ".join(project["description_lines"])
-    assert "Application Python/LLM" in rendered
-    assert "analyse d'offres d'emploi" in rendered
+    assert "Application Python/LLM" not in rendered
+    assert "application développée en Python" in rendered
+    assert "analyser une offre d'emploi" in rendered
     assert "tests unitaires avec pytest" in rendered
     assert "robustness" not in project["technologies"]
     assert "design updates" not in project["technologies"]
@@ -613,8 +617,8 @@ def test_featured_project_prefers_offer_aligned_project_and_keeps_rich_details()
     assert project["technologies"] == ["Python", "LLM", "pytest"]
     assert project["render_detail_budget"] == 2
     rendered = " ".join(project["description_lines"])
-    assert "Application Python/LLM" in rendered
-    assert "génération de CV ciblés" in rendered
+    assert "Application Python/LLM" not in rendered
+    assert "générer un CV ciblé" in rendered
     assert "validation des sorties" in rendered
     assert "tests unitaires avec pytest" in rendered
 
@@ -822,8 +826,8 @@ def test_project_reconciliation_enriches_poor_generated_project_from_profile() -
     assert project is not None
     assert project["technologies"] == ["Python", "LLM", "pytest"]
     rendered = " ".join(project["description_lines"])
-    assert "Application Python/LLM" in rendered
-    assert "génération de CV ciblés" in rendered
+    assert "Application Python/LLM" not in rendered
+    assert "générer un CV ciblé" in rendered
     assert "validation des sorties" in rendered
     assert "tests unitaires avec pytest" in rendered
     assert "seeking" not in rendered

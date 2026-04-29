@@ -2973,6 +2973,21 @@ class ExportManager:
             language_code=language_code,
         )
 
+        try:
+            from ..domain.generation.tool_signals import collect_named_tool_hints
+        except Exception:
+            collect_named_tool_hints = None
+
+        def tool_signal_count(line: str) -> int:
+            if not collect_named_tool_hints:
+                return 0
+            return len(
+                collect_named_tool_hints(
+                    {"description": [self._normalize_render_text(line)]},
+                    max_items=6,
+                )
+            )
+
         def line_score(line: str) -> float:
             text = self._normalize_render_text(line)
             if not text:
@@ -2989,6 +3004,10 @@ class ExportManager:
                     score += 1.0 if " " in term.strip() else 0.5
             if self._has_compact_tool_or_technical_signal(text):
                 score += 0.8
+            score += min(2.4, tool_signal_count(text) * 0.8)
+            acronym_hits = re.findall(r"\b[A-ZÀ-Ý0-9]{2,8}\b", text)
+            if acronym_hits:
+                score += min(1.2, len(acronym_hits) * 0.4)
             return score
 
         def replace_or_append(candidate: str) -> None:
@@ -3004,6 +3023,24 @@ class ExportManager:
             if len(output) < max_limit:
                 output.append(text)
                 return
+            if tool_signal_count(text) > 0:
+                tool_line_count = sum(
+                    1 for item in output if tool_signal_count(item) > 0
+                )
+                target_tool_lines = min(2, max_limit)
+                if tool_line_count < target_tool_lines:
+                    replaceable_indices = [
+                        idx
+                        for idx, item in enumerate(output)
+                        if tool_signal_count(item) == 0
+                    ]
+                    if replaceable_indices:
+                        weakest_non_tool_idx = min(
+                            replaceable_indices,
+                            key=lambda item_idx: line_score(output[item_idx]),
+                        )
+                        output[weakest_non_tool_idx] = text
+                        return
             weakest_idx = min(
                 range(len(output)),
                 key=lambda item_idx: line_score(output[item_idx]),
@@ -4292,6 +4329,8 @@ class ExportManager:
         )
         if has_tool_or_technical_shape:
             score += 0.8
+            if has_visible_evidence:
+                score += 1.2
         if (
             has_explicit_offer_terms
             and direct_alignment_signal
