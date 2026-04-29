@@ -9,6 +9,8 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -259,6 +261,10 @@ class JobApplicationPanel(QWidget):
         if combo is None:
             return
 
+        if bool(getattr(widget, "cv_language_user_selected", False)):
+            combo.setEnabled(combo.count() > 1)
+            return
+
         self._remove_non_profile_language_options(combo)
         profile_options = self._get_profile_cv_language_options()
         profile_codes = {code for code, _label in profile_options}
@@ -274,6 +280,9 @@ class JobApplicationPanel(QWidget):
             combo.addItem(f"{label} (langue de l'offre)", language)
             combo.setCurrentIndex(combo.count() - 1)
 
+        widget.cv_language_user_selected = False
+        widget.cv_language_selection_source = "analysis"
+        widget.current_cv_language = self._selected_cv_language(widget)
         combo.setEnabled(combo.count() > 1)
 
     @staticmethod
@@ -283,6 +292,38 @@ class JobApplicationPanel(QWidget):
                 combo.setCurrentIndex(index)
                 return True
         return False
+
+    def _reset_cv_language_choice_source(self) -> None:
+        widget = getattr(self, "generation_widget", None)
+        if widget is None:
+            return
+        widget.cv_language_user_selected = False
+        widget.cv_language_selection_source = "analysis"
+
+    def _mark_cv_language_manually_selected(self, widget) -> None:
+        widget.cv_language_user_selected = True
+        widget.cv_language_selection_source = "manual"
+        widget.current_cv_language = self._selected_cv_language(widget)
+
+    def _select_cv_language_in_combo(
+        self,
+        widget,
+        language: str,
+        *,
+        source: str,
+    ) -> None:
+        language = str(language or "").strip().lower()
+        if not language:
+            return
+        combo = getattr(widget, "cv_language_combo", None)
+        if combo is not None and not self._set_combo_to_data(combo, language):
+            label = self._language_display_label(language)
+            combo.addItem(f"{label} (langue de l'offre)", language)
+            combo.setCurrentIndex(combo.count() - 1)
+            combo.setEnabled(combo.count() > 1)
+        widget.current_cv_language = language
+        widget.cv_language_user_selected = source == "manual"
+        widget.cv_language_selection_source = source
 
     @staticmethod
     def _selected_cv_language(widget) -> str:
@@ -340,6 +381,93 @@ class JobApplicationPanel(QWidget):
             parent=self,
         )
 
+    def _language_conflict_options(
+        self,
+        *,
+        selected_language: str,
+        offer_language: str,
+    ) -> list[tuple[str, str]]:
+        options: list[tuple[str, str]] = []
+        seen: set[str] = set()
+
+        def add(code: str, label: str) -> None:
+            normalized = str(code or "").strip().lower()
+            if not normalized or normalized in seen:
+                return
+            seen.add(normalized)
+            options.append((normalized, label))
+
+        selected_language = str(selected_language or "").strip().lower()
+        offer_language = str(offer_language or "").strip().lower()
+        if selected_language:
+            add(
+                selected_language,
+                f"{self._language_display_label(selected_language)} "
+                "(selection actuelle)",
+            )
+        if offer_language:
+            add(
+                offer_language,
+                f"{self._language_display_label(offer_language)} "
+                "(recommandee par l'analyse de l'offre)",
+            )
+        for code, label in self._get_profile_cv_language_options():
+            add(code, label)
+        return options
+
+    def _choose_generation_language_for_conflict(
+        self,
+        *,
+        selected_language: str,
+        offer_language: str,
+        document_label: str,
+    ) -> str | None:
+        selected_language = str(selected_language or "").strip().lower()
+        offer_language = str(offer_language or "").strip().lower()
+        options = self._language_conflict_options(
+            selected_language=selected_language,
+            offer_language=offer_language,
+        )
+        if not options:
+            return selected_language or offer_language or None
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Langue de generation")
+        layout = QVBoxLayout(dialog)
+
+        selected_label = self._language_display_label(selected_language)
+        offer_label = self._language_display_label(offer_language)
+        message = QLabel(
+            (
+                f"La langue selectionnee pour {document_label} est "
+                f"{selected_label}, mais l'offre semble redigee en "
+                f"{offer_label}.\n\n"
+                "Choisissez la langue a utiliser avant de lancer la generation."
+            )
+        )
+        message.setWordWrap(True)
+        layout.addWidget(message)
+
+        combo = QComboBox(dialog)
+        for code, label in options:
+            combo.addItem(label, code)
+        self._set_combo_to_data(combo, selected_language)
+        layout.addWidget(combo)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel,
+            parent=dialog,
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        chosen = str(combo.currentData() or "").strip().lower()
+        return chosen or selected_language or offer_language or None
+
     def _resolve_generation_language_for_offer(
         self,
         widget,
@@ -348,6 +476,47 @@ class JobApplicationPanel(QWidget):
         document_label: str,
     ) -> str | None:
         offer_language = self._detect_offer_language(offer_payload)
+        selected_language = self._selected_cv_language(widget)
+        user_selected_language = bool(
+            getattr(widget, "cv_language_user_selected", False)
+        )
+
+        if (
+            user_selected_language
+            and selected_language
+            and offer_language
+            and selected_language != offer_language
+        ):
+            chosen_language = self._choose_generation_language_for_conflict(
+                selected_language=selected_language,
+                offer_language=offer_language,
+                document_label=document_label,
+            )
+            if not chosen_language:
+                return None
+            self._select_cv_language_in_combo(
+                widget,
+                chosen_language,
+                source=(
+                    "analysis_confirmed"
+                    if chosen_language == offer_language
+                    else "manual"
+                ),
+            )
+            return chosen_language
+
+        if (
+            not user_selected_language
+            and offer_language
+            and selected_language != offer_language
+        ):
+            self._select_cv_language_in_combo(
+                widget,
+                offer_language,
+                source="analysis",
+            )
+            selected_language = offer_language
+
         profile_codes = self._get_profile_cv_language_codes()
         if profile_codes and offer_language and offer_language not in profile_codes:
             if not self._confirm_unprofiled_offer_language(
@@ -355,8 +524,13 @@ class JobApplicationPanel(QWidget):
                 document_label=document_label,
             ):
                 return None
+            self._select_cv_language_in_combo(
+                widget,
+                offer_language,
+                source="analysis_confirmed",
+            )
             return offer_language
-        return self._selected_cv_language(widget) or offer_language
+        return selected_language or offer_language
 
     def create_generation_widget(self):
         """Create the CV generation widget wired to the worker pipeline."""
@@ -510,6 +684,10 @@ class JobApplicationPanel(QWidget):
 
         widget.current_cv_language = self._selected_cv_language(widget)
 
+        widget.cv_language_user_selected = False
+
+        widget.cv_language_selection_source = "profile"
+
         template_combo.currentTextChanged.connect(
             lambda value: setattr(widget, "current_template", value)
         )
@@ -517,6 +695,9 @@ class JobApplicationPanel(QWidget):
             lambda _index: setattr(
                 widget, "current_cv_language", self._selected_cv_language(widget)
             )
+        )
+        cv_language_combo.activated.connect(
+            lambda _index: self._mark_cv_language_manually_selected(widget)
         )
 
         generate_btn.clicked.connect(lambda: self.start_generation(widget))
@@ -642,6 +823,7 @@ class JobApplicationPanel(QWidget):
         clipboard = QApplication.clipboard()
         text = clipboard.text()
         if text:
+            self._reset_cv_language_choice_source()
             widget.text_edit.setText(text)
 
     def load_offer_file(self, widget, file_path: str):
@@ -649,6 +831,7 @@ class JobApplicationPanel(QWidget):
         try:
             parser = DocumentParser()
             content = parser.parse_document(file_path)
+            self._reset_cv_language_choice_source()
             widget.text_edit.setText(content)
 
             # Extraire titre basique
@@ -664,7 +847,7 @@ class JobApplicationPanel(QWidget):
                 f"Impossible de lire le fichier:\n{e}", title="Erreur", parent=self
             )
 
-    def analyze_offer(self, widget):
+    def analyze_offer(self, widget, *, sync_language: bool = True):
         """Analyse the job offer text and prepare metadata for generation."""
         text = widget.text_edit.toPlainText()
         if not text or len(text.strip()) < 50:
@@ -672,7 +855,8 @@ class JobApplicationPanel(QWidget):
             widget.offer_data = None
 
             self.set_offer_data_to_generation(None)
-            self._sync_cv_language_combo_with_offer("")
+            if sync_language:
+                self._sync_cv_language_combo_with_offer("")
 
             return
 
@@ -714,7 +898,8 @@ class JobApplicationPanel(QWidget):
         }
 
         self.set_offer_data_to_generation(widget.offer_data)
-        self._sync_cv_language_combo_with_offer(detected_language)
+        if sync_language:
+            self._sync_cv_language_combo_with_offer(detected_language)
 
     def set_offer_data_to_generation(self, offer_data):
         """Store offer information on the generation widget and update hints."""
@@ -771,7 +956,7 @@ class JobApplicationPanel(QWidget):
         if isinstance(offer_data_override, dict):
             widget.offer_data = dict(offer_data_override)
         elif hasattr(self, "offer_widget"):
-            self.analyze_offer(self.offer_widget)
+            self.analyze_offer(self.offer_widget, sync_language=False)
         if not widget.offer_data:
             show_warning(
                 "Veuillez d'abord charger une offre d'emploi.",
@@ -943,7 +1128,7 @@ class JobApplicationPanel(QWidget):
         if isinstance(offer_data_override, dict):
             widget.offer_data = dict(offer_data_override)
         elif hasattr(self, "offer_widget"):
-            self.analyze_offer(self.offer_widget)
+            self.analyze_offer(self.offer_widget, sync_language=False)
         if not getattr(widget, "offer_data", None):
             show_warning(
                 "Veuillez d'abord charger une offre d'emploi.",
