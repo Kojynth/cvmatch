@@ -467,7 +467,11 @@ COVER_LETTER:
 
 Rules:
 - structure_ok=true only if the letter has a subject/objet line, a salutation, at least one body paragraph, and a closing formula.
+- structure_ok=false if the letter contains duplicate subject/objet lines, duplicate signatures, or recases the target company name incorrectly.
 - keywords_to_add: only terms relevant to offer and candidate profile.
+- Flag generic filler when it replaces concrete offer/profile evidence.
+- Prefer role-specific proof: tools, methods, systems, validation practices, projects, and outcomes grounded in the candidate data.
+- Certifications and soft skills should not outrank stronger technical or domain proof.
 - relevance_score in [0..100].
 - language must be "fr" or "en".
 """.strip()
@@ -543,6 +547,9 @@ TASK:
 - Keep ONLY verifiable candidate facts.
 - Improve relevance to the offer by integrating review keywords/instructions.
 - Ensure at least 4 offer keywords appear in body paragraphs (exact term preferred, professional synonym/acronym allowed).
+- Replace generic filler with concrete source-backed proof from the profile and offer.
+- Keep the target company spelling exactly as provided in the prompt.
+- Mention secondary certifications only after stronger role-specific technical/domain evidence.
 - Use EXACTLY one language: {language_code}.
 - Keep coherent letter structure with a subject/objet line, a salutation, at least one body paragraph, and a closing formula.
 - Output only the final letter text.
@@ -580,6 +587,9 @@ TASK:
 - Rewrite the full letter to improve relevance to the job offer.
 - Use offer keywords and lexical field when facts allow it.
 - Include at least 4 offer keywords in the body (exact terms preferred, professional synonym/acronym allowed).
+- Replace generic filler with concrete source-backed proof from the profile and offer.
+- Keep the target company spelling exactly as provided in the prompt.
+- Mention secondary certifications only after stronger role-specific technical/domain evidence.
 - Keep ONLY candidate facts from the provided profile context.
 - Keep coherent letter structure with a subject/objet line, a salutation, at least one body paragraph, and a closing formula.
 - Use EXACTLY one language: {language_code}.

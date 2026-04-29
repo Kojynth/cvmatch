@@ -149,6 +149,17 @@ def _load_preview_module(monkeypatch):
     return importlib.import_module("app.views.template_preview_window")
 
 
+def _load_real_export_manager():
+    module = sys.modules.get("app.controllers.export_manager")
+    if module is not None and module.__class__.__name__ == "module":
+        export_manager = getattr(module, "ExportManager", None)
+        if export_manager is not None and export_manager.__name__ == "_FakeObject":
+            sys.modules.pop("app.controllers.export_manager", None)
+    from app.controllers.export_manager import ExportManager
+
+    return ExportManager
+
+
 def _build_export_stub(
     template_preview_window, visible_web_view: _FakeWebView
 ) -> SimpleNamespace:
@@ -269,3 +280,258 @@ def test_hidden_pdf_view_load_triggers_print_without_visible_preview_branch(
 
     assert stub.print_started is True
     assert not hasattr(stub, "_cv_preview_loaded")
+
+
+def test_letter_html_renders_single_subject_and_single_body_signature(
+    monkeypatch,
+) -> None:
+    template_preview_window = _load_preview_module(monkeypatch)
+    cls = template_preview_window.TemplatePreviewWindow
+    stub = SimpleNamespace(
+        cv_data={
+            "name": "MICHAUD Keiji",
+            "email": "candidate@example.com",
+            "phone": "+33 000000000",
+            "job_title": "Software Engineer, QA",
+            "company": "Mistral AI",
+            "cover_letter": (
+                "Objet: Candidature - Software Engineer, QA (Mistral Ai)\n\n"
+                "Madame, Monsieur,\n\n"
+                "Je souhaite contribuer aux tests API et a l'automatisation.\n\n"
+                "Je vous prie d'agreer, Madame, Monsieur, l'expression de mes salutations distinguees.\n\n"
+                "MICHAUD Keiji"
+            ),
+        }
+    )
+    stub._cover_letter_to_html = MethodType(cls._cover_letter_to_html, stub)
+    stub._prepare_cover_letter_for_render = cls._prepare_cover_letter_for_render
+
+    html = cls.generate_letter_html(stub)
+
+    assert html.count("Objet:") == 1
+    assert "Mistral AI" in html
+    assert "Mistral Ai" not in html
+    assert "<p>MICHAUD Keiji</p>" not in html
+    assert '<div class="signature">MICHAUD Keiji</div>' in html
+
+
+def test_letter_html_fallback_subject_reuses_offer_company_name(
+    monkeypatch,
+) -> None:
+    template_preview_window = _load_preview_module(monkeypatch)
+    cls = template_preview_window.TemplatePreviewWindow
+    stub = SimpleNamespace(
+        cv_data={
+            "name": "MICHAUD Keiji",
+            "job_title": "Software Engineer, QA",
+            "company": "Mistral AI",
+            "cover_letter": (
+                "Madame, Monsieur,\n\n"
+                "Je souhaite contribuer aux tests API.\n\n"
+                "Cordialement"
+            ),
+        }
+    )
+    stub._cover_letter_to_html = MethodType(cls._cover_letter_to_html, stub)
+    stub._prepare_cover_letter_for_render = cls._prepare_cover_letter_for_render
+
+    html = cls.generate_letter_html(stub)
+
+    assert "Candidature - Software Engineer, QA (Mistral AI)" in html
+
+
+def test_cover_letter_sanitizer_removes_duplicate_subject_and_preserves_company_case() -> None:
+    from app.utils.cover_letter_output import (
+        normalize_company_mentions,
+        sanitize_generated_cover_letter,
+    )
+
+    raw = (
+        "Objet: Candidature - Software Engineer, QA\n"
+        "Objet: Candidature - Software Engineer, QA (Mistral Ai)\n\n"
+        "Madame, Monsieur,\n\n"
+        "Je souhaite contribuer aux tests API chez Mistral Ai.\n\n"
+        "Cordialement,\n\n"
+        "MICHAUD Keiji"
+    )
+
+    sanitized = sanitize_generated_cover_letter(raw)
+    normalized = normalize_company_mentions(sanitized, "Mistral AI")
+
+    assert normalized.lower().count("objet:") == 1
+    assert "Mistral AI" in normalized
+    assert "Mistral Ai" not in normalized
+
+
+def test_cover_letter_prompt_quality_rules_are_source_driven_not_seeded() -> None:
+    from app.utils.cover_letter_style_policy import build_cover_letter_generation_payload
+
+    payload = build_cover_letter_generation_payload(
+        offer_data={
+            "job_title": "Implementation Coordinator",
+            "company": "Example Corp",
+            "text": (
+                "Workflow automation, reporting systems, stakeholder validation "
+                "and deployment readiness."
+            ),
+            "analysis": {
+                "language": "fr",
+                "keywords": [
+                    "workflow automation",
+                    "reporting systems",
+                    "stakeholder validation",
+                    "deployment readiness",
+                ],
+            },
+        },
+        template="modern",
+        preferred_language="fr",
+        language_code="fr",
+        profile_name="Jean Dupont",
+        profile_block=(
+            "EXPERIENCE: refonte Excel de suivi des flux, automatisation des "
+            "calculs, graphiques de reporting et accompagnement de l'adoption."
+        ),
+    )
+
+    prompt = payload["prompt"]
+
+    assert payload["style_mode"] == "technical_precision"
+    assert "REGLES QUALITE LETTRE:" in prompt
+    assert "ecrire `Example Corp` exactement comme dans l'offre" in prompt
+    assert "chaque paragraphe de corps doit relier une exigence forte" in prompt
+    assert "Usage des projets" in prompt
+    assert "solutions technologiques impactantes" in prompt
+    assert "workflow automation" in prompt
+    assert "reporting systems" in prompt
+    assert "refonte Excel" in prompt
+
+
+def test_cover_letter_style_policy_has_no_seeded_domain_tool_terms() -> None:
+    policy_path = Path("app/utils/cover_letter_style_policy.py")
+    source = policy_path.read_text(encoding="utf-8").casefold()
+    source = source.replace("llm_worker.py", "").replace("offer_keywords_llm", "")
+    forbidden = [
+        "py" + "thon",
+        "post" + "man",
+        "play" + "wright",
+        "selen" + "ium",
+        "cyp" + "ress",
+        "py" + "test",
+        "mi" + "stral",
+        "ll" + "m",
+        "json schema",
+        "quality assurance",
+        "test automation",
+        "model integration",
+        "edge case",
+        "regression testing",
+    ]
+
+    assert not any(term in source for term in forbidden)
+
+
+def test_deterministic_cover_letter_fallback_subject_reuses_offer_company() -> None:
+    from app.utils.cover_letter_fallback import generate_fallback_cover_letter_simple
+
+    letter = generate_fallback_cover_letter_simple(
+        profile_name="MICHAUD Keiji",
+        job_title="Software Engineer, QA",
+        company="Mistral AI",
+        language_code="fr",
+        matched_terms=["Python", "API testing"],
+    )
+
+    assert letter.startswith(
+        "Objet: Candidature - Software Engineer, QA (Mistral AI)"
+    )
+
+
+def test_export_manager_profile_sentence_is_not_qa_locked() -> None:
+    ExportManager = _load_real_export_manager()
+    manager = ExportManager()
+
+    sentence = manager._build_evidence_based_profile_sentence(
+        {
+            "language": "fr",
+            "job_title": "Data Analyst",
+            "ats_keywords": ["SQL", "Power BI", "dashboard KPI"],
+            "featured_skills": ["SQL", "Power BI", "Tableau de bord et KPI"],
+            "skills": [
+                {
+                    "category": "Data",
+                    "skills_list": [
+                        {"name": "SQL"},
+                        {"name": "Power BI"},
+                        {"name": "Tableau de bord et KPI"},
+                    ],
+                }
+            ],
+            "experience": [
+                {
+                    "title": "Analyste data",
+                    "company": "ACME",
+                    "_render_source_description": [
+                        "Construit des dashboards Power BI et suit les KPI métiers.",
+                        "Analyse les données SQL pour fiabiliser les reportings.",
+                    ],
+                }
+            ],
+            "projects": [],
+        },
+        rendered_signatures=[],
+    )
+
+    assert "Data Analyst" in sentence
+    assert "Power BI" in sentence
+    assert "SQL" in sentence
+    assert "QA" not in sentence
+    assert "plans de test" not in sentence.lower()
+
+
+def test_export_manager_experience_evidence_reuses_source_lines_generically() -> None:
+    ExportManager = _load_real_export_manager()
+    manager = ExportManager()
+
+    lines = manager._source_backed_experience_evidence_lines(
+        [
+            "Refond un fichier Excel de suivi des cash flows.",
+            "Automatise les calculs pour limiter les erreurs de traitement.",
+            "Ajoute des graphiques de suivi pour l'équipe commerciale.",
+        ],
+        offer_terms=["Excel", "automatisation", "reporting"],
+        language_code="fr",
+    )
+
+    joined = " ".join(lines)
+    assert "Excel" in joined
+    assert "Automatise" in joined
+    assert "QA" not in joined
+    assert "Postman" not in joined
+    assert "plans de test" not in joined.lower()
+
+
+def test_export_manager_project_description_does_not_hardcode_cvmatch_label() -> None:
+    ExportManager = _load_real_export_manager()
+    manager = ExportManager()
+
+    lines = manager._build_compact_project_description_lines(
+        {
+            "name": "CVMatch",
+            "technologies": "Python · LLM local · JSON · pytest",
+            "description": (
+                "CVMatch est une application développée en Python visant à automatiser "
+                "l'adaptation d'un profil candidat à une offre d'emploi précise. "
+                "Le projet repose sur un pipeline de traitement assisté par LLM avec "
+                "validation JSON et tests unitaires avec pytest."
+            ),
+        },
+        technologies=["Python", "LLM", "pytest"],
+        max_lines=2,
+        char_budget=360,
+    )
+
+    assert lines
+    assert all(not line.startswith("Application Python") for line in lines)
+    assert all("Application Python/LLM" not in line for line in lines)
+    assert any("pipeline" in line.lower() or "application" in line.lower() for line in lines)

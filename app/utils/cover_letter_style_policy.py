@@ -13,6 +13,8 @@ It adapts cover letter generation guidance using:
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
@@ -23,6 +25,57 @@ VALID_STYLE_MODES = {
     "leadership_impact",
     "client_business",
     "balanced_professional",
+}
+
+_GENERIC_COVER_LETTER_PHRASES = (
+    "solutions technologiques impactantes",
+    "qualite irreprochable",
+    "passion pour les solutions",
+    "je suis passionne",
+    "environnement dynamique",
+    "mettre mes competences au service",
+    "contribuer a vos projets",
+    "strong passion",
+    "impactful technological solutions",
+    "high-quality solutions",
+)
+
+_TERM_STOPWORDS = {
+    "about",
+    "after",
+    "also",
+    "avec",
+    "candidate",
+    "candidat",
+    "candidats",
+    "candidates",
+    "collaborative",
+    "company",
+    "dans",
+    "des",
+    "dynamic",
+    "for",
+    "from",
+    "hiring",
+    "job",
+    "les",
+    "location",
+    "notre",
+    "our",
+    "poste",
+    "remote",
+    "role",
+    "seeking",
+    "skilled",
+    "summary",
+    "team",
+    "the",
+    "this",
+    "what",
+    "will",
+    "vous",
+    "with",
+    "your",
 }
 
 
@@ -39,6 +92,166 @@ def _dedup_preserve(items: Iterable[str]) -> List[str]:
         seen.add(key)
         output.append(text)
     return output
+
+
+def _term_key(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", str(value or "").lower())
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    chars = [char if char.isalnum() else " " for char in text]
+    return " ".join("".join(chars).split())
+
+
+def _collect_present_terms(
+    corpus: str,
+    candidates: Iterable[str],
+    *,
+    max_items: int = 14,
+) -> List[str]:
+    normalized_corpus = _term_key(corpus)
+    if not normalized_corpus:
+        return []
+    present: List[str] = []
+    for raw in candidates:
+        term = str(raw or "").strip()
+        if len(term) < 2:
+            continue
+        normalized_term = _term_key(term)
+        if not normalized_term:
+            continue
+        if normalized_term in normalized_corpus:
+            present.append(term)
+            if len(present) >= max_items:
+                break
+    return _dedup_preserve(present)
+
+
+def _looks_like_signal_term(value: Any) -> bool:
+    text = str(value or "").strip(" \t\r\n,;:.()[]{}")
+    if not text or len(text) < 2:
+        return False
+    normalized = _term_key(text)
+    if not normalized or normalized in _TERM_STOPWORDS:
+        return False
+    tokens = normalized.split()
+    if len(tokens) > 5:
+        return False
+    if any(token in _TERM_STOPWORDS for token in tokens):
+        return False
+    if len(tokens) >= 2:
+        return True
+    if text.isupper() and len(text) >= 2:
+        return True
+    if any(char.isdigit() for char in text):
+        return True
+    if any(char in text for char in "+#./-"):
+        return True
+    if any(char.isupper() for char in text[1:]):
+        return True
+    return bool(text[:1].isupper() and len(text) >= 3)
+
+
+def _extract_signal_terms_from_text(value: Any, *, max_items: int = 18) -> List[str]:
+    text = str(value or "")
+    if not text.strip():
+        return []
+    raw_chunks = []
+    raw_chunks.extend(re.split(r"[,;|•·\n\r\t]+", text))
+    raw_chunks.extend(
+        match.group(0)
+        for match in re.finditer(
+            r"\b[A-Za-z][A-Za-z0-9+#./-]*(?:\s+[A-Za-z][A-Za-z0-9+#./-]*){0,3}\b",
+            text,
+        )
+    )
+    output: List[str] = []
+    seen: set[str] = set()
+    for chunk in raw_chunks:
+        candidate = str(chunk or "").strip(" -–—:;,.()[]{}")
+        if not _looks_like_signal_term(candidate):
+            continue
+        key = _term_key(candidate)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        output.append(candidate)
+        if len(output) >= max_items:
+            break
+    return output
+
+
+def _build_cover_letter_quality_rules(
+    *,
+    language_code: str,
+    company: Any,
+    job_title: Any,
+    offer_text: Any,
+    keywords: List[str],
+    profile_block: Any,
+) -> str:
+    offer_corpus = f"{offer_text or ''}\n" + " | ".join(keywords)
+    profile_corpus = str(profile_block or "")
+    extracted_offer_terms = _dedup_preserve(
+        [
+            *[str(item) for item in keywords if str(item).strip()],
+            *_extract_signal_terms_from_text(offer_corpus, max_items=24),
+        ]
+    )
+    offer_signals = _collect_present_terms(
+        offer_corpus,
+        extracted_offer_terms,
+        max_items=16,
+    )
+    extracted_profile_terms = _dedup_preserve(
+        [
+            *_extract_signal_terms_from_text(profile_corpus, max_items=24),
+            *offer_signals,
+        ]
+    )
+    profile_signals = _collect_present_terms(
+        profile_corpus,
+        extracted_profile_terms,
+        max_items=18,
+    )
+    generic_phrases = ", ".join(_GENERIC_COVER_LETTER_PHRASES[:7])
+    offer_signal_text = ", ".join(offer_signals[:12]) or (
+        "none detected" if language_code == "en" else "aucun detecte"
+    )
+    profile_signal_text = ", ".join(profile_signals[:12]) or (
+        "none detected" if language_code == "en" else "aucun detecte"
+    )
+    company_text = str(company or "").strip() or (
+        "the target company" if language_code == "en" else "l'entreprise cible"
+    )
+    job_text = str(job_title or "").strip() or (
+        "the target role" if language_code == "en" else "le poste cible"
+    )
+
+    if language_code == "en":
+        return f"""
+COVER LETTER QUALITY RULES:
+- Formal hygiene: output exactly one Subject line, one greeting, 2-3 dense body paragraphs, one closing, and one signature.
+- Company spelling: write `{company_text}` exactly as provided; never recase acronyms, product names, tool names, or official company casing.
+- Evidence-first structure: every body paragraph must connect a strong requirement of `{job_text}` to a concrete profile-backed proof.
+- Role vocabulary: when grounded by profile evidence, surface high-signal offer terms such as {offer_signal_text}; do not replace them with vague wording.
+- Project usage: if a profile project overlaps the offer, present it as proof of role-relevant practices, tools, methods, outputs, or reliability work, not as a generic product pitch.
+- Offer-only terms may appear as target contribution or projection, never as past achievements unless the profile supports them.
+- Certifications and soft skills are secondary; use them only after stronger technical, operational, business, or domain proof.
+- Avoid generic filler, especially: {generic_phrases}.
+- Profile-backed signals available in the candidate data include: {profile_signal_text}.
+""".strip()
+
+    return f"""
+REGLES QUALITE LETTRE:
+- Hygiene formelle: produire exactement une ligne Objet, une salutation, 2-3 paragraphes denses, une formule de politesse et une signature.
+- Orthographe entreprise: ecrire `{company_text}` exactement comme dans l'offre; ne jamais recaser les acronymes, noms de produit, noms d'outils ou la casse officielle d'une entreprise.
+- Structure par preuves: chaque paragraphe de corps doit relier une exigence forte de `{job_text}` a une preuve concrete issue du profil.
+- Vocabulaire du role: quand le profil le justifie, faire apparaitre les termes forts de l'offre comme {offer_signal_text}; ne pas les remplacer par des formulations vagues.
+- Usage des projets: si un projet du profil chevauche l'offre, le presenter comme preuve de pratiques, outils, methodes, livrables ou fiabilisation pertinents, pas comme un pitch produit generique.
+- Les termes presents uniquement dans l'offre peuvent servir a la projection vers le poste, jamais a decrire une realisation passee sans preuve profil.
+- Certifications et soft skills sont secondaires; les utiliser seulement apres les preuves techniques, operationnelles, business ou metier plus fortes.
+- Eviter le remplissage generique, notamment: {generic_phrases}.
+- Signaux deja visibles dans les donnees candidat: {profile_signal_text}.
+""".strip()
 
 
 def _trim_text(value: Any, max_chars: int) -> str:
@@ -161,9 +374,10 @@ def _extract_mode_from_user_instruction(
                 "stack",
                 "outils",
                 "tooling",
-                "engineering",
-                "ingenieur",
-                "cyber",
+                "methodes",
+                "methods",
+                "systemes",
+                "systems",
             ),
         ),
         "leadership_impact": _score_markers(
@@ -221,26 +435,14 @@ def _resolve_style_profile(
     corpus = f"{offer_text}\n" + " | ".join(keywords)
 
     technical_markers = (
-        "python",
-        "sql",
-        "cloud",
-        "aws",
-        "azure",
-        "gcp",
-        "linux",
-        "kubernetes",
-        "docker",
-        "api",
-        "devops",
-        "cyber",
-        "siem",
-        "soc",
-        "audit",
-        "iso",
-        "owasp",
-        "incident",
-        "architecture",
-        "data",
+        "method",
+        "methode",
+        "outils",
+        "technical",
+        "technique",
+        "system",
+        "systeme",
+        "tooling",
     )
     leadership_markers = (
         "manager",
@@ -266,7 +468,11 @@ def _resolve_style_profile(
         "revenue",
     )
 
-    technical_score = _score_markers(corpus, technical_markers)
+    extracted_signal_density = len(_extract_signal_terms_from_text(corpus, max_items=12))
+    technical_score = _score_markers(corpus, technical_markers) + min(
+        4,
+        extracted_signal_density // 2,
+    )
     leadership_score = _score_markers(corpus, leadership_markers)
     business_score = _score_markers(corpus, business_markers)
 
@@ -427,6 +633,14 @@ def build_cover_letter_generation_payload(
         keywords_text = "None" if language_code == "en" else "Aucun"
 
     style_rules = "\n".join(f"- {rule}" for rule in style_profile["rules"])
+    quality_rules = _build_cover_letter_quality_rules(
+        language_code=language_code,
+        company=company,
+        job_title=job_title,
+        offer_text=offer_text,
+        keywords=keywords,
+        profile_block=profile_block,
+    )
     instruction_text = _trim_text(user_instruction, 800)
 
     if language_code == "en":
@@ -456,6 +670,8 @@ STYLE SOURCE: {style_source}
 
 STYLE DIRECTIONS:
 {style_rules}
+
+{quality_rules}
 {instruction_block}
 TARGET OFFER:
 - Job title: {job_title}
@@ -516,6 +732,8 @@ STYLE SOURCE: {style_source}
 
 DIRECTIVES STYLE:
 {style_rules}
+
+{quality_rules}
 {instruction_block}
 OFFRE CIBLE:
 - Poste: {job_title}

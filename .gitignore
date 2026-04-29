@@ -474,6 +474,12 @@ Prompt\ initial.txt
 # !scripts/tests/... unless the user explicitly overrides this rule.
 tests/
 tests/**
+scripts/tests/
+scripts/tests/**
+test_*.py
+*_test.py
+**/test_*.py
+**/*_test.py
 tools/
 tools/**
 

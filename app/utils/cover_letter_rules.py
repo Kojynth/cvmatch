@@ -16,6 +16,9 @@ def is_cover_letter_structure_coherent(text: str, *, language_code: str) -> bool
     closing_index = -1
     if is_en:
         subject_ok = first_line.startswith("subject:")
+        duplicate_subject = (
+            sum(1 for line in lines if line.lower().startswith("subject:")) > 1
+        )
         for idx, line in enumerate(lines[:3]):
             if "dear " in line.lower():
                 salutation_index = idx
@@ -24,6 +27,9 @@ def is_cover_letter_structure_coherent(text: str, *, language_code: str) -> bool
         closing_tokens = ("sincerely", "best regards", "kind regards")
     else:
         subject_ok = first_line.startswith("objet:")
+        duplicate_subject = (
+            sum(1 for line in lines if line.lower().startswith("objet:")) > 1
+        )
         for idx, line in enumerate(lines[:3]):
             lowered = line.lower()
             if any(
@@ -44,4 +50,10 @@ def is_cover_letter_structure_coherent(text: str, *, language_code: str) -> bool
         and closing_ok
         and any(line.strip() for line in lines[salutation_index + 1 : closing_index])
     )
-    return bool(subject_ok and salutation_ok and closing_ok and body_ok)
+    return bool(
+        subject_ok
+        and not duplicate_subject
+        and salutation_ok
+        and closing_ok
+        and body_ok
+    )
