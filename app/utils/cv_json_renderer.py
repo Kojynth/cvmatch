@@ -30,6 +30,11 @@ _FORMULAIC_RENDER_SUMMARY_PATTERNS = (
         r"^\s*candidate\s+profile\s+aligned\s+with\s+the\s+target\s+role\b",
         re.IGNORECASE,
     ),
+    re.compile(
+        r"\bwith\s+experience\s+in\s+[^.!?]{1,80}\s*:\s*[^.!?]{1,160}"
+        r"(?:[,;/]|\s+\w+\s*/\s*\w+)",
+        re.IGNORECASE,
+    ),
     re.compile(r"\baligned\s+to\s+the\s+job\s+requirements\b", re.IGNORECASE),
     re.compile(r"\bhands[-\s]?on\s+experience\s+in\s+in\b", re.IGNORECASE),
 )
@@ -558,6 +563,76 @@ def _build_target_role_line(
     return f"{prefix}: {joined}"
 
 
+def _normalize_phone_parts(value: Any) -> tuple[str, str]:
+    text = str(value or "").strip()
+    if not text:
+        return "", ""
+    raw_digits = re.sub(r"\D+", "", text)
+    if not raw_digits:
+        return "", ""
+
+    candidates: List[str] = [text]
+    stripped = text.lstrip()
+    if stripped.startswith("+"):
+        for country_len in range(1, 4):
+            if len(raw_digits) <= country_len + 1:
+                continue
+            if raw_digits[country_len : country_len + 1] != "0":
+                continue
+            candidates.append(
+                f"+{raw_digits[:country_len]}{raw_digits[country_len + 1:]}"
+            )
+    elif raw_digits.startswith("00"):
+        international_digits = raw_digits[2:]
+        if international_digits:
+            candidates.append(f"+{international_digits}")
+        for country_len in range(1, 4):
+            if len(international_digits) <= country_len + 1:
+                continue
+            if international_digits[country_len : country_len + 1] != "0":
+                continue
+            candidates.append(
+                f"+{international_digits[:country_len]}"
+                f"{international_digits[country_len + 1:]}"
+            )
+
+    try:
+        import phonenumbers
+    except Exception:
+        phonenumbers = None
+
+    if phonenumbers is not None:
+        seen_candidates = set()
+        for candidate in candidates:
+            candidate = str(candidate or "").strip()
+            if not candidate or candidate in seen_candidates:
+                continue
+            seen_candidates.add(candidate)
+            try:
+                parsed = phonenumbers.parse(candidate, None)
+            except Exception:
+                continue
+            if not (
+                phonenumbers.is_valid_number(parsed)
+                or phonenumbers.is_possible_number(parsed)
+            ):
+                continue
+            display = phonenumbers.format_number(
+                parsed, phonenumbers.PhoneNumberFormat.INTERNATIONAL
+            )
+            href = phonenumbers.format_number(
+                parsed, phonenumbers.PhoneNumberFormat.E164
+            )
+            if href:
+                return display or text, href
+
+    if stripped.startswith("+"):
+        return text, f"+{raw_digits}"
+    if raw_digits.startswith("00") and len(raw_digits) > 2:
+        return text, f"+{raw_digits[2:]}"
+    return text, raw_digits
+
+
 def _normalize_contact_href(value: Any) -> str:
     text = str(value or "").strip()
     if not text:
@@ -569,8 +644,8 @@ def _normalize_contact_href(value: Any) -> str:
     if text.lower().startswith("tel:"):
         return text
     if _PHONE_LIKE_RE.match(text):
-        digits = re.sub(r"[^\d+]+", "", text)
-        return f"tel:{digits}" if digits else ""
+        _display, href_phone = _normalize_phone_parts(text)
+        return f"tel:{href_phone}" if href_phone else ""
     if _URL_SCHEME_RE.match(text):
         parsed = urlparse(text)
         if parsed.scheme.lower() not in _SAFE_CONTACT_SCHEMES:
@@ -587,7 +662,8 @@ def _display_contact_value(value: Any) -> str:
     if href.startswith("mailto:"):
         return href[len("mailto:") :]
     if href.startswith("tel:"):
-        return text
+        display, _href_phone = _normalize_phone_parts(text)
+        return display or text
     parsed = urlparse(href)
     display = f"{parsed.netloc}{parsed.path}".strip("/")
     if parsed.query:
