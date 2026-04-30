@@ -16,8 +16,15 @@ Checklist:
 5. If offer extraction/targeting is affected, prioritize requirement-heavy
    offer sections over company marketing/benefits text, keep pure offer-only
    vocabulary in the positioning sentence unless profile evidence supports a
-   coherent implicit inference elsewhere, and prefer explicit QA/automation
-   tool names when the profile contains them.
+   coherent implicit inference elsewhere, and prefer explicit named tools when
+   the profile contains them.
+   If skill fallback/theme ordering is affected, preserve source-backed
+   quality helpers such as `QA & tests`, but rank all thematic rows by
+   target-offer score. Do not let QA/test profile evidence become a global
+   priority for non-QA offers. Use a generic role-aligned block for strongly
+   offer-aligned profile skills outside existing themes, and keep the
+   5-block exception limited to offers with at least two aligned
+   experience/project sources and a positive-scoring fifth block.
 6. If tooling wording is affected, treat named products/platforms/systems as
    higher-value than vague tool categories across any domain.
 7. Run targeted `tests/pipeline` or `tests/contracts` scopes plus compile checks.

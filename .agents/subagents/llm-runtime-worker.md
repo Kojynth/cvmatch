@@ -110,6 +110,16 @@ risk.
   hierarchy/proof and are driven by `{job_title}` plus requirement-heavy offer
   evidence in the generated CV JSON, not by a hardcoded
   company/profile/tech-only renderer taxonomy
+- thematic fallback rows such as `QA & tests`, `API & data`, `Automation`,
+  `AI & software quality`, `Data & BI`, or future profession groups are
+  quality helpers, not global priorities. Preserve them when source-backed,
+  but rank their order and survival by target-offer score. A QA profile should
+  still produce a strong QA CV for a QA offer; for non-QA offers, better
+  aligned profile/project evidence must be able to outrank QA. Use a generic
+  role-aligned block for strongly offer-aligned profile skills that do not fit
+  existing themes. Keep 4 fallback skill blocks by default; allow 5 only when
+  an offer exists, at least two experience/project sources are aligned, and
+  the fifth block has a positive offer score while preserving one-page fit.
 - do not backfill weak/noisy skill chips purely to hit the visible chip cap
 - when the profile exposes only a small already-clean skill pool that fits in
   the chip budget, keep that compact pool instead of over-pruning it

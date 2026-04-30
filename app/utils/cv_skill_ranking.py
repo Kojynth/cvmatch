@@ -93,6 +93,15 @@ def _score_skill_item(item_text: str, offer_terms: List[str]) -> float:
     return score
 
 
+def score_skill_text_for_offer(item_text: Any, offer_terms: List[Any]) -> float:
+    """Score a single skill/category label against normalized offer terms."""
+
+    normalized_offer_terms = _normalized_terms(list(offer_terms or []))
+    if not normalized_offer_terms:
+        return 0.0
+    return _score_skill_item(str(item_text or ""), normalized_offer_terms)
+
+
 def _norm_contains_marker(norm: str, marker: str) -> bool:
     marker_norm = normalize_keyword_for_match(marker)
     if not norm or not marker_norm:
@@ -135,7 +144,16 @@ def rank_skill_blocks_by_relevance(
         reordered_block = dict(block)
         reordered_block["items"] = [payload[2] for payload in ranked_items]
 
-        block_score = ranked_items[0][0] if ranked_items else 0.0
+        category_score = _score_skill_item(
+            str(block.get("category") or ""),
+            normalized_offer_terms,
+        )
+        positive_scores = [score for score, _idx, _item in ranked_items if score > 0]
+        block_score = (
+            (positive_scores[0] if positive_scores else 0.0)
+            + min(3.0, sum(positive_scores[1:3]) * 0.2)
+            + (category_score * 0.35)
+        )
         ranked_blocks.append((block_score, block_idx, reordered_block))
 
     ranked_blocks.sort(key=lambda payload: (-payload[0], payload[1]))

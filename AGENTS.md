@@ -289,6 +289,21 @@ and must stay usable on heterogeneous Windows/Linux machines.
   Do not backfill
   low-scoring/noisy skill candidates just to reach a visual chip quota: a
   shorter credible skill list is better than ten weak chips.
+- **Offer-ranked skill theme contract (MANDATORY)**: source-backed thematic
+  fallback categories such as `QA & tests`, `API & data`, `Automation`,
+  `AI & software quality`, `Data & BI`, or future profession-specific groups
+  are quality helpers, not global priorities. They may appear when the profile
+  supports them, but their visible order and survival must be driven by the
+  target offer score, not by the mere presence of a profile keyword. A QA
+  profile applying to a QA role should still surface `QA & tests` first; the
+  same profile applying to another role must let better offer-aligned blocks
+  outrank QA. When themed blocks miss profile-backed skills that are strongly
+  aligned with the offer, add a generic role-aligned block rather than forcing
+  those skills into a wrong profession taxonomy. Keep the default skill-block
+  budget at 4; allow 5 only when the target offer exists, at least two
+  experience/project sources are offer-aligned, and the fifth block has a
+  positive offer score. This exception must remain compatible with the
+  one-page fit-to-page contract.
 - **Company-description filter contract (MANDATORY)**: renderer-side guards
   that suppress employer-description prose must stay narrow. Reject true
   intros such as `Company: filiale...` or `Employer - Groupe...`, but do not
@@ -392,6 +407,10 @@ and must stay usable on heterogeneous Windows/Linux machines.
 - GUI launch: `poetry run cvmatch` or repo launchers
 - CLI: `poetry run cvmatch-cli`
 - Format: `python -m black --check app cvextractor tests`
+- Local Windows caveat: broad `python -m black ...` currently hangs in this
+  workspace. Do not run broad black formatting/checks until investigated;
+  prefer `py_compile`, `git diff --check`, and targeted pytest validation
+  unless the user explicitly asks for formatting.
 - Imports: `python -m isort --check-only .`
 - Types: `python -m mypy app cvextractor`
 - Contracts: `python -m pytest tests/contracts -q`
