@@ -76,6 +76,19 @@ Git hygiene rule for tests:
   must be driven by `{job_title}` and requirement-heavy offer evidence for any
   profession/sector, not by a hardcoded company/profile/tech-only taxonomy;
   renderer fallback code must not invent those grouped categories
+- source-backed thematic fallback rows such as `QA & tests`, `API & data`,
+  `Automation`, `AI & software quality`, `Data & BI`, or future profession
+  groups are allowed because they improve CV quality for matching profiles,
+  but they must be ranked by target-offer score. The presence of QA/test in
+  the profile is not enough to make `QA & tests` the first or dominant block
+  for non-QA offers.
+- if the existing themes do not cover strongly offer-aligned profile skills,
+  add or preserve a generic role-aligned block instead of forcing those skills
+  into an unrelated profession taxonomy
+- keep the fallback skill-block budget at 4 by default; allow 5 only when an
+  offer exists, at least two experience/project sources are aligned with it,
+  and the fifth block has a positive offer score. The exception must still
+  respect the one-page fit-to-page contract.
 - featured skill chips come from the profile `skills` pool first; use
   experience/project evidence to reprioritize or compactly rewrite labels, but
   do not mint extra chips directly from narrative bullets

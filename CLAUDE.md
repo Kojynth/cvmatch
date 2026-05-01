@@ -70,6 +70,17 @@
     just to hit a display quota; fewer credible chips are better than filler,
     except when the profile only exposes a small compact skill pool that
     already fits within budget
+  - offer-ranked skill theme contract: thematic fallback categories such as
+    `QA & tests`, `API & data`, `Automation`, `AI & software quality`,
+    `Data & BI`, and future profession-specific groups are quality helpers,
+    not global priorities. Keep them source-backed, but rank their order and
+    visibility by target-offer score. A QA offer can put `QA & tests` first;
+    a non-QA offer must let better aligned profile/project evidence outrank it.
+    When a profile has offer-aligned skills outside the existing themes, use a
+    generic role-aligned block rather than forcing them into the wrong taxonomy.
+    Default skill-block budget is 4; allow 5 only when an offer exists, at
+    least two experience/project sources are aligned, and the fifth block has
+    a positive offer score while preserving one-page fit.
   - comparative-skill wording contract: if source evidence names concrete
     tools for a benchmark/exploration skill, prefer a compact label such as
     `Benchmark Playwright / Cypress / Selenium`

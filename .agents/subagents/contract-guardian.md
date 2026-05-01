@@ -104,6 +104,17 @@ history, and `mass_apply`.
   tools must be deduplicated across flat chips and comparative labels, and
   role-critical skills should remain visible in experience/project proof when
   the source profile contains that evidence
+- when skill theme recovery/fallback is touched, verify thematic categories
+  such as `QA & tests`, `API & data`, `Automation`, `AI & software quality`,
+  `Data & BI`, or future profession groups are source-backed quality helpers
+  but not global priorities. They must be ordered and kept by target-offer
+  score, so QA profiles still generate excellent QA CVs for QA offers while
+  non-QA offers can move better aligned role/project evidence ahead of QA.
+  Verify a generic role-aligned block can preserve strongly offer-aligned
+  profile skills that do not fit existing themes, and verify the skill-block
+  budget stays 4 by default with a 5-block exception only when an offer exists,
+  at least two experience/project sources are aligned, and the fifth block has
+  a positive offer score without breaking one-page fit.
 - when offer-only targeting is touched, verify pure offer-only terms stay in
   the natural positioning sentence unless profile evidence supports a
   coherent implicit inference elsewhere

@@ -62,6 +62,16 @@ Checklist:
    individual chips and inside comparative labels, and verify role-critical
    tools shown in skills are also visible in experience/project evidence when
    the source profile contains such proof.
+   If skill theme recovery/fallback is touched, verify source-backed thematic
+   rows such as `QA & tests`, `API & data`, `Automation`, `AI & software
+   quality`, `Data & BI`, or future profession groups are quality helpers
+   ranked by target-offer score, not fixed global priorities. QA offers may
+   put `QA & tests` first; non-QA offers must allow better aligned
+   profile/project evidence to outrank QA. Verify a generic role-aligned block
+   preserves strongly offer-aligned profile skills outside existing themes.
+   Keep 4 skill blocks by default; allow 5 only when an offer exists, at least
+   two experience/project sources are aligned, and the fifth block has a
+   positive offer score while preserving one-page fit.
 9. If experience dedup is touched, verify duplicate retries/date-format
    variants collapse while same company/title with conflicting periods stay
    distinct.

@@ -14,7 +14,7 @@ from .cv_skill_evidence import (
     should_keep_skill_term,
     skills_section_has_supported_signal,
 )
-from .cv_skill_ranking import rank_skill_blocks_by_relevance
+from .cv_skill_ranking import rank_skill_blocks_by_relevance, score_skill_text_for_offer
 from .keyword_alignment import normalize_keyword_for_match, normalized_term_in_probe
 
 try:
@@ -250,6 +250,88 @@ def _probe_has_any(probe: str, aliases: Iterable[str]) -> bool:
     return False
 
 
+def _source_entry_probe(entry: Any) -> str:
+    parts: List[str] = []
+
+    def add(value: Any) -> None:
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                parts.append(text)
+            return
+        if isinstance(value, list):
+            for item in value:
+                add(item)
+            return
+        if isinstance(value, dict):
+            for nested in value.values():
+                add(nested)
+
+    add(entry)
+    return normalize_keyword_for_match(" ".join(parts))
+
+
+def _offer_aligned_source_count(
+    profile_json: Dict[str, Any],
+    offer_terms: Sequence[Any],
+) -> int:
+    if not isinstance(profile_json, dict) or not offer_terms:
+        return 0
+    offer_terms_list = list(offer_terms or [])
+    count = 0
+    seen_entries: set[str] = set()
+    for key in ("experiences", "experience", "projects"):
+        entries = profile_json.get(key) or []
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            probe = _source_entry_probe(entry)
+            if not probe or probe in seen_entries:
+                continue
+            seen_entries.add(probe)
+            if score_skill_text_for_offer(probe, offer_terms_list) >= 5.0:
+                count += 1
+    return count
+
+
+def _skill_block_offer_score(block: Dict[str, Any], offer_terms: Sequence[Any]) -> float:
+    if not isinstance(block, dict) or not offer_terms:
+        return 0.0
+    offer_terms_list = list(offer_terms or [])
+    scores = [
+        score_skill_text_for_offer(item, offer_terms_list)
+        for item in (block.get("items") or [])
+        if isinstance(item, str) and item.strip()
+    ]
+    scores = sorted((score for score in scores if score > 0), reverse=True)
+    category_score = score_skill_text_for_offer(
+        block.get("category") or "",
+        offer_terms_list,
+    )
+    return (
+        (scores[0] if scores else 0.0)
+        + min(3.0, sum(scores[1:3]) * 0.2)
+        + (category_score * 0.35)
+    )
+
+
+def _resolve_skill_block_limit(
+    profile_json: Dict[str, Any],
+    ordered_blocks: Sequence[Dict[str, Any]],
+    offer_terms: Sequence[Any],
+) -> int:
+    if len(ordered_blocks or []) <= 4 or not offer_terms:
+        return 4
+    if _offer_aligned_source_count(profile_json, offer_terms) < 2:
+        return 4
+    fifth_block = ordered_blocks[4]
+    if _skill_block_offer_score(fifth_block, offer_terms) <= 0:
+        return 4
+    return 5
+
+
 def _localized_skill_label(labels: Tuple[str, str], language_code: str) -> str:
     return labels[1] if str(language_code or "").startswith("en") else labels[0]
 
@@ -390,7 +472,10 @@ def _build_themed_skill_blocks(
         {"skills": (profile_json or {}).get("skills") or []},
         (),
     )
-    offer_probe = normalize_keyword_for_match(" ".join(str(term) for term in offer_terms or []))
+    offer_terms_list = list(offer_terms or [])
+    offer_probe = normalize_keyword_for_match(
+        " ".join(str(term) for term in offer_terms_list)
+    )
     combined_probe = " ".join(part for part in (profile_probe, offer_probe) if part)
     if not combined_probe:
         return []
@@ -579,10 +664,47 @@ def _build_themed_skill_blocks(
             }
         )
 
+    if offer_terms_list:
+        remainder_items: List[str] = []
+        scored_remainders: List[Tuple[float, int, str]] = []
+        for idx, raw_item in enumerate(technical_items or []):
+            item = _clean_skill_candidate(raw_item, profile_json)
+            if not item:
+                continue
+            item_key = normalize_keyword_for_match(item)
+            if not item_key or item_key in globally_seen:
+                continue
+            score = score_skill_text_for_offer(item, offer_terms_list)
+            if score <= 0:
+                continue
+            scored_remainders.append((score, idx, item))
+
+        scored_remainders.sort(key=lambda payload: (-payload[0], payload[1]))
+        for _score, _idx, item in scored_remainders:
+            item_key = normalize_keyword_for_match(item)
+            if not item_key or item_key in globally_seen:
+                continue
+            globally_seen.add(item_key)
+            remainder_items.append(item)
+            if len(remainder_items) >= max(1, int(max_items_per_block or 1)):
+                break
+
+        if len(remainder_items) >= 2:
+            blocks.append(
+                {
+                    "category": (
+                        "Role-aligned skills"
+                        if str(language_code or "").startswith("en")
+                        else "Competences ciblees"
+                    ),
+                    "items": remainder_items,
+                }
+            )
+
     if not blocks:
         return []
 
-    return blocks[:4]
+    return blocks
 
 
 def build_skill_blocks_from_profile(
@@ -650,7 +772,6 @@ def build_skill_blocks_from_profile(
     soft_items = _dedup_preserve(soft_candidates)
 
     blocks: List[Dict[str, Any]] = []
-    preserve_block_order = False
     themed_blocks = _build_themed_skill_blocks(
         profile,
         technical_items,
@@ -660,7 +781,6 @@ def build_skill_blocks_from_profile(
     )
     if themed_blocks:
         blocks.extend(themed_blocks)
-        preserve_block_order = True
     elif technical_items:
         blocks.append(
             {
@@ -693,10 +813,11 @@ def build_skill_blocks_from_profile(
             )
         )
 
-    ranked = [] if preserve_block_order else rank_skill_blocks_by_relevance(
-        blocks, list(offer_terms or [])
-    )
-    selected_blocks = ranked if ranked else blocks
+    offer_terms_list = list(offer_terms or [])
+    ranked = rank_skill_blocks_by_relevance(blocks, offer_terms_list)
+    ordered_blocks = ranked if ranked else blocks
+    block_limit = _resolve_skill_block_limit(profile, ordered_blocks, offer_terms_list)
+    selected_blocks = ordered_blocks[:block_limit]
 
     technical_limit = max(1, int(max_items_per_block))
     soft_limit = max(0, min(6, int(max_items_per_block)))
