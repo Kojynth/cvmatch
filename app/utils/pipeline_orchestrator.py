@@ -1372,32 +1372,58 @@ class CoverLetterPhase:
         reason: str,
     ) -> str:
         state.emit_progress(
-            "[LETTER] Validation failed; using deterministic fallback letter..."
+            "[LETTER] Validation failed; trying deterministic fallback letter..."
         )
         fallback, language_ok, structure_ok = self._build_deterministic_fallback_letter(
             state,
             reason=reason,
         )
-        state.cover_letter = fallback
+        fallback_valid = bool(fallback and language_ok and structure_ok)
         state.add_degraded_reason(reason)
         if reason not in phase_warnings:
             phase_warnings.append(reason)
+        if fallback_valid:
+            state.cover_letter = fallback
+            state.cover_letter_review = {
+                "relevance_score": 58,
+                "structure_ok": True,
+                "language": state.language_code,
+                "language_ok": True,
+                "fallback_reason": reason,
+                "validation_warning": reason,
+            }
+            logger.warning(
+                "Cover-letter invalid output replaced by deterministic fallback: reason=%s language_ok=%s structure_ok=%s length=%s",
+                reason,
+                language_ok,
+                structure_ok,
+                len(state.cover_letter or ""),
+            )
+            return "cover_letter_deterministic_fallback"
+
+        reject_reason = f"{reason}_invalid_deterministic_fallback_rejected"
+        state.add_degraded_reason(reject_reason)
+        if reject_reason not in phase_warnings:
+            phase_warnings.append(reject_reason)
+        state.cover_letter = ""
         state.cover_letter_review = {
-            "relevance_score": 58 if language_ok and structure_ok else 0,
-            "structure_ok": structure_ok,
+            "relevance_score": 0,
+            "structure_ok": False,
             "language": state.language_code,
             "language_ok": language_ok,
-            "fallback_reason": reason,
-            "validation_warning": reason,
+            "fallback_rejected": True,
+            "fallback_reason": reject_reason,
+            "validation_warning": reject_reason,
+            "unavailable_reason": "deterministic_fallback_failed_validation",
         }
         logger.warning(
-            "Cover-letter invalid output replaced by deterministic fallback: reason=%s language_ok=%s structure_ok=%s length=%s",
+            "Cover-letter deterministic fallback rejected after validation: reason=%s language_ok=%s structure_ok=%s fallback_length=%s",
             reason,
             language_ok,
             structure_ok,
-            len(state.cover_letter or ""),
+            len(fallback or ""),
         )
-        return "cover_letter_deterministic_fallback"
+        return "cover_letter_skipped_after_invalid_deterministic_fallback"
 
     @staticmethod
     def _format_cover_letter_retry_feedback(
