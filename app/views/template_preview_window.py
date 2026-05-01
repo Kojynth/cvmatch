@@ -2201,9 +2201,65 @@ class TemplatePreviewWindow(QMainWindow):
 
         return subject, "\n".join(body_lines).strip()
 
+    @staticmethod
+    def _resolve_letter_language_code(cv_data: Dict[str, Any], cover_letter: str) -> str:
+        for key in ("language", "cv_language", "target_language", "language_code"):
+            raw = str((cv_data or {}).get(key) or "").strip()
+            if raw:
+                try:
+                    from ..utils.language_policy import normalize_language_code
+
+                    return normalize_language_code(raw)
+                except Exception:
+                    return "en" if raw.lower().startswith("en") else "fr"
+        first_lines = "\n".join(str(cover_letter or "").splitlines()[:3]).lower()
+        if "subject:" in first_lines or "dear " in first_lines:
+            return "en"
+        return "fr"
+
+    @staticmethod
+    def _format_letter_phone(phone: str) -> str:
+        raw = str(phone or "").strip()
+        if not raw:
+            return ""
+        cleaned = re.sub(r"[\s\-().]+", "", raw)
+        if cleaned.startswith("+330") and len(cleaned) == 13:
+            number = cleaned[4:]
+            return f"+33 {number[0]} {number[1:3]} {number[3:5]} {number[5:7]} {number[7:9]}"
+        if cleaned.startswith("+33") and len(cleaned) == 12:
+            number = cleaned[3:]
+            return f"+33 {number[0]} {number[1:3]} {number[3:5]} {number[5:7]} {number[7:9]}"
+        return raw
+
+    @staticmethod
+    def _format_letter_date(language_code: str) -> str:
+        now = datetime.now()
+        if str(language_code or "").lower().startswith("en"):
+            months = (
+                "January",
+                "February",
+                "March",
+                "April",
+                "May",
+                "June",
+                "July",
+                "August",
+                "September",
+                "October",
+                "November",
+                "December",
+            )
+            return f"{months[now.month - 1]} {now.day}, {now.year}"
+        return now.strftime("%d/%m/%Y")
+
     def generate_letter_html(self) -> str:
         """Genere le HTML de la lettre de motivation."""
         cover_letter = self.cv_data.get("cover_letter") or ""
+        language_code = TemplatePreviewWindow._resolve_letter_language_code(
+            self.cv_data,
+            cover_letter,
+        )
+        is_en = language_code == "en"
 
         def _safe(value: str) -> str:
             return html_lib.escape(str(value)) if value else ""
@@ -2211,30 +2267,35 @@ class TemplatePreviewWindow(QMainWindow):
         name_raw = str(self.cv_data.get("name") or "Candidat")
         name = _safe(name_raw)
         email = _safe(self.cv_data.get("email") or "")
-        phone = _safe(self.cv_data.get("phone") or "")
+        phone = _safe(
+            TemplatePreviewWindow._format_letter_phone(
+                self.cv_data.get("phone") or ""
+            )
+        )
         location = _safe(self.cv_data.get("location") or "")
         job_title_raw = self.cv_data.get("job_title") or ""
         company_raw = self.cv_data.get("company") or ""
         job_title = _safe(job_title_raw)
         company = _safe(company_raw)
-        date_label = datetime.now().strftime("%d/%m/%Y")
+        date_label = TemplatePreviewWindow._format_letter_date(language_code)
 
-        subject = "Candidature"
+        subject = "Application" if is_en else "Candidature"
         if job_title_raw and company_raw:
-            subject = f"Candidature - {job_title_raw} ({company_raw})"
+            subject_prefix = "Application" if is_en else "Candidature"
+            subject = f"{subject_prefix} - {job_title_raw} ({company_raw})"
         elif job_title_raw:
-            subject = f"Candidature - {job_title_raw}"
+            subject = f"{subject} - {job_title_raw}"
         elif company_raw:
-            subject = f"Candidature - {company_raw}"
+            subject = f"{subject} - {company_raw}"
 
         contact_parts = [part for part in (email, phone, location) if part]
         contact_html = " | ".join(contact_parts)
 
         recipient_lines = []
         if company_raw:
-            recipient_lines.append(f"Entreprise: {company_raw}")
+            recipient_lines.append(company_raw if is_en else f"Entreprise: {company_raw}")
         if job_title_raw:
-            recipient_lines.append(f"Poste: {job_title_raw}")
+            recipient_lines.append(job_title_raw if is_en else f"Poste: {job_title_raw}")
         recipient_lines.append(date_label)
         recipient_html = "".join(
             f"<div class=\"recipient-line\">{html_lib.escape(line)}</div>"
@@ -2251,7 +2312,7 @@ class TemplatePreviewWindow(QMainWindow):
 
         return f"""
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="{html_lib.escape(language_code)}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -2269,7 +2330,7 @@ class TemplatePreviewWindow(QMainWindow):
             </div>
         </header>
         <div class="letter-body">
-            <div class="letter-subject"><strong>Objet:</strong> {html_lib.escape(subject)}</div>
+            <div class="letter-subject"><strong>{"Subject" if is_en else "Objet"}:</strong> {html_lib.escape(subject)}</div>
             <div class="letter-content">
                 {body_html}
             </div>
