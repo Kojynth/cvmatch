@@ -471,9 +471,12 @@ Rules:
 - keywords_to_add: only terms relevant to offer and candidate profile.
 - Flag generic filler when it replaces concrete offer/profile evidence.
 - Prefer role-specific proof: tools, methods, systems, validation practices, projects, and outcomes grounded in the candidate data.
+- If a candidate project is relevant, require the letter to explain what the project technically does instead of listing tools after the project name.
+- If candidate data includes coding agents and the offer asks for them, flag their absence unless a stronger source-backed proof already covers the requirement.
+- If the offer involves rubric, annotation, evaluation, or review and the profile includes QA/review evidence, flag the absence of an explicit rubric/review connection.
 - Certifications and soft skills should not outrank stronger technical or domain proof.
 - relevance_score in [0..100].
-- language must be "fr" or "en".
+- language must match TARGET_LANGUAGE.
 """.strip()
 
     return {"system": system_prompt, "user": user_prompt}
@@ -509,8 +512,25 @@ def build_cover_letter_rewrite_prompt(
         max_review_chars,
     )
     normalized_reason = str(rewrite_reason or "").strip().lower()
-    language_name = (
-        "French" if str(language_code or "").strip().lower() == "fr" else "English"
+    language_names = {
+        "en": "English",
+        "fr": "French",
+        "de": "German",
+        "es": "Spanish",
+        "it": "Italian",
+        "pt": "Portuguese",
+        "nl": "Dutch",
+        "ja": "Japanese",
+        "zh": "Chinese",
+        "ko": "Korean",
+        "ar": "Arabic",
+        "ru": "Russian",
+        "el": "Greek",
+    }
+    language_key = str(language_code or "").strip().lower()
+    language_name = language_names.get(
+        language_key,
+        language_key.upper() or "the target language",
     )
     if normalized_reason == "language_mismatch":
         return f"""
@@ -548,6 +568,10 @@ TASK:
 - Improve relevance to the offer by integrating review keywords/instructions.
 - Ensure at least 4 offer keywords appear in body paragraphs (exact term preferred, professional synonym/acronym allowed).
 - Replace generic filler with concrete source-backed proof from the profile and offer.
+- If a relevant candidate project appears, explain what it technically does and what quality/reliability practice it proves; do not write only "I developed X with Y".
+- If candidate data mentions coding agents and the offer makes them relevant, include controlled use of those agents with human review, tests, and factual validation.
+- If the offer involves rubric, annotation, evaluation, or review and the profile has QA/review evidence, explicitly connect that evidence to rubric-based review.
+- Do not use weak filler such as "documented background", "practical approach to execution", "highly in that concrete context", "I would approach those expectations", or "my profile is aligned".
 - Keep the target company spelling exactly as provided in the prompt.
 - Mention secondary certifications only after stronger role-specific technical/domain evidence.
 - Use EXACTLY one language: {language_code}.
@@ -588,6 +612,10 @@ TASK:
 - Use offer keywords and lexical field when facts allow it.
 - Include at least 4 offer keywords in the body (exact terms preferred, professional synonym/acronym allowed).
 - Replace generic filler with concrete source-backed proof from the profile and offer.
+- If a relevant candidate project appears, explain what it technically does and what quality/reliability practice it proves; do not write only "I developed X with Y".
+- If candidate data mentions coding agents and the offer makes them relevant, include controlled use of those agents with human review, tests, and factual validation.
+- If the offer involves rubric, annotation, evaluation, or review and the profile has QA/review evidence, explicitly connect that evidence to rubric-based review.
+- Do not use weak filler such as "documented background", "practical approach to execution", "highly in that concrete context", "I would approach those expectations", or "my profile is aligned".
 - Keep the target company spelling exactly as provided in the prompt.
 - Mention secondary certifications only after stronger role-specific technical/domain evidence.
 - Keep ONLY candidate facts from the provided profile context.
