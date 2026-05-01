@@ -15,6 +15,7 @@ This module has zero LLM dependencies and provides reliable fallback output.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 try:
@@ -30,6 +31,81 @@ from .keyword_alignment import (
     normalize_keyword_for_match,
 )
 from .cv_fallback_generator import collect_candidate_keywords, _dedup_preserve
+from .language_policy import language_token_scores, normalize_language_code
+from ..domain.generation.tool_signals import collect_named_tool_hints
+
+
+_TERM_BLOCKLIST = {
+    "summary",
+    "profile",
+    "candidate",
+    "skill",
+    "skills",
+    "competence",
+    "competences",
+    "experience",
+    "experiences",
+    "project",
+    "projects",
+    "certification",
+    "certifications",
+    "education",
+    "language",
+    "languages",
+    "responsibility",
+    "responsibilities",
+    "keyword",
+    "keywords",
+    "tool",
+    "tools",
+    "technology",
+    "technologies",
+}
+
+_TERM_CANONICAL_CASE = {
+    "api": "API",
+    "rest": "REST",
+    "rest api": "REST API",
+    "json": "JSON",
+    "sql": "SQL",
+    "llm": "LLM",
+    "ai": "AI",
+    "ml": "ML",
+    "qa": "QA",
+    "ui": "UI",
+    "ux": "UX",
+    "ci": "CI",
+    "cd": "CD",
+    "ci cd": "CI/CD",
+    "python": "Python",
+    "javascript": "JavaScript",
+    "typescript": "TypeScript",
+    "github": "GitHub",
+    "gitlab": "GitLab",
+    "postgresql": "PostgreSQL",
+    "mongodb": "MongoDB",
+    "pytest": "pytest",
+}
+
+
+def _clean_sentence_term(term: Any) -> str:
+    text = re.sub(r"\s+", " ", str(term or "").strip(" \t\r\n,;:"))
+    if not text or "..." in text or "…" in text:
+        return ""
+    if len(text) > 64:
+        return ""
+    norm = normalize_keyword_for_match(text)
+    if not norm or norm in _TERM_BLOCKLIST:
+        return ""
+    tokens = norm.split()
+    if len(tokens) == 1 and len(tokens[0]) < 3:
+        return ""
+    return _TERM_CANONICAL_CASE.get(norm, text)
+
+
+def _clean_sentence_terms(terms: List[str], *, max_items: int = 5) -> List[str]:
+    cleaned = [_clean_sentence_term(term) for term in terms or []]
+    return _dedup_preserve([term for term in cleaned if term])[:max_items]
 
 
 def _coerce_list(value: Any) -> List[Any]:
@@ -71,10 +147,46 @@ def _collect_entry_terms(entry: Any, *, max_items: int = 6) -> List[str]:
     if isinstance(entry, dict):
         for key in ("technologies", "tools", "skills", "items", "skills_list"):
             add(entry.get(key))
+        if len(terms) < max_items:
+            add(collect_named_tool_hints(entry, max_items=max_items))
     return _dedup_preserve(terms)[:max_items]
 
 
-def _entry_details(entry: Any, *, max_items: int = 3, max_chars: int = 180) -> List[str]:
+def _text_matches_language(text: str, language_code: str) -> bool:
+    target = normalize_language_code(language_code)
+    if target not in {"en", "fr"}:
+        return True
+    fr_score, en_score, token_count = language_token_scores(text)
+    if token_count < 5:
+        return True
+    if target == "en":
+        return not (fr_score >= 2 and fr_score > en_score)
+    if target == "fr":
+        return not (en_score >= 2 and en_score > fr_score)
+    return True
+
+
+def _without_clipped_tail(text: str, max_chars: int) -> str:
+    value = str(text or "").strip()
+    if not value or "..." in value or "…" in value:
+        return ""
+    if len(value) <= max_chars:
+        return value
+    sentences = re.split(r"(?<=[.!?])\s+", value)
+    for sentence in sentences:
+        candidate = sentence.strip()
+        if 24 <= len(candidate) <= max_chars:
+            return candidate
+    return ""
+
+
+def _entry_details(
+    entry: Any,
+    *,
+    max_items: int = 3,
+    max_chars: int = 180,
+    language_code: str = "",
+) -> List[str]:
     values: List[str] = []
     seen: set[str] = set()
     if not isinstance(entry, dict):
@@ -85,8 +197,11 @@ def _entry_details(entry: Any, *, max_items: int = 3, max_chars: int = 180) -> L
             text = str(item or "").strip()
             if not text:
                 continue
-            if len(text) > max_chars:
-                text = text[: max_chars - 3].rstrip() + "..."
+            text = _without_clipped_tail(text, max_chars)
+            if not text:
+                continue
+            if language_code and not _text_matches_language(text, language_code):
+                continue
             norm = normalize_keyword_for_match(text)
             if norm in seen:
                 continue
@@ -112,7 +227,7 @@ def _english_role_label(title: str) -> str:
         ("Ingenieur QA en alternance", "QA Engineer Apprentice"),
         ("Ing?nieur QA en alternance", "QA Engineer Apprentice"),
         ("Stage Business Developer", "Business Development Intern"),
-        ("Stage Sales Support Manager", "Sales Support Manager Intern"),
+        ("Stage Sales Support Manager", "Sales Support Intern"),
     )
     for src, dst in replacements:
         if src.lower() in label.lower():
@@ -272,8 +387,56 @@ def _select_featured_project(projects: List[Dict[str, Any]]) -> Optional[Dict[st
 
 
 def _join_terms(terms: List[str], *, max_items: int = 5) -> str:
-    values = _dedup_preserve([str(term).strip() for term in terms if str(term).strip()])
+    values = _clean_sentence_terms(terms, max_items=max_items)
     return ", ".join(values[:max_items])
+
+
+def _join_natural(items: List[str], *, conjunction: str) -> str:
+    values = [str(item or "").strip() for item in items or [] if str(item or "").strip()]
+    if not values:
+        return ""
+    if len(values) == 1:
+        return values[0]
+    if len(values) == 2:
+        return f"{values[0]} {conjunction} {values[1]}"
+    if conjunction == "and":
+        return f"{', '.join(values[:-1])}, and {values[-1]}"
+    return f"{', '.join(values[:-1])}, {conjunction} {values[-1]}"
+
+
+def _join_terms_natural(
+    terms: List[str],
+    *,
+    max_items: int = 5,
+    conjunction: str,
+) -> str:
+    return _join_natural(
+        _clean_sentence_terms(terms, max_items=max_items),
+        conjunction=conjunction,
+    )
+
+
+def _company_motivation_sentence(
+    *,
+    company_label: str,
+    offer_focus: str,
+    is_en: bool,
+) -> str:
+    if is_en:
+        if offer_focus:
+            return (
+                f"What interests me about {company_label} is the role's focus on {offer_focus}: it matches the kind of concrete work where I can combine practical delivery, careful checks, and clear documentation."
+            )
+        return (
+            f"What interests me about {company_label} is the opportunity to contribute in a concrete team context where careful execution and useful documentation matter."
+        )
+    if offer_focus:
+        return (
+            f"Ce qui m'interesse chez {company_label}, c'est le focus du poste sur {offer_focus} : il correspond a un cadre concret ou je peux combiner execution pratique, verification attentive et documentation claire."
+        )
+    return (
+        f"Ce qui m'interesse chez {company_label}, c'est la possibilite de contribuer a une equipe concrete ou l'execution rigoureuse et la documentation utile comptent reellement."
+    )
 
 
 def generate_fallback_cover_letter(
@@ -302,6 +465,8 @@ def generate_fallback_cover_letter(
         Cover letter string
     """
     is_en = language_code == "en"
+    conjunction = "and" if is_en else "et"
+    conjunction = "and" if is_en else "et"
 
     # Extract offer metadata
     job_title = ""
@@ -336,8 +501,11 @@ def generate_fallback_cover_letter(
                 matched_terms.append(term)
         matched_terms = _dedup_preserve(matched_terms)
 
-    matched_preview = ", ".join(matched_terms[:4]) if matched_terms else ""
-    candidate_preview = _join_terms(candidate_terms, max_items=6)
+    matched_preview = _join_terms_natural(
+        matched_terms,
+        max_items=4,
+        conjunction=conjunction,
+    )
 
     # Rank experiences for mention
     exp_preview = ""
@@ -351,7 +519,7 @@ def generate_fallback_cover_letter(
             job_title,
             language_code=language_code,
         )
-        exp_preview = ", ".join(exp_labels)
+        exp_preview = _join_natural(exp_labels, conjunction=conjunction)
         primary_experience = _select_primary_experience(
             experiences,
             offer_keywords,
@@ -359,26 +527,39 @@ def generate_fallback_cover_letter(
             language_code=language_code,
         )
         if primary_experience:
-            details = _entry_details(primary_experience, max_items=3, max_chars=170)
+            details = _entry_details(
+                primary_experience,
+                max_items=3,
+                max_chars=170,
+                language_code=language_code,
+            )
             experience_detail = "; ".join(details[:3])
 
     projects = getattr(profile_data, "extracted_projects", None) or []
     featured_project = _select_featured_project(projects)
     project_name = _first_text(featured_project, "name", "title") if featured_project else ""
     project_terms = _collect_entry_terms(featured_project, max_items=5) if featured_project else []
-    project_detail = (
-        "; ".join(_entry_details(featured_project, max_items=2, max_chars=170))
-        if featured_project
-        else ""
+    project_terms_text = _join_terms_natural(
+        project_terms,
+        max_items=5,
+        conjunction=conjunction,
     )
-    project_terms_text = _join_terms(project_terms, max_items=5)
-    offer_focus = _join_terms(offer_keywords, max_items=4)
+    offer_focus = _join_terms_natural(
+        offer_keywords,
+        max_items=4,
+        conjunction=conjunction,
+    )
+    motivation_sentence = _company_motivation_sentence(
+        company_label=company_label,
+        offer_focus=offer_focus,
+        is_en=is_en,
+    )
 
     # Build the letter
     if is_en:
-        profile_signal = matched_preview or candidate_preview
+        profile_signal = matched_preview
         opening_signal = (
-            f"The role connects with documented strengths such as {profile_signal}."
+            f"My profile includes relevant evidence in {profile_signal}."
             if profile_signal
             else "The role connects with my documented background and project work."
         )
@@ -401,39 +582,33 @@ def generate_fallback_cover_letter(
             )
         elif include_experience_paragraph and exp_preview:
             experience_sentence = (
-                f"My experience includes {exp_preview}, where I developed a practical approach to execution, validation, and communication against stated requirements.\n\n"
+                f"My background includes {exp_preview}. These experiences helped me build a practical approach to execution, validation, and communication against stated requirements.\n\n"
             )
         else:
             experience_sentence = ""
 
-        if project_name and project_terms_text and project_detail:
+        if project_name and project_terms_text:
             project_sentence = (
-                f"I also developed {project_name}, using {project_terms_text}. "
-                f"The project involves {project_detail}, which strengthened my ability to turn requirements into a working solution and check outputs before delivery.\n\n"
-            )
-        elif project_name and project_terms_text:
-            project_sentence = (
-                f"I also developed {project_name}, using {project_terms_text}, strengthening my ability to build practical solutions and validate outputs before delivery.\n\n"
+                f"I also developed {project_name} with {project_terms_text}. This strengthened my ability to build practical solutions and validate outputs before delivery.\n\n"
             )
         elif project_name:
             project_sentence = (
-                f"I also developed {project_name}, a profile-sourced project that strengthened my practical approach to implementation and validation.\n\n"
+                f"I also developed {project_name}, which strengthened my practical approach to implementation and validation.\n\n"
             )
         else:
             project_sentence = ""
 
         if offer_focus and profile_signal:
             contribution_sentence = (
-                f"I would be interested in contributing to the role's priorities around {offer_focus}. "
-                f"I would bring documented strengths such as {profile_signal}, with a focus on clear execution, factual accuracy, and useful documentation."
+                f"I would bring relevant evidence in {profile_signal}, with a focus on clear execution, factual accuracy, and useful documentation."
             )
         elif offer_focus:
             contribution_sentence = (
-                f"I would be interested in contributing to the role's priorities around {offer_focus} with a focus on clear execution, factual accuracy, and useful documentation."
+                "I would approach those expectations with clear execution, factual accuracy, and useful documentation."
             )
         elif profile_signal:
             contribution_sentence = (
-                f"I would bring documented strengths such as {profile_signal}, with a focus on clear execution, factual accuracy, and useful documentation."
+                f"I would bring relevant evidence in {profile_signal}, with a focus on clear execution, factual accuracy, and useful documentation."
             )
         else:
             contribution_sentence = (
@@ -453,15 +628,16 @@ def generate_fallback_cover_letter(
             f"{opening_signal}\n\n"
             f"{experience_sentence}"
             f"{project_sentence}"
+            f"{motivation_sentence}\n\n"
             f"{contribution_sentence} I would welcome the opportunity to discuss how my background can support {company_label}.\n\n"
             "Sincerely,\n\n"
             f"{closing_name}"
         ).strip()
 
     # French version
-    profile_signal = matched_preview or candidate_preview
+    profile_signal = matched_preview
     keywords_sentence = (
-        f"Le poste fait echo a des points forts documentes comme {profile_signal}."
+        f"Mon profil presente des elements pertinents autour de {profile_signal}."
         if profile_signal
         else "Le poste fait echo a mon parcours documente et a mes projets."
     )
@@ -482,39 +658,33 @@ def generate_fallback_cover_letter(
         )
     elif include_experience_paragraph and exp_preview:
         experience_sentence = (
-            f"Mon experience inclut {exp_preview}, avec une approche pratique de l'execution, de la validation et de la communication face aux exigences formulees.\n\n"
+            f"Mon parcours inclut {exp_preview}. Ces experiences m'ont aide a construire une approche pratique de l'execution, de la validation et de la communication face aux exigences formulees.\n\n"
         )
     else:
         experience_sentence = ""
 
-    if project_name and project_terms_text and project_detail:
+    if project_name and project_terms_text:
         project_sentence = (
-            f"J'ai aussi developpe {project_name}, avec {project_terms_text}. "
-            f"Le projet couvre {project_detail}, ce qui a renforce ma capacite a transformer des exigences en solution concrete et a verifier les livrables avant diffusion.\n\n"
-        )
-    elif project_name and project_terms_text:
-        project_sentence = (
-            f"J'ai aussi developpe {project_name}, avec {project_terms_text}, ce qui a renforce ma capacite a construire des solutions concretes et a verifier les livrables avant diffusion.\n\n"
+            f"J'ai aussi developpe {project_name} avec {project_terms_text}. Ce projet a renforce ma capacite a construire des solutions concretes et a verifier les livrables avant diffusion.\n\n"
         )
     elif project_name:
         project_sentence = (
-            f"J'ai aussi developpe {project_name}, un projet source dans mon profil qui renforce mon approche pratique de l'implementation et de la validation.\n\n"
+            f"J'ai aussi developpe {project_name}, ce qui a renforce mon approche pratique de l'implementation et de la validation.\n\n"
         )
     else:
         project_sentence = ""
 
     if offer_focus and profile_signal:
         contribution_sentence = (
-            f"Je souhaite contribuer aux priorites du poste autour de {offer_focus}. "
-            f"J'apporte des points forts documentes comme {profile_signal}, avec une attention particuliere a l'execution claire, a l'exactitude factuelle et a une documentation utile."
+            f"J'apporte des elements pertinents autour de {profile_signal}, avec une attention particuliere a l'execution claire, a l'exactitude factuelle et a une documentation utile."
         )
     elif offer_focus:
         contribution_sentence = (
-            f"Je souhaite contribuer aux priorites du poste autour de {offer_focus}, avec une attention particuliere a l'execution claire, a l'exactitude factuelle et a une documentation utile."
+            "Je l'aborderais avec une attention particuliere a l'execution claire, a l'exactitude factuelle et a une documentation utile."
         )
     elif profile_signal:
         contribution_sentence = (
-            f"J'apporte des points forts documentes comme {profile_signal}, avec une attention particuliere a l'execution claire, a l'exactitude factuelle et a une documentation utile."
+            f"J'apporte des elements pertinents autour de {profile_signal}, avec une attention particuliere a l'execution claire, a l'exactitude factuelle et a une documentation utile."
         )
     else:
         contribution_sentence = (
@@ -540,6 +710,7 @@ def generate_fallback_cover_letter(
         f"{keywords_sentence}\n\n"
         f"{experience_sentence}"
         f"{project_sentence}"
+        f"{motivation_sentence}\n\n"
         f"{contribution_sentence} Je reste disponible pour echanger sur la maniere dont mon parcours peut soutenir {company_label}.\n\n"
         "Cordialement,\n\n"
         f"{closing_name}"
@@ -573,19 +744,26 @@ def generate_fallback_cover_letter_simple(
         Cover letter string
     """
     is_en = language_code == "en"
+    conjunction = "and" if is_en else "et"
 
     role_label = job_title or ("the target role" if is_en else "le poste vise")
     company_label = company or ("your company" if is_en else "votre entreprise")
 
-    matched_preview = ""
-    if matched_terms:
-        matched_preview = ", ".join(matched_terms[:4])
-    offer_preview = ", ".join([str(item).strip() for item in (offer_keywords or []) if str(item).strip()][:4])
+    matched_preview = _join_terms_natural(
+        matched_terms or [],
+        max_items=4,
+        conjunction=conjunction,
+    )
+    offer_preview = _join_terms_natural(
+        offer_keywords or [],
+        max_items=4,
+        conjunction=conjunction,
+    )
 
     if is_en:
         if matched_preview:
             keywords_sentence = (
-                f"The role connects with documented strengths such as {matched_preview}."
+                f"My profile includes relevant evidence in {matched_preview}."
             )
         elif offer_preview:
             keywords_sentence = (
@@ -606,6 +784,7 @@ def generate_fallback_cover_letter_simple(
             "Dear Hiring Manager,\n\n"
             f"I am applying for the {role_label} position at {company_label}. "
             f"{keywords_sentence}\n\n"
+            f"{_company_motivation_sentence(company_label=company_label, offer_focus=offer_preview, is_en=True)}\n\n"
             "I would welcome the opportunity to discuss how my background can support "
             f"{company_label} with a reliable and evidence-based contribution.\n\n"
             "Sincerely,\n\n"
@@ -615,7 +794,7 @@ def generate_fallback_cover_letter_simple(
     # French version
     if matched_preview:
         keywords_sentence = (
-            f"Le poste fait echo a des points forts documentes comme {matched_preview}."
+            f"Mon profil presente des elements pertinents autour de {matched_preview}."
         )
     elif offer_preview:
         keywords_sentence = (
@@ -636,6 +815,7 @@ def generate_fallback_cover_letter_simple(
         "Madame, Monsieur,\n\n"
         f"Je vous adresse ma candidature pour le poste {role_label} au sein de {company_label}. "
         f"{keywords_sentence}\n\n"
+        f"{_company_motivation_sentence(company_label=company_label, offer_focus=offer_preview, is_en=False)}\n\n"
         f"Je reste disponible pour echanger sur la maniere dont mon parcours peut soutenir {company_label}.\n\n"
         "Cordialement,\n\n"
         f"{closing_name}"
