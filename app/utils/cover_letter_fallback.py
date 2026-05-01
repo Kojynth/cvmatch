@@ -60,6 +60,18 @@ _TERM_BLOCKLIST = {
     "tools",
     "technology",
     "technologies",
+    "seek",
+    "seeking",
+    "organiser",
+    "organize",
+    "organizer",
+    "transverse",
+    "transverses",
+    "implicit",
+    "implicite",
+    "implicites",
+    "recruiter",
+    "recruteur",
 }
 
 _TERM_CANONICAL_CASE = {
@@ -85,14 +97,65 @@ _TERM_CANONICAL_CASE = {
     "postgresql": "PostgreSQL",
     "mongodb": "MongoDB",
     "pytest": "pytest",
+    "git": "Git",
+    "linux": "Linux",
+    "unix": "Unix",
+    "unix terminal": "Unix terminal",
+    "prompt engineering": "prompt engineering",
+    "codex": "Codex",
+    "claude": "Claude",
+    "claude code": "Claude Code",
+    "code agents": "coding agents",
 }
 
 
-def _clean_sentence_term(term: Any) -> str:
+def _strip_term_prefix(text: str) -> str:
+    value = str(text or "").strip()
+    value = re.sub(
+        r"^(?:d['’]|de|du|des|le|la|les|of|for|with|sur|en|pour)\s+",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+    return value.strip(" \t\r\n,;:")
+
+
+def _has_cross_language_noise(text: str, language_code: str) -> bool:
+    target = normalize_language_code(language_code)
+    norm = normalize_keyword_for_match(text)
+    if not norm:
+        return True
+    tokens = set(norm.split())
+    if target == "en":
+        french_noise = {
+            "du",
+            "des",
+            "les",
+            "pour",
+            "avec",
+            "chez",
+            "recruteur",
+            "implicite",
+            "implicites",
+            "transverse",
+            "transverses",
+            "organiser",
+        }
+        return bool(tokens & french_noise)
+    if target == "fr":
+        english_noise = {"seeking", "recruiter"}
+        return bool(tokens & english_noise)
+    return False
+
+
+def _clean_sentence_term(term: Any, *, language_code: str = "") -> str:
     text = re.sub(r"\s+", " ", str(term or "").strip(" \t\r\n,;:"))
+    text = _strip_term_prefix(text)
     if not text or "..." in text or "…" in text:
         return ""
     if len(text) > 64:
+        return ""
+    if language_code and _has_cross_language_noise(text, language_code):
         return ""
     norm = normalize_keyword_for_match(text)
     if not norm or norm in _TERM_BLOCKLIST:
@@ -103,8 +166,16 @@ def _clean_sentence_term(term: Any) -> str:
     return _TERM_CANONICAL_CASE.get(norm, text)
 
 
-def _clean_sentence_terms(terms: List[str], *, max_items: int = 5) -> List[str]:
-    cleaned = [_clean_sentence_term(term) for term in terms or []]
+def _clean_sentence_terms(
+    terms: List[str],
+    *,
+    max_items: int = 5,
+    language_code: str = "",
+) -> List[str]:
+    cleaned = [
+        _clean_sentence_term(term, language_code=language_code)
+        for term in terms or []
+    ]
     return _dedup_preserve([term for term in cleaned if term])[:max_items]
 
 
@@ -386,8 +457,17 @@ def _select_featured_project(projects: List[Dict[str, Any]]) -> Optional[Dict[st
     return None
 
 
-def _join_terms(terms: List[str], *, max_items: int = 5) -> str:
-    values = _clean_sentence_terms(terms, max_items=max_items)
+def _join_terms(
+    terms: List[str],
+    *,
+    max_items: int = 5,
+    language_code: str = "",
+) -> str:
+    values = _clean_sentence_terms(
+        terms,
+        max_items=max_items,
+        language_code=language_code,
+    )
     return ", ".join(values[:max_items])
 
 
@@ -409,10 +489,149 @@ def _join_terms_natural(
     *,
     max_items: int = 5,
     conjunction: str,
+    language_code: str = "",
 ) -> str:
     return _join_natural(
-        _clean_sentence_terms(terms, max_items=max_items),
+        _clean_sentence_terms(
+            terms,
+            max_items=max_items,
+            language_code=language_code,
+        ),
         conjunction=conjunction,
+    )
+
+
+def _collect_text_fragments(value: Any, output: List[str], *, max_chars: int = 5000) -> None:
+    if len(" ".join(output)) >= max_chars:
+        return
+    if value is None:
+        return
+    if isinstance(value, str):
+        text = value.strip()
+        if text:
+            output.append(text[:max_chars])
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            _collect_text_fragments(item, output, max_chars=max_chars)
+            if len(" ".join(output)) >= max_chars:
+                break
+        return
+    if isinstance(value, list):
+        for item in value:
+            _collect_text_fragments(item, output, max_chars=max_chars)
+            if len(" ".join(output)) >= max_chars:
+                break
+
+
+def _collect_offer_context_terms(offer_data: Optional[Dict[str, Any]]) -> List[str]:
+    if not isinstance(offer_data, dict):
+        return []
+    fragments: List[str] = []
+    for key in ("text", "description", "job_title", "company"):
+        _collect_text_fragments(offer_data.get(key), fragments)
+    analysis = offer_data.get("analysis")
+    if isinstance(analysis, dict):
+        for key in (
+            "summary",
+            "keywords",
+            "skills",
+            "tech_keywords",
+            "responsibilities",
+            "lexical_field",
+            "tools",
+        ):
+            _collect_text_fragments(analysis.get(key), fragments)
+    source = normalize_keyword_for_match(" ".join(fragments))
+    if not source:
+        return []
+
+    phrase_map = (
+        ("frontier ai", "frontier AI"),
+        ("frontier model", "frontier models"),
+        ("open model", "open model development"),
+        ("open source", "open-source AI"),
+        ("european", "a European AI context"),
+        ("europe", "a European AI context"),
+        ("research", "research"),
+        ("enterprise deployment", "enterprise deployment"),
+        ("human data", "human data workflows"),
+        ("training data", "training data quality"),
+        ("annotation", "annotation quality"),
+        ("rubric", "rubric-based evaluation"),
+        ("model evaluation", "model evaluation"),
+        ("code review", "code review"),
+        ("coding agent", "coding agents"),
+    )
+    terms: List[str] = []
+    for needle, label in phrase_map:
+        if needle in source:
+            terms.append(label)
+    return _dedup_preserve(terms)[:4]
+
+
+def _has_qa_signal(profile_data: Any) -> bool:
+    fragments: List[str] = []
+    for attr in (
+        "extracted_skills",
+        "extracted_experiences",
+        "extracted_projects",
+        "extracted_certifications",
+    ):
+        _collect_text_fragments(getattr(profile_data, attr, None), fragments, max_chars=3000)
+    source = normalize_keyword_for_match(" ".join(fragments))
+    return any(
+        token in source
+        for token in (
+            "qa",
+            "quality assurance",
+            "test",
+            "testing",
+            "validation",
+            "defect",
+            "regression",
+        )
+    )
+
+
+def _role_motivation_sentence(
+    *,
+    role_label: str,
+    offer_focus: str,
+    has_qa_signal: bool,
+    is_en: bool,
+) -> str:
+    role_norm = normalize_keyword_for_match(role_label)
+    quality_role = any(
+        token in role_norm
+        for token in ("quality", "data", "annotation", "evaluation", "review", "code")
+    )
+    if is_en:
+        if "code" in role_norm and "data" in role_norm and "quality" in role_norm:
+            role_focus = "code and data quality work"
+        elif role_label and role_label != "the target role":
+            role_focus = f"{role_label} work"
+        else:
+            role_focus = "the responsibilities of this role"
+        if has_qa_signal and quality_role:
+            return (
+                f"I see this role as a natural move from software quality work toward {role_focus}: applying the same discipline of checking requirements, edge cases, inconsistencies, and outputs to a more AI-oriented review context."
+            )
+        return (
+            f"I see this role as a concrete next step because it lets me apply my experience to {role_focus} in a more focused and useful way."
+        )
+    if "code" in role_norm and "data" in role_norm and "quality" in role_norm:
+        role_focus = "la qualite des donnees et du code"
+    elif role_label and role_label != "le poste vise":
+        role_focus = f"des missions de {role_label}"
+    else:
+        role_focus = "les responsabilites du poste"
+    if has_qa_signal and quality_role:
+        return (
+            f"Je vois ce poste comme une evolution naturelle de la qualite logicielle vers {role_focus} : appliquer la meme rigueur sur les exigences, les cas limites, les incoherences et les livrables dans un contexte de revue plus oriente IA."
+        )
+    return (
+        f"Je vois ce poste comme une etape concrete parce qu'il me permet d'appliquer mon experience a {role_focus} de maniere plus ciblee et utile."
     )
 
 
@@ -420,19 +639,38 @@ def _company_motivation_sentence(
     *,
     company_label: str,
     offer_focus: str,
+    company_context: str = "",
     is_en: bool,
 ) -> str:
     if is_en:
+        role_focus = f"work involving {offer_focus}" if offer_focus else ""
+        if company_context and offer_focus:
+            return (
+                f"{company_label} stands out to me because its work is connected to {company_context}. What attracts me to this role is the chance to contribute to {role_focus} in that concrete context."
+            )
+        if company_context:
+            return (
+                f"{company_label} stands out to me because its work is connected to {company_context}. I want to contribute in a role where careful review and practical delivery matter."
+            )
         if offer_focus:
             return (
-                f"What interests me about {company_label} is the role's focus on {offer_focus}: it matches the kind of concrete work where I can combine practical delivery, careful checks, and clear documentation."
+                f"What interests me about {company_label} is the role's focus on {role_focus}: it matches the kind of concrete work where I can combine practical delivery, careful checks, and useful documentation."
             )
         return (
-            f"What interests me about {company_label} is the opportunity to contribute in a concrete team context where careful execution and useful documentation matter."
+            f"What interests me about {company_label} is the opportunity to contribute in a concrete team context where careful review and useful documentation matter."
+        )
+    role_focus = f"des travaux impliquant {offer_focus}" if offer_focus else ""
+    if company_context and offer_focus:
+        return (
+            f"{company_label} m'interesse parce que son travail est lie a {company_context}. Ce qui m'attire dans ce poste, c'est la possibilite de contribuer a {role_focus} dans ce contexte concret."
+        )
+    if company_context:
+        return (
+            f"{company_label} m'interesse parce que son travail est lie a {company_context}. Je souhaite contribuer dans un poste ou la revue attentive et la livraison concrete comptent."
         )
     if offer_focus:
         return (
-            f"Ce qui m'interesse chez {company_label}, c'est le focus du poste sur {offer_focus} : il correspond a un cadre concret ou je peux combiner execution pratique, verification attentive et documentation claire."
+            f"Ce qui m'interesse chez {company_label}, c'est le focus du poste sur {role_focus} : il correspond a un cadre concret ou je peux combiner livraison pratique, verification attentive et documentation utile."
         )
     return (
         f"Ce qui m'interesse chez {company_label}, c'est la possibilite de contribuer a une equipe concrete ou l'execution rigoureuse et la documentation utile comptent reellement."
@@ -464,8 +702,14 @@ def generate_fallback_cover_letter(
     Returns:
         Cover letter string
     """
+    language_code = normalize_language_code(language_code)
+    if language_code not in {"en", "fr"}:
+        logger.warning(
+            "Deterministic cover letter fallback skipped for unsupported language: %s",
+            language_code,
+        )
+        return ""
     is_en = language_code == "en"
-    conjunction = "and" if is_en else "et"
     conjunction = "and" if is_en else "et"
 
     # Extract offer metadata
@@ -505,6 +749,7 @@ def generate_fallback_cover_letter(
         matched_terms,
         max_items=4,
         conjunction=conjunction,
+        language_code=language_code,
     )
 
     # Rank experiences for mention
@@ -543,15 +788,30 @@ def generate_fallback_cover_letter(
         project_terms,
         max_items=5,
         conjunction=conjunction,
+        language_code=language_code,
     )
     offer_focus = _join_terms_natural(
         offer_keywords,
         max_items=4,
         conjunction=conjunction,
+        language_code=language_code,
+    )
+    company_context = _join_terms_natural(
+        _collect_offer_context_terms(offer_data),
+        max_items=3,
+        conjunction=conjunction,
+        language_code=language_code,
     )
     motivation_sentence = _company_motivation_sentence(
         company_label=company_label,
         offer_focus=offer_focus,
+        company_context=company_context,
+        is_en=is_en,
+    )
+    role_motivation = _role_motivation_sentence(
+        role_label=role_label,
+        offer_focus=offer_focus,
+        has_qa_signal=_has_qa_signal(profile_data),
         is_en=is_en,
     )
 
@@ -600,19 +860,19 @@ def generate_fallback_cover_letter(
 
         if offer_focus and profile_signal:
             contribution_sentence = (
-                f"I would bring relevant evidence in {profile_signal}, with a focus on clear execution, factual accuracy, and useful documentation."
+                f"I would bring relevant evidence in {profile_signal}, with a focus on consistent review, factual accuracy, and useful documentation."
             )
         elif offer_focus:
             contribution_sentence = (
-                "I would approach those expectations with clear execution, factual accuracy, and useful documentation."
+                "I would approach those expectations with consistent review, factual accuracy, and useful documentation."
             )
         elif profile_signal:
             contribution_sentence = (
-                f"I would bring relevant evidence in {profile_signal}, with a focus on clear execution, factual accuracy, and useful documentation."
+                f"I would bring relevant evidence in {profile_signal}, with a focus on consistent review, factual accuracy, and useful documentation."
             )
         else:
             contribution_sentence = (
-                "I would be interested in contributing with a careful, evidence-based approach focused on clear execution and useful documentation."
+                "I would be interested in contributing with a careful, evidence-based approach focused on consistent review and useful documentation."
             )
 
         closing_name = name or "Candidate"
@@ -628,7 +888,7 @@ def generate_fallback_cover_letter(
             f"{opening_signal}\n\n"
             f"{experience_sentence}"
             f"{project_sentence}"
-            f"{motivation_sentence}\n\n"
+            f"{motivation_sentence} {role_motivation}\n\n"
             f"{contribution_sentence} I would welcome the opportunity to discuss how my background can support {company_label}.\n\n"
             "Sincerely,\n\n"
             f"{closing_name}"
@@ -676,19 +936,19 @@ def generate_fallback_cover_letter(
 
     if offer_focus and profile_signal:
         contribution_sentence = (
-            f"J'apporte des elements pertinents autour de {profile_signal}, avec une attention particuliere a l'execution claire, a l'exactitude factuelle et a une documentation utile."
+            f"J'apporte des elements pertinents autour de {profile_signal}, avec une attention particuliere a la revue constante, a l'exactitude factuelle et a une documentation utile."
         )
     elif offer_focus:
         contribution_sentence = (
-            "Je l'aborderais avec une attention particuliere a l'execution claire, a l'exactitude factuelle et a une documentation utile."
+            "Je l'aborderais avec une attention particuliere a la revue constante, a l'exactitude factuelle et a une documentation utile."
         )
     elif profile_signal:
         contribution_sentence = (
-            f"J'apporte des elements pertinents autour de {profile_signal}, avec une attention particuliere a l'execution claire, a l'exactitude factuelle et a une documentation utile."
+            f"J'apporte des elements pertinents autour de {profile_signal}, avec une attention particuliere a la revue constante, a l'exactitude factuelle et a une documentation utile."
         )
     else:
         contribution_sentence = (
-            "Je souhaite contribuer avec une approche rigoureuse et fondee sur les elements disponibles, attentive a l'execution claire et a une documentation utile."
+            "Je souhaite contribuer avec une approche rigoureuse et fondee sur les elements disponibles, attentive a la revue constante et a une documentation utile."
         )
 
     if not include_experience_paragraph and not project_sentence:
@@ -710,7 +970,7 @@ def generate_fallback_cover_letter(
         f"{keywords_sentence}\n\n"
         f"{experience_sentence}"
         f"{project_sentence}"
-        f"{motivation_sentence}\n\n"
+        f"{motivation_sentence} {role_motivation}\n\n"
         f"{contribution_sentence} Je reste disponible pour echanger sur la maniere dont mon parcours peut soutenir {company_label}.\n\n"
         "Cordialement,\n\n"
         f"{closing_name}"
@@ -743,6 +1003,13 @@ def generate_fallback_cover_letter_simple(
     Returns:
         Cover letter string
     """
+    language_code = normalize_language_code(language_code)
+    if language_code not in {"en", "fr"}:
+        logger.warning(
+            "Simple deterministic cover letter fallback skipped for unsupported language: %s",
+            language_code,
+        )
+        return ""
     is_en = language_code == "en"
     conjunction = "and" if is_en else "et"
 
@@ -753,11 +1020,13 @@ def generate_fallback_cover_letter_simple(
         matched_terms or [],
         max_items=4,
         conjunction=conjunction,
+        language_code=language_code,
     )
     offer_preview = _join_terms_natural(
         offer_keywords or [],
         max_items=4,
         conjunction=conjunction,
+        language_code=language_code,
     )
 
     if is_en:
@@ -771,7 +1040,7 @@ def generate_fallback_cover_letter_simple(
             )
         else:
             keywords_sentence = (
-                "I would approach the role with clear execution, factual accuracy, and useful documentation."
+                "I would approach the role with consistent review, factual accuracy, and useful documentation."
             )
         closing_name = profile_name or "Candidate"
         subject_line = _subject_with_offer_company(
@@ -802,7 +1071,7 @@ def generate_fallback_cover_letter_simple(
         )
     else:
         keywords_sentence = (
-            "J'aborderais le poste avec une execution claire, une exactitude factuelle et une documentation utile."
+            "J'aborderais le poste avec une revue constante, une exactitude factuelle et une documentation utile."
         )
     closing_name = profile_name or "Candidat"
     subject_line = _subject_with_offer_company(

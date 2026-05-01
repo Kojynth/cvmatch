@@ -17,6 +17,8 @@ import re
 import unicodedata
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from .language_policy import normalize_language_code
+
 
 COVER_LETTER_STYLE_ANALYSIS_KEY = "cover_letter_generation_style"
 
@@ -226,7 +228,7 @@ def _build_cover_letter_quality_rules(
         "the target role" if language_code == "en" else "le poste cible"
     )
 
-    if language_code == "en":
+    if language_code != "fr":
         return f"""
 COVER LETTER QUALITY RULES:
 - Formal hygiene: output exactly one Subject line, one greeting, 2-3 dense body paragraphs, one closing, and one signature.
@@ -264,14 +266,106 @@ def _trim_text(value: Any, max_chars: int) -> str:
 
 
 def _normalize_language(value: Optional[str]) -> str:
-    normalized = str(value or "").strip().lower()
-    if normalized.startswith("en"):
-        return "en"
-    return "fr"
+    return normalize_language_code(value)
 
 
 def _language_display_name(language_code: Optional[str]) -> str:
-    return "English" if _normalize_language(language_code) == "en" else "French"
+    names = {
+        "en": "English",
+        "fr": "French",
+        "de": "German",
+        "es": "Spanish",
+        "it": "Italian",
+        "pt": "Portuguese",
+        "nl": "Dutch",
+        "ja": "Japanese",
+        "zh": "Chinese",
+        "ko": "Korean",
+        "ar": "Arabic",
+        "ru": "Russian",
+        "el": "Greek",
+    }
+    code = _normalize_language(language_code)
+    return names.get(code, code.upper())
+
+
+def _localized_letter_terms(language_code: str) -> Dict[str, str]:
+    code = _normalize_language(language_code)
+    profiles = {
+        "en": {
+            "subject": "Subject",
+            "application": "Application",
+            "greeting": "Dear Hiring Team,",
+            "closing": "Sincerely,",
+        },
+        "fr": {
+            "subject": "Objet",
+            "application": "Candidature",
+            "greeting": "Madame, Monsieur,",
+            "closing": "Cordialement,",
+        },
+        "es": {
+            "subject": "Asunto",
+            "application": "Solicitud",
+            "greeting": "Estimado equipo de contratación,",
+            "closing": "Atentamente,",
+        },
+        "de": {
+            "subject": "Betreff",
+            "application": "Bewerbung",
+            "greeting": "Sehr geehrtes Hiring-Team,",
+            "closing": "Mit freundlichen Grüßen,",
+        },
+        "it": {
+            "subject": "Oggetto",
+            "application": "Candidatura",
+            "greeting": "Gentile team di selezione,",
+            "closing": "Cordiali saluti,",
+        },
+        "pt": {
+            "subject": "Assunto",
+            "application": "Candidatura",
+            "greeting": "Prezada equipe de recrutamento,",
+            "closing": "Atenciosamente,",
+        },
+        "nl": {
+            "subject": "Betreft",
+            "application": "Sollicitatie",
+            "greeting": "Geacht wervingsteam,",
+            "closing": "Met vriendelijke groet,",
+        },
+        "ja": {
+            "subject": "件名",
+            "application": "応募",
+            "greeting": "採用ご担当者様",
+            "closing": "敬具",
+        },
+        "zh": {
+            "subject": "主题",
+            "application": "申请",
+            "greeting": "尊敬的招聘团队：",
+            "closing": "此致",
+        },
+        "ko": {
+            "subject": "제목",
+            "application": "지원",
+            "greeting": "채용 담당자님께",
+            "closing": "감사합니다,",
+        },
+        "ar": {
+            "subject": "الموضوع",
+            "application": "طلب",
+            "greeting": "إلى فريق التوظيف المحترم،",
+            "closing": "مع خالص التحية،",
+        },
+        "ru": {
+            "subject": "Тема",
+            "application": "Заявка",
+            "greeting": "Уважаемая команда по подбору персонала,",
+            "closing": "С уважением,",
+        },
+    }
+    return profiles.get(code, profiles["en"])
 
 
 def _normalize_template_name(value: Optional[str]) -> str:
@@ -495,7 +589,7 @@ def _resolve_style_profile(
         "minimal": "Ton clair et epure, focalise impact et lisibilite.",
     }.get(template_key, "Ton professionnel et specifique.")
 
-    if language_code == "en":
+    if language_code != "fr":
         labels = {
             "technical_precision": "Technical precision",
             "leadership_impact": "Leadership impact",
@@ -524,7 +618,7 @@ def _resolve_style_profile(
                 "Keep structure clean and easy to scan.",
             ],
         }
-    else:
+    elif language_code == "fr":
         labels = {
             "technical_precision": "Precision technique",
             "leadership_impact": "Impact leadership",
@@ -587,8 +681,15 @@ def build_cover_letter_generation_payload(
     language = language_code or analysis.get("language") or preferred_language or "fr"
     language_code = _normalize_language(language)
     target_language_name = _language_display_name(language_code)
-    other_language_name = "French" if language_code == "en" else "English"
-    placeholder = "[TO COMPLETE]" if language_code == "en" else "[A COMPLETER]"
+    other_language_name = "any other language"
+    placeholder = (
+        "[TO COMPLETE]"
+        if language_code == "en"
+        else "[A COMPLETER]"
+        if language_code == "fr"
+        else f"[TO COMPLETE IN {target_language_name.upper()}]"
+    )
+    localized_terms = _localized_letter_terms(language_code)
 
     template_key = _normalize_template_name(template)
     job_title = offer_payload.get("job_title")
@@ -673,6 +774,8 @@ NON-NEGOTIABLE OUTPUT CONTRACT:
 - Output exactly one cover letter, not notes, source data, project lists, CV fragments, or analysis.
 - The first non-empty line must be `Subject:`; add a greeting immediately after it.
 - Include 2-3 body paragraphs, then a closing formula and signature.
+- Include a real motivation for this company using source-backed company context from the offer; do not write a company-agnostic paragraph that could fit any employer.
+- Include a real motivation for this role: explain why this position is a coherent next step in the candidate trajectory, not just why the profile matches.
 - Do not mention a candidate tool, framework, package, method, employer, metric, or project unless it appears in the candidate data. Offer-only terms may be phrased as target role priorities, not as past achievements.
 - Source data below is evidence only: synthesize it into a letter; never copy raw profile, CV, project, or source-letter paragraphs verbatim.
 
@@ -707,6 +810,9 @@ MANDATORY OUTPUT RULES (plain text only, no Markdown):
 - Do not output the skeleton placeholders literally.
 - Do NOT mix {target_language_name} and {other_language_name} anywhere in the generated prose.
 - Translate every generated sentence into {target_language_name}. Only proper nouns, official company/product names, established acronyms, and tool names may remain untranslated when necessary.
+- Make the letter motivation-driven: one paragraph must show why the candidate wants this specific company, and another sentence must show why this specific role fits the candidate's next step.
+- Use active phrasing such as "I want to contribute", "I have learned to", "I see this role as", "I can bring"; avoid weak filler such as "my profile is aligned".
+- Do not dump raw keywords or analysis labels. Integrate tools, methods, role priorities, and company context into grammatical sentences.
 - Use only facts present in the candidate data (otherwise {placeholder}).
 - Reuse offer keywords only when justified by the profile.
 - Keep the tone aligned with the selected generation style.
@@ -716,7 +822,7 @@ MANDATORY OUTPUT RULES (plain text only, no Markdown):
 STRUCTURE:
 {letter_skeleton}
 """.strip()
-    else:
+    elif language_code == "fr":
         letter_skeleton = f"""Objet: Candidature - {job_title} ({company})
 
 Madame, Monsieur,
@@ -746,6 +852,8 @@ CONTRAT DE SORTIE NON NEGOCIABLE:
 - Produire exactement une lettre de motivation, pas des notes, donnees source, listes de projets, fragments de CV ou analyse.
 - La premiere ligne non vide doit etre `Objet:`; ajouter une salutation juste apres.
 - Inclure 2-3 paragraphes de corps, puis une formule de politesse et une signature.
+- Inclure une vraie motivation pour cette entreprise avec du contexte source dans l'offre; ne pas ecrire un paragraphe interchangeable avec n'importe quel employeur.
+- Inclure une vraie motivation pour ce poste: expliquer pourquoi il represente une etape coherente dans la trajectoire du candidat, pas seulement pourquoi le profil correspond.
 - Ne jamais attribuer au candidat un outil, framework, package, methode, employeur, metrique ou projet absent des donnees candidat. Les termes presents seulement dans l'offre peuvent servir a decrire les priorites du poste, pas une realisation passee.
 - Les donnees source ci-dessous sont des preuves: les synthetiser en lettre; ne jamais recopier brut les paragraphes de profil, CV, projets ou lettre type.
 
@@ -781,11 +889,94 @@ SORTIE OBLIGATOIRE (texte uniquement, pas de Markdown):
 - N'affiche jamais les placeholders du squelette tels quels.
 - Ne melange jamais {target_language_name} et {other_language_name} dans le texte genere.
 - Traduis chaque phrase generee en {target_language_name}. Seuls les noms propres, noms officiels d'entreprise/produit, acronymes etablis et noms d'outils peuvent rester non traduits si necessaire.
+- La lettre doit porter une motivation explicite: un paragraphe doit montrer pourquoi le candidat veut rejoindre cette entreprise precise, et une phrase doit montrer pourquoi ce poste precis correspond a sa prochaine etape.
+- Utilise des formulations actives comme "je souhaite contribuer", "j'ai appris a", "je vois ce poste comme", "je peux apporter"; evite les formules faibles du type "mon profil est aligne".
+- Ne deverse pas de mots-cles bruts ni de labels d'analyse. Integre les outils, methodes, priorites du poste et contexte entreprise dans des phrases grammaticales.
 - Utilise uniquement les faits presents dans les donnees candidat (sinon {placeholder}).
 - Reprends en priorite les mots-cles de l'offre qui sont justifiables par le profil.
 - Conserve un ton adapte au style de generation selectionne.
 - Si INSTRUCTION UTILISATEUR est fournie, l'appliquer sans inventer de faits.
 - Longueur: maximum 1 page.
+
+STRUCTURE:
+{letter_skeleton}
+""".strip()
+    else:
+        subject_label = localized_terms["subject"]
+        application_label = localized_terms["application"]
+        greeting = localized_terms["greeting"]
+        closing = localized_terms["closing"]
+        letter_skeleton = f"""{subject_label}: {application_label} - {job_title} ({company})
+
+{greeting}
+
+<Paragraph 1 in {target_language_name}: specific motivation for this company and this role>
+
+<Paragraph 2 in {target_language_name}: 2-3 source-backed proof points from experience/projects, with verified skills and impact>
+
+<Paragraph 3 in {target_language_name}: professional trajectory, concrete contribution, and interview availability>
+
+{closing}
+
+{profile_name or placeholder}"""
+        instruction_block = (
+            f"\nUSER INSTRUCTION (apply only if consistent with profile facts):\n{instruction_text}\n"
+            if instruction_text
+            else ""
+        )
+        prompt = f"""
+TARGET OUTPUT LANGUAGE: {language_code} ({target_language_name}) [selected generation language]
+GENERATION STYLE: {style_profile["label"]} ({style_profile["mode"]})
+UI TEMPLATE CONTEXT: {template_key} ({style_profile["template_hint"]})
+STYLE SOURCE: {style_source}
+
+NON-NEGOTIABLE OUTPUT CONTRACT:
+- Final answer language: {language_code} ({target_language_name}) from the first line to the signature.
+- Output exactly one cover letter, not notes, source data, project lists, CV fragments, or analysis.
+- Use a localized subject/application line in {target_language_name}. The first non-empty line should follow this shape: `{subject_label}: {application_label} - {job_title} ({company})`.
+- Add a greeting in {target_language_name} immediately after the subject line.
+- Include 2-3 body paragraphs, then a closing formula and signature in {target_language_name}.
+- Include a real motivation for this company using source-backed company context from the offer; do not write a company-agnostic paragraph that could fit any employer.
+- Include a real motivation for this role: explain why this position is a coherent next step in the candidate trajectory, not just why the profile matches.
+- Do not mention a candidate tool, framework, package, method, employer, metric, or project unless it appears in the candidate data. Offer-only terms may be phrased as target role priorities, not as past achievements.
+- Source data below is evidence only: synthesize it into a letter; never copy raw profile, CV, project, or source-letter paragraphs verbatim.
+
+REQUIRED STRUCTURE:
+{letter_skeleton}
+
+STYLE DIRECTIONS:
+{style_rules}
+
+{quality_rules}
+{instruction_block}
+TARGET OFFER:
+- Job title: {job_title}
+- Company: {company}
+- Detected keywords: {keywords_text}
+- Raw description (trimmed if needed):
+{_trim_text(offer_text, 2000 if isinstance(offer_keywords, dict) else 3000)}
+
+OFFER_KEYWORDS_JSON (if available):
+{_trim_text(json.dumps(offer_keywords, indent=2, ensure_ascii=False), 1200) if isinstance(offer_keywords, dict) else "N/A"}
+
+CANDIDATE DATA (detailed profile + source CV + source cover letter if provided):
+{profile_block}
+
+MANDATORY OUTPUT RULES (plain text only, no Markdown):
+- Use EXACTLY one language throughout the whole letter: {language_code} ({target_language_name}).
+- Write the subject, greeting, body, closing, and signature in {target_language_name} from the first draft.
+- Do not output English/French labels such as `Subject`, `Objet`, `Dear`, `Madame`, or `Monsieur` unless they are natural in {target_language_name}.
+- Do not output the skeleton placeholders literally.
+- Do NOT mix {target_language_name} and {other_language_name} anywhere in the generated prose.
+- Translate every generated sentence into {target_language_name}. Only proper nouns, official company/product names, established acronyms, and tool names may remain untranslated when necessary.
+- Make the letter motivation-driven: one paragraph must show why the candidate wants this specific company, and one sentence must show why this specific role fits the candidate's next step.
+- Use active phrasing in {target_language_name}; avoid weak filler equivalent to "my profile is aligned".
+- Do not dump raw keywords or analysis labels. Integrate tools, methods, role priorities, and company context into grammatical sentences.
+- Use only facts present in the candidate data (otherwise {placeholder}).
+- Reuse offer keywords only when justified by the profile.
+- Keep the tone aligned with the selected generation style.
+- If USER INSTRUCTION is provided, follow it without inventing facts.
+- Length: maximum 1 page.
 
 STRUCTURE:
 {letter_skeleton}
