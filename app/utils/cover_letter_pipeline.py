@@ -474,6 +474,7 @@ Rules:
 - If a candidate project is relevant, require the letter to explain what the project technically does instead of listing tools after the project name.
 - If candidate data includes coding agents and the offer asks for them, flag their absence unless a stronger source-backed proof already covers the requirement.
 - If the offer involves rubric, annotation, evaluation, or review and the profile includes QA/review evidence, flag the absence of an explicit rubric/review connection.
+- Flag malformed motivation phrasing that injects raw keyword lists or weak adverbs, such as "work involving A, B, and highly".
 - Certifications and soft skills should not outrank stronger technical or domain proof.
 - relevance_score in [0..100].
 - language must match TARGET_LANGUAGE.
@@ -569,6 +570,7 @@ TASK:
 - Ensure at least 4 offer keywords appear in body paragraphs (exact term preferred, professional synonym/acronym allowed).
 - Replace generic filler with concrete source-backed proof from the profile and offer.
 - If a relevant candidate project appears, explain what it technically does and what quality/reliability practice it proves; do not write only "I developed X with Y".
+- In motivation sentences, replace raw keyword-list phrasing with the useful contribution purpose of the role.
 - If candidate data mentions coding agents and the offer makes them relevant, include controlled use of those agents with human review, tests, and factual validation.
 - If the offer involves rubric, annotation, evaluation, or review and the profile has QA/review evidence, explicitly connect that evidence to rubric-based review.
 - Do not use weak filler such as "documented background", "practical approach to execution", "highly in that concrete context", "I would approach those expectations", or "my profile is aligned".
@@ -613,6 +615,7 @@ TASK:
 - Include at least 4 offer keywords in the body (exact terms preferred, professional synonym/acronym allowed).
 - Replace generic filler with concrete source-backed proof from the profile and offer.
 - If a relevant candidate project appears, explain what it technically does and what quality/reliability practice it proves; do not write only "I developed X with Y".
+- In motivation sentences, replace raw keyword-list phrasing with the useful contribution purpose of the role.
 - If candidate data mentions coding agents and the offer makes them relevant, include controlled use of those agents with human review, tests, and factual validation.
 - If the offer involves rubric, annotation, evaluation, or review and the profile has QA/review evidence, explicitly connect that evidence to rubric-based review.
 - Do not use weak filler such as "documented background", "practical approach to execution", "highly in that concrete context", "I would approach those expectations", or "my profile is aligned".
