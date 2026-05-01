@@ -869,19 +869,19 @@ def _format_profile_detailed_data(
     add_block(
         "EXPERIENCES (profil detaille)",
         experiences,
-        max_items=10,
+        max_items=6,
         max_item_chars=320,
         max_details=2,
-        max_detail_chars=900,
+        max_detail_chars=520,
     )
     add_block("FORMATION (profil detaille)", education, max_items=8, max_item_chars=260)
     add_block(
         "PROJETS (profil detaille)",
         projects,
-        max_items=6,
+        max_items=3,
         max_item_chars=320,
-        max_details=2,
-        max_detail_chars=1000,
+        max_details=1,
+        max_detail_chars=420,
     )
 
     if skills:
@@ -1011,12 +1011,12 @@ def _format_profile_detailed_data(
     default_cover_letter = getattr(profile, "default_cover_letter", None)
     if isinstance(default_cover_letter, str) and default_cover_letter.strip():
         lines.append("LETTRE DE MOTIVATION TYPE (profil):")
-        lines.append(_trim_text(default_cover_letter, 1200))
+        lines.append(_trim_text(default_cover_letter, 600))
 
     master_cv = getattr(profile, "master_cv_content", None)
     if isinstance(master_cv, str) and master_cv.strip():
         lines.append("CV DE REFERENCE (texte brut, pour details):")
-        lines.append(_trim_text(master_cv, 2200))
+        lines.append(_trim_text(master_cv, 900))
 
     return "\n".join(lines).strip() + "\n"
 

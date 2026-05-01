@@ -663,10 +663,21 @@ Sincerely,
             else ""
         )
         prompt = f"""
-TARGET OUTPUT LANGUAGE: {language_code} ({target_language_name}) [derived from the job offer language]
+TARGET OUTPUT LANGUAGE: {language_code} ({target_language_name}) [selected generation language]
 GENERATION STYLE: {style_profile["label"]} ({style_profile["mode"]})
 UI TEMPLATE CONTEXT: {template_key} ({style_profile["template_hint"]})
 STYLE SOURCE: {style_source}
+
+NON-NEGOTIABLE OUTPUT CONTRACT:
+- Final answer language: {language_code} ({target_language_name}) from the first line to the signature.
+- Output exactly one cover letter, not notes, source data, project lists, CV fragments, or analysis.
+- The first non-empty line must be `Subject:`; add a greeting immediately after it.
+- Include 2-3 body paragraphs, then a closing formula and signature.
+- Do not mention a candidate tool, framework, package, method, employer, metric, or project unless it appears in the candidate data. Offer-only terms may be phrased as target role priorities, not as past achievements.
+- Source data below is evidence only: synthesize it into a letter; never copy raw profile, CV, project, or source-letter paragraphs verbatim.
+
+REQUIRED STRUCTURE:
+{letter_skeleton}
 
 STYLE DIRECTIONS:
 {style_rules}
@@ -725,10 +736,21 @@ Je vous prie d'agreer, Madame, Monsieur, l'expression de mes salutations disting
             else ""
         )
         prompt = f"""
-LANGUE DE SORTIE OBLIGATOIRE: {language_code} ({target_language_name}) [derivee de la langue de l'offre]
+LANGUE DE SORTIE OBLIGATOIRE: {language_code} ({target_language_name}) [langue de generation selectionnee]
 STYLE DE GENERATION (contenu): {style_profile["label"]} ({style_profile["mode"]})
 STYLE CONTEXTE (template UI): {template_key} ({style_profile["template_hint"]})
 STYLE SOURCE: {style_source}
+
+CONTRAT DE SORTIE NON NEGOCIABLE:
+- Langue finale: {language_code} ({target_language_name}) de la premiere ligne a la signature.
+- Produire exactement une lettre de motivation, pas des notes, donnees source, listes de projets, fragments de CV ou analyse.
+- La premiere ligne non vide doit etre `Objet:`; ajouter une salutation juste apres.
+- Inclure 2-3 paragraphes de corps, puis une formule de politesse et une signature.
+- Ne jamais attribuer au candidat un outil, framework, package, methode, employeur, metrique ou projet absent des donnees candidat. Les termes presents seulement dans l'offre peuvent servir a decrire les priorites du poste, pas une realisation passee.
+- Les donnees source ci-dessous sont des preuves: les synthetiser en lettre; ne jamais recopier brut les paragraphes de profil, CV, projets ou lettre type.
+
+STRUCTURE OBLIGATOIRE:
+{letter_skeleton}
 
 DIRECTIVES STYLE:
 {style_rules}

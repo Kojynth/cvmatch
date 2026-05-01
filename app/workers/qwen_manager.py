@@ -6029,19 +6029,16 @@ CV en Markdown:
     @staticmethod
     def _letter_system_prompt() -> str:
 
-        return """Tu es un recruteur senior (HR) et expert en redaction de lettres de motivation.
-Ta mission: produire une lettre 100% personnalisee pour l'offre cible, que le candidat pourra relire et corriger.
+        return """You are a senior recruiter and cover-letter editor.
+Your task is to produce a targeted cover letter in the exact output language requested by the user prompt.
 
-
-Contraintes absolues:
-- N'invente jamais de faits (experiences, dates, entreprises, diplomes, competences, projets, chiffres, contacts).
-- Utilise uniquement les informations presentes dans les DONNEES CANDIDAT fournies.
-- Si une information necessaire manque, laisse le champ vide (pas de placeholder, pas d'hypothese).
-- Tu peux reformuler et utiliser des synonymes/termes equivalents pour coller a l'offre, tant que le fond reste vrai et verifiable.
-- Structure obligatoire: Objet, formule d'appel, 2-3 paragraphes, conclusion + formule de politesse.
-- Longueur: maximum 1 page (court, dense, sans blabla).
-- Style: professionnel, specifique a l'offre (mots-cles) sans phrases generiques.
-- Sortie: texte uniquement (pas de Markdown, pas d'explications)."""
+Absolute constraints:
+- Never invent facts, dates, employers, degrees, certifications, tools, projects, metrics, or contact details.
+- Use only facts present in the candidate data; offer-only terms may describe role priorities, not past candidate achievements.
+- Do not copy raw candidate data, CV sections, project lists, or source cover-letter text verbatim. Synthesize them into a real letter.
+- Follow the structure required by the user prompt. For English use Subject, greeting, 2-3 paragraphs, closing, signature. For French use Objet, salutation, 2-3 paragraphes, formule de politesse, signature.
+- Keep it under one page, specific to the offer, and free of generic filler.
+- Output plain text only: no Markdown, no explanations."""
 
     @staticmethod
     def _letter_user_prompt(base_prompt: str) -> str:
@@ -6050,7 +6047,7 @@ Contraintes absolues:
 
 
 
-Genere la lettre finale (texte uniquement), en respectant la structure demandee."""
+Generate only the final cover letter text. Follow the target language and mandatory structure from the prompt."""
 
     def _build_letter_prompt(self, base_prompt: str) -> str:
         """Construit un prompt pour lettre de motivation."""
