@@ -2255,7 +2255,10 @@ class TemplatePreviewWindow(QMainWindow):
     def generate_letter_html(self) -> str:
         """Genere le HTML de la lettre de motivation."""
         cover_letter = self.cv_data.get("cover_letter") or ""
-        language_code = self._resolve_letter_language_code(self.cv_data, cover_letter)
+        language_code = TemplatePreviewWindow._resolve_letter_language_code(
+            self.cv_data,
+            cover_letter,
+        )
         is_en = language_code == "en"
 
         def _safe(value: str) -> str:
@@ -2264,13 +2267,17 @@ class TemplatePreviewWindow(QMainWindow):
         name_raw = str(self.cv_data.get("name") or "Candidat")
         name = _safe(name_raw)
         email = _safe(self.cv_data.get("email") or "")
-        phone = _safe(self._format_letter_phone(self.cv_data.get("phone") or ""))
+        phone = _safe(
+            TemplatePreviewWindow._format_letter_phone(
+                self.cv_data.get("phone") or ""
+            )
+        )
         location = _safe(self.cv_data.get("location") or "")
         job_title_raw = self.cv_data.get("job_title") or ""
         company_raw = self.cv_data.get("company") or ""
         job_title = _safe(job_title_raw)
         company = _safe(company_raw)
-        date_label = self._format_letter_date(language_code)
+        date_label = TemplatePreviewWindow._format_letter_date(language_code)
 
         subject = "Application" if is_en else "Candidature"
         if job_title_raw and company_raw:
