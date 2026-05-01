@@ -1399,6 +1399,154 @@ class CoverLetterPhase:
         )
         return "cover_letter_deterministic_fallback"
 
+    @staticmethod
+    def _format_cover_letter_retry_feedback(
+        *,
+        issues: List[str],
+        language_code: str,
+        attempt: int,
+        previous_letter: str,
+    ) -> str:
+        issue_lines = "\n".join(f"- {issue}" for issue in issues if issue)
+        if not issue_lines:
+            issue_lines = "- Previous letter failed validation."
+        previous_excerpt = str(previous_letter or "").strip()
+        if len(previous_excerpt) > 1200:
+            previous_excerpt = previous_excerpt[:1200].rstrip() + "..."
+        return f"""
+
+VALIDATION RETRY {attempt}:
+The previous cover letter failed validation. Regenerate the full letter from scratch.
+
+TARGET LANGUAGE: {language_code}
+VALIDATION ISSUES TO FIX:
+{issue_lines}
+
+STRICT RETRY RULES:
+- Do not repair the previous text line by line; produce a fresh complete cover letter.
+- Keep the exact target language from subject/object to signature.
+- Keep the required letter structure: subject/object, greeting, 2-3 body paragraphs, closing, signature.
+- Do not output raw CV/profile/project/source data.
+- Do not mention any candidate tool, framework, package, platform, method, metric, employer, project, or certification unless it appears in the candidate data.
+- If the offer mentions a tool that the candidate profile does not prove, phrase it only as a target role priority or omit it.
+
+INVALID PREVIOUS LETTER EXCERPT (do not copy):
+{previous_excerpt}
+""".strip()
+
+    def _generate_cover_letter_candidate(
+        self,
+        state: PipelineState,
+        letter_prompt: str,
+    ) -> str:
+        if state.use_subprocess and self._run_subprocess:
+            cover_result = self._run_subprocess(
+                "cover_letter",
+                {"letter_prompt": letter_prompt},
+            )
+            return sanitize_generated_cover_letter(
+                str(cover_result.get("cover_letter", ""))
+            )
+        if self._apply_stage_override:
+            self._apply_stage_override("cover_letter", state.progress_callback)
+        if self._generate_letter:
+            return sanitize_generated_cover_letter(
+                self._generate_letter(letter_prompt, state.progress_callback)
+            )
+        return ""
+
+    def _cover_letter_validation_issues(
+        self,
+        state: PipelineState,
+        letter: str,
+    ) -> List[str]:
+        issues: List[str] = []
+        text = str(letter or "").strip()
+        if not text:
+            return ["empty cover letter"]
+        if self._ensure_language_consistency:
+            try:
+                self._ensure_language_consistency(text, state.language_code)
+            except Exception:
+                issues.append(f"language mismatch: expected {state.language_code}")
+        unsupported_tools = self._unsupported_named_tools(state, text)
+        if unsupported_tools:
+            issues.append(
+                "unsupported tool or package claims: "
+                + ", ".join(unsupported_tools[:6])
+            )
+        if self._is_structure_coherent and not self._letter_structure_ok(state, text):
+            issues.append(
+                "invalid cover-letter structure: missing or malformed subject/object, greeting, body, closing, or signature"
+            )
+        return issues
+
+    def _regenerate_cover_letter_until_valid(
+        self,
+        state: PipelineState,
+        base_prompt: str,
+        phase_warnings: List[str],
+        *,
+        reason: str,
+        max_attempts: int = 2,
+    ) -> bool:
+        for attempt in range(1, max(1, int(max_attempts or 1)) + 1):
+            issues = self._cover_letter_validation_issues(state, state.cover_letter)
+            if not issues:
+                return True
+            state.emit_progress(
+                f"[LETTER] Validation failed; regenerating cover letter ({attempt}/{max_attempts})..."
+            )
+            retry_reason = f"{reason}_retry_{attempt}"
+            state.add_degraded_reason(retry_reason)
+            if retry_reason not in phase_warnings:
+                phase_warnings.append(retry_reason)
+            logger.warning(
+                "Cover-letter validation retry %s/%s: %s",
+                attempt,
+                max_attempts,
+                "; ".join(issues),
+            )
+            retry_prompt = (
+                str(base_prompt or "").strip()
+                + "\n\n"
+                + self._format_cover_letter_retry_feedback(
+                    issues=issues,
+                    language_code=state.language_code,
+                    attempt=attempt,
+                    previous_letter=state.cover_letter,
+                )
+            )
+            try:
+                candidate = self._generate_cover_letter_candidate(state, retry_prompt)
+            except Exception as exc:
+                logger.warning(
+                    "Cover-letter validation retry %s/%s failed: %s",
+                    attempt,
+                    max_attempts,
+                    exc,
+                )
+                continue
+            if self._enforce_alignment:
+                candidate = self._enforce_alignment(candidate, state.language_code)
+            state.cover_letter = candidate
+            if not self._cover_letter_validation_issues(state, state.cover_letter):
+                state.cover_letter_review = {
+                    "relevance_score": 80,
+                    "structure_ok": True,
+                    "language": state.language_code,
+                    "language_ok": True,
+                    "regenerated_after_validation_failure": reason,
+                    "retry_count": attempt,
+                }
+                logger.info(
+                    "Cover-letter validation retry succeeded at attempt %s/%s.",
+                    attempt,
+                    max_attempts,
+                )
+                return True
+        return not self._cover_letter_validation_issues(state, state.cover_letter)
+
     def _validate_cover_letter_language(
         self,
         state: PipelineState,
@@ -1725,11 +1873,6 @@ class CoverLetterPhase:
             phase_warnings.extend(list(language_result.get("warnings") or []))
             skip_critic_stage = bool(language_result.get("skip_critic_stage"))
             if language_result.get("language_validation_failed"):
-                generation_mode = self._replace_with_deterministic_fallback(
-                    state,
-                    phase_warnings,
-                    reason="cover_letter_fallback_after_language_validation_failure",
-                )
                 skip_critic_stage = True
         if self._enforce_alignment:
             state.cover_letter = self._enforce_alignment(
@@ -1811,45 +1954,38 @@ class CoverLetterPhase:
             except Exception as exc:
                 raise RuntimeError(f"Cover letter critic stage failed: {exc}") from exc
 
-        # Final validation
-        final_language_result = self._validate_cover_letter_language(
-            state,
-            allow_rewrite=False,
-            context="final validation",
-        )
-        if (
-            isinstance(final_language_result, dict)
-            and final_language_result.get("language_validation_failed")
-        ):
-            generation_mode = self._replace_with_deterministic_fallback(
-                state,
-                phase_warnings,
-                reason="cover_letter_fallback_after_final_language_validation_failure",
-            )
+        # Final validation and quality retry
         if self._enforce_alignment:
             state.cover_letter = self._enforce_alignment(
                 state.cover_letter, state.language_code
             )
 
-        unsupported_tools = self._unsupported_named_tools(state, state.cover_letter)
-        if unsupported_tools:
-            logger.warning(
-                "Cover-letter unsupported named tool evidence detected; replacing with fallback: %s",
-                ", ".join(unsupported_tools[:6]),
-            )
-            generation_mode = self._replace_with_deterministic_fallback(
+        validation_issues = self._cover_letter_validation_issues(
+            state,
+            state.cover_letter,
+        )
+        if validation_issues:
+            retry_reason = "cover_letter_validation_failure"
+            if any("language mismatch" in issue for issue in validation_issues):
+                retry_reason = "cover_letter_language_validation_failure"
+            elif any("unsupported tool" in issue for issue in validation_issues):
+                retry_reason = "cover_letter_unsupported_tool_evidence"
+            elif any("invalid cover-letter structure" in issue for issue in validation_issues):
+                retry_reason = "cover_letter_structure_validation_failure"
+            regenerated = self._regenerate_cover_letter_until_valid(
                 state,
+                letter_prompt,
                 phase_warnings,
-                reason="cover_letter_fallback_after_unsupported_tool_evidence",
+                reason=retry_reason,
+                max_attempts=2,
             )
-
-        if self._is_structure_coherent:
-            structure_ok = self._letter_structure_ok(state, state.cover_letter)
-            if not structure_ok:
+            if regenerated:
+                generation_mode = "cover_letter_regenerated_after_validation_failure"
+            else:
                 generation_mode = self._replace_with_deterministic_fallback(
                     state,
                     phase_warnings,
-                    reason="cover_letter_fallback_after_structure_validation_failure",
+                    reason=f"{retry_reason}_fallback_after_regeneration_exhausted",
                 )
 
         if (
