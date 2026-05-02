@@ -340,6 +340,102 @@ profiles:
         max_input_tokens: 6000
         max_new_tokens: 900
         max_total_tokens: 8192
+  qwen3.5-9b-gguf-q4:
+    display_name: "Qwen3.5-9B (GGUF Q4_K_M - best local writer)"
+    model_id: "cache/gguf_models/Qwen3.5-9B-Q4_K_M.gguf"
+    loader: "llama_cpp"
+    quantization: "gguf_q4_k_m"
+    min_vram_gb: 8
+    min_ram_gb: 18
+    quality_stars: 5
+    speed_rating: 2
+    description: "Meilleur choix local si le backend llama.cpp supporte Qwen3.5. Vise une generation premium avec marge VRAM sur GPU 12GB."
+    tags: ["gpu", "cpu", "gguf", "llama_cpp", "writer", "premium", "multilingual", "reasoning", "recommended"]
+    license_hint: "Apache-2.0"
+    context_hint: "Contexte natif long; utiliser 8k par defaut, 12k-16k seulement apres validation de la memoire."
+    recommended_usage: "best_local_writer"
+    runtime_hints:
+      local_file_required: true
+      safe_context_tokens: 8192
+      preferred_context_tokens: 12288
+      high_context_tokens: 32768
+      gpu_layers: "auto"
+      prefer_low_temperature: true
+      no_think_when_available: true
+    role_params:
+      generator:
+        temperature: 0.34
+        top_p: 0.8
+        top_k: 40
+        repeat_penalty: 1.08
+        max_input_tokens: 7000
+        max_new_tokens: 900
+        max_total_tokens: 8192
+        thinking: false
+      critic:
+        temperature: 0.16
+        top_p: 0.8
+        top_k: 40
+        repeat_penalty: 1.08
+        max_input_tokens: 6200
+        max_new_tokens: 900
+        max_total_tokens: 8192
+      extractor:
+        temperature: 0.0
+        top_p: 0.8
+        top_k: 40
+        repeat_penalty: 1.05
+        max_input_tokens: 6200
+        max_new_tokens: 900
+        max_total_tokens: 8192
+  qwen3-8b-gguf-q5:
+    display_name: "Qwen3-8B (GGUF Q5_K_M - stable local writer)"
+    model_id: "cache/gguf_models/Qwen3-8B-Q5_K_M.gguf"
+    loader: "llama_cpp"
+    quantization: "gguf_q5_k_m"
+    min_vram_gb: 8
+    min_ram_gb: 18
+    quality_stars: 5
+    speed_rating: 2
+    description: "Option stable et realiste pour GPU 12GB: meilleur compromis qualite/marge memoire quand Qwen3.5-9B n'est pas supporte."
+    tags: ["gpu", "cpu", "gguf", "llama_cpp", "writer", "premium", "multilingual", "reasoning", "fallback"]
+    license_hint: "Apache-2.0"
+    context_hint: "Contexte natif 32k; utiliser 8k ou 12k selon marge VRAM, eviter de pousser le contexte avant mesure."
+    recommended_usage: "stable_local_writer"
+    runtime_hints:
+      local_file_required: true
+      safe_context_tokens: 8192
+      preferred_context_tokens: 12288
+      high_context_tokens: 32768
+      gpu_layers: "auto"
+      prefer_low_temperature: true
+      no_think_when_available: true
+    role_params:
+      generator:
+        temperature: 0.36
+        top_p: 0.8
+        top_k: 40
+        repeat_penalty: 1.08
+        max_input_tokens: 7000
+        max_new_tokens: 900
+        max_total_tokens: 8192
+        thinking: false
+      critic:
+        temperature: 0.18
+        top_p: 0.8
+        top_k: 40
+        repeat_penalty: 1.08
+        max_input_tokens: 6200
+        max_new_tokens: 900
+        max_total_tokens: 8192
+      extractor:
+        temperature: 0.0
+        top_p: 0.8
+        top_k: 40
+        repeat_penalty: 1.05
+        max_input_tokens: 6200
+        max_new_tokens: 900
+        max_total_tokens: 8192
 
 hardware_tiers:
   cpu_minimal:
