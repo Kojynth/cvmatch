@@ -473,6 +473,8 @@ Rules:
 - Prefer role-specific proof: tools, methods, systems, practices, projects, and outcomes grounded in the candidate data.
 - If a candidate project is relevant, require the letter to explain what the project does and which source-backed practice, result, or workflow it proves instead of listing tools after the project name.
 - If both the offer and candidate data support a concrete specialized requirement, flag its absence unless stronger source-backed proof already covers that requirement.
+- Flag over-simplified letters that remove source-backed tools, methods, projects, workflows, or review practices and replace them with bland statements.
+- Flag weak filler such as "my background gives me a basis", "experience I can bring to the role", "priorities described in this role", or "where I worked with X".
 - Flag malformed motivation phrasing that injects raw keyword lists or weak adverbs, such as "work involving A, B, and highly".
 - Certifications and soft skills should not outrank stronger technical or domain proof.
 - relevance_score in [0..100].
