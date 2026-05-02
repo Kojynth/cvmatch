@@ -200,6 +200,146 @@ profiles:
     speed_rating: 2
     description: "Modele GGUF quantifie pour CPU via llama.cpp. Necessite llama-server + fichier GGUF local."
     tags: ["cpu", "gguf", "llama_cpp"]
+  qwen3-14b-gguf-q4:
+    display_name: "Qwen3-14B (GGUF Q4_K_M - premium local)"
+    model_id: "cache/gguf_models/Qwen3-14B-Q4_K_M.gguf"
+    loader: "llama_cpp"
+    quantization: "gguf_q4_k_m"
+    min_vram_gb: 10
+    min_ram_gb: 24
+    quality_stars: 5
+    speed_rating: 1
+    description: "Option premium locale pour CV/lettres exigeants. Requiert un fichier GGUF local et une configuration llama.cpp adaptee a la memoire disponible."
+    tags: ["gpu", "cpu", "gguf", "llama_cpp", "writer", "premium", "multilingual", "reasoning"]
+    license_hint: "Apache-2.0"
+    context_hint: "Contexte natif 32k; utiliser 8k-16k sur 12GB VRAM selon offload, YaRN/131k seulement sur machine tres confortable."
+    recommended_usage: "premium_writer_local"
+    runtime_hints:
+      local_file_required: true
+      safe_context_tokens: 8192
+      preferred_context_tokens: 16384
+      high_context_tokens: 32768
+      gpu_layers: "auto"
+      prefer_low_temperature: true
+    role_params:
+      generator:
+        temperature: 0.32
+        top_p: 0.8
+        top_k: 40
+        repeat_penalty: 1.08
+        max_input_tokens: 6900
+        max_new_tokens: 1200
+        max_total_tokens: 8192
+        thinking: false
+      critic:
+        temperature: 0.18
+        top_p: 0.8
+        top_k: 40
+        repeat_penalty: 1.08
+        max_input_tokens: 6000
+        max_new_tokens: 900
+        max_total_tokens: 8192
+      extractor:
+        temperature: 0.0
+        top_p: 0.8
+        top_k: 40
+        repeat_penalty: 1.05
+        max_input_tokens: 6000
+        max_new_tokens: 900
+        max_total_tokens: 8192
+  qwen3-14b-gguf-q5:
+    display_name: "Qwen3-14B (GGUF Q5_K_M - premium local+)"
+    model_id: "cache/gguf_models/Qwen3-14B-Q5_K_M.gguf"
+    loader: "llama_cpp"
+    quantization: "gguf_q5_k_m"
+    min_vram_gb: 12
+    min_ram_gb: 32
+    quality_stars: 5
+    speed_rating: 1
+    description: "Variante Q5_K_M pour une meilleure qualite de sortie quand la VRAM/RAM permet un offload confortable."
+    tags: ["gpu", "cpu", "gguf", "llama_cpp", "writer", "premium", "multilingual", "reasoning", "high_end"]
+    license_hint: "Apache-2.0"
+    context_hint: "Contexte natif 32k; viser 8k-16k sur machines locales et augmenter seulement si la memoire reste stable."
+    recommended_usage: "premium_writer_local_high_memory"
+    runtime_hints:
+      local_file_required: true
+      safe_context_tokens: 8192
+      preferred_context_tokens: 16384
+      high_context_tokens: 32768
+      gpu_layers: "auto"
+      prefer_low_temperature: true
+    role_params:
+      generator:
+        temperature: 0.3
+        top_p: 0.8
+        top_k: 40
+        repeat_penalty: 1.08
+        max_input_tokens: 6900
+        max_new_tokens: 1200
+        max_total_tokens: 8192
+        thinking: false
+      critic:
+        temperature: 0.16
+        top_p: 0.8
+        top_k: 40
+        repeat_penalty: 1.08
+        max_input_tokens: 6000
+        max_new_tokens: 900
+        max_total_tokens: 8192
+      extractor:
+        temperature: 0.0
+        top_p: 0.8
+        top_k: 40
+        repeat_penalty: 1.05
+        max_input_tokens: 6000
+        max_new_tokens: 900
+        max_total_tokens: 8192
+  mistral-small-3.2-24b-gguf-q4:
+    display_name: "Mistral Small 3.2 24B Instruct (GGUF Q4_K_M - high quality)"
+    model_id: "cache/gguf_models/Mistral-Small-3.2-24B-Instruct-2506.Q4_K_M.gguf"
+    loader: "llama_cpp"
+    quantization: "gguf_q4_k_m"
+    min_vram_gb: 24
+    min_ram_gb: 48
+    quality_stars: 5
+    speed_rating: 1
+    description: "Option qualite elevee pour machines locales tres confortables. A utiliser quand le poids 24B quantifie reste stable en VRAM/RAM."
+    tags: ["gpu", "cpu", "gguf", "llama_cpp", "writer", "premium", "multilingual", "high_end"]
+    license_hint: "Mistral"
+    context_hint: "Modele lourd; commencer avec 8k de contexte et augmenter seulement apres validation memoire."
+    recommended_usage: "premium_writer_high_memory"
+    runtime_hints:
+      local_file_required: true
+      safe_context_tokens: 8192
+      preferred_context_tokens: 16384
+      gpu_layers: "auto"
+      prefer_low_temperature: true
+    role_params:
+      generator:
+        temperature: 0.15
+        top_p: 0.8
+        top_k: 40
+        repeat_penalty: 1.08
+        max_input_tokens: 6900
+        max_new_tokens: 1200
+        max_total_tokens: 8192
+        thinking: false
+      critic:
+        temperature: 0.12
+        top_p: 0.8
+        top_k: 40
+        repeat_penalty: 1.08
+        max_input_tokens: 6000
+        max_new_tokens: 900
+        max_total_tokens: 8192
+      extractor:
+        temperature: 0.0
+        top_p: 0.8
+        top_k: 40
+        repeat_penalty: 1.05
+        max_input_tokens: 6000
+        max_new_tokens: 900
+        max_total_tokens: 8192
 
 hardware_tiers:
   cpu_minimal:
