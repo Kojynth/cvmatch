@@ -538,18 +538,18 @@ def _project_reference_sentence(
     if is_en:
         if terms_text:
             return (
-                f"My project work also includes {project_name}, with documented evidence around {terms_text}.\n\n"
+                f"My project work also includes {project_name}, where I worked with {terms_text}.\n\n"
             )
         return (
-            f"My project work also includes {project_name}, which provides additional documented evidence for this application.\n\n"
+            f"My project work also includes {project_name}, which is another example of how I approach practical work.\n\n"
         )
 
     if terms_text:
         return (
-            f"Mes projets incluent également {project_name}, avec des éléments documentés autour de {terms_text}.\n\n"
+            f"Mes projets incluent également {project_name}, avec un travail autour de {terms_text}.\n\n"
         )
     return (
-        f"Mes projets incluent également {project_name}, qui apporte un élément documenté supplémentaire pour cette candidature.\n\n"
+        f"Mes projets incluent également {project_name}, qui illustre aussi ma manière d'aborder un travail concret.\n\n"
     )
 
 
@@ -609,10 +609,10 @@ def _company_motivation_sentence(
 ) -> str:
     if is_en:
         return (
-            f"What interests me about {company_label} is the opportunity to connect my documented experience with the priorities described in this role."
+            f"What interests me about {company_label} is the opportunity to contribute to the priorities described in this role."
         )
     return (
-        f"Ce qui m'intéresse chez {company_label}, c'est la possibilité de relier mon expérience documentée aux priorités décrites dans ce poste."
+        f"Ce qui m'intéresse chez {company_label}, c'est la possibilité de contribuer aux priorités décrites dans ce poste."
     )
 
 
@@ -734,9 +734,9 @@ def generate_fallback_cover_letter(
     if is_en:
         profile_signal = matched_preview
         opening_signal = (
-            f"My profile includes relevant evidence in {profile_signal}."
+            f"My profile includes experience related to {profile_signal}."
             if profile_signal
-            else "The available profile data provides relevant evidence for this application."
+            else "My background gives me a basis to contribute to this role."
         )
 
         experience_intro = exp_preview
@@ -753,13 +753,13 @@ def generate_fallback_cover_letter(
         if include_experience_paragraph and exp_preview and experience_detail:
             details_sentence = _format_experience_details(experience_details, is_en=True)
             experience_sentence = (
-                f"{experience_intro}, I have worked on documented responsibilities relevant to this application. "
+                f"{experience_intro}, I have worked on responsibilities relevant to this application. "
                 f"{details_sentence} "
-                "These responsibilities show how I work from documented objectives, concrete constraints, and clear communication.\n\n"
+                "This experience strengthened my ability to work with clear objectives, practical constraints, and careful communication.\n\n"
             )
         elif include_experience_paragraph and exp_preview:
             experience_sentence = (
-                f"My background includes {exp_preview}. These experiences provide documented evidence that can be connected to the requirements of the role.\n\n"
+                f"My background includes {exp_preview}, which gives me experience I can bring to the role.\n\n"
             )
         else:
             experience_sentence = ""
@@ -774,11 +774,11 @@ def generate_fallback_cover_letter(
 
         if profile_signal:
             contribution_sentence = (
-                f"I can bring {profile_signal} together with a careful, evidence-based way of working."
+                f"I can bring {profile_signal} together with a careful and practical way of working."
             )
         else:
             contribution_sentence = (
-                "I can bring a careful, evidence-based way of working and a willingness to contribute to the team's concrete needs."
+                "I can bring a careful and practical way of working, with attention to the team's concrete needs."
             )
 
         closing_name = name or "Candidate"
@@ -803,9 +803,9 @@ def generate_fallback_cover_letter(
     # French version
     profile_signal = matched_preview
     keywords_sentence = (
-        f"Mon profil présente des éléments pertinents autour de {profile_signal}."
+        f"Mon profil présente une expérience en lien avec {profile_signal}."
         if profile_signal
-        else "Les données disponibles du profil apportent des éléments pertinents pour cette candidature."
+        else "Mon parcours me donne une base pertinente pour contribuer à ce poste."
     )
 
     experience_intro = exp_preview
@@ -820,13 +820,13 @@ def generate_fallback_cover_letter(
     if include_experience_paragraph and exp_preview and experience_detail:
         details_sentence = _format_experience_details(experience_details, is_en=False)
         experience_sentence = (
-            f"{experience_intro}, j'ai travaillé sur des responsabilités documentées et pertinentes pour cette candidature. "
+            f"{experience_intro}, j'ai travaillé sur des responsabilités pertinentes pour cette candidature. "
             f"{details_sentence} "
-            "Ces responsabilités montrent ma capacité à travailler à partir d'objectifs documentés, de contraintes concrètes et d'une communication claire.\n\n"
+            "Cette expérience a renforcé ma capacité à travailler avec des objectifs clairs, des contraintes concrètes et une communication précise.\n\n"
         )
     elif include_experience_paragraph and exp_preview:
         experience_sentence = (
-            f"Mon parcours inclut {exp_preview}. Ces expériences apportent des preuves documentées que je peux relier aux attentes du poste.\n\n"
+            f"Mon parcours inclut {exp_preview}, une expérience que je peux mettre au service du poste.\n\n"
         )
     else:
         experience_sentence = ""
@@ -841,17 +841,17 @@ def generate_fallback_cover_letter(
 
     if profile_signal:
         contribution_sentence = (
-            f"Je peux apporter {profile_signal}, avec une manière de travailler attentive et fondée sur les éléments disponibles."
+            f"Je peux apporter {profile_signal}, avec une manière de travailler attentive et concrète."
         )
     else:
         contribution_sentence = (
-            "Je souhaite contribuer avec une manière de travailler attentive, fondée sur les éléments disponibles et utile aux besoins concrets de l'équipe."
+            "Je souhaite contribuer avec une manière de travailler attentive, concrète et utile aux besoins de l'équipe."
         )
 
     if not include_experience_paragraph and not project_sentence:
         experience_sentence = (
-            "Mon parcours présente des éléments documentés utiles pour cette candidature. "
-            "Je peux contribuer avec une approche attentive et fondée sur les faits disponibles.\n\n"
+            "Mon parcours présente des points utiles pour cette candidature. "
+            "Je peux contribuer avec une approche attentive et concrète.\n\n"
         )
 
     closing_name = name or "Candidat"
@@ -923,11 +923,11 @@ def generate_fallback_cover_letter_simple(
     if is_en:
         if matched_preview:
             keywords_sentence = (
-                f"My profile includes relevant evidence in {matched_preview}."
+                f"My profile includes experience related to {matched_preview}."
             )
         else:
             keywords_sentence = (
-                "The available profile data provides relevant evidence for this application."
+                "My background gives me a basis to contribute to this role."
             )
         closing_name = profile_name or "Candidate"
         subject_line = _subject_with_offer_company(
@@ -942,7 +942,7 @@ def generate_fallback_cover_letter_simple(
             f"{keywords_sentence}\n\n"
             f"{_company_motivation_sentence(company_label=company_label, is_en=True)}\n\n"
             "I would welcome the opportunity to discuss how my background can support "
-            f"{company_label} with a careful, evidence-based contribution.\n\n"
+            f"{company_label} with a careful and practical contribution.\n\n"
             "Sincerely,\n\n"
             f"{closing_name}"
         ).strip()
@@ -950,11 +950,11 @@ def generate_fallback_cover_letter_simple(
     # French version
     if matched_preview:
         keywords_sentence = (
-            f"Mon profil présente des éléments pertinents autour de {matched_preview}."
+            f"Mon profil présente une expérience en lien avec {matched_preview}."
         )
     else:
         keywords_sentence = (
-            "Les données disponibles du profil apportent des éléments pertinents pour cette candidature."
+            "Mon parcours me donne une base pertinente pour contribuer à ce poste."
         )
     closing_name = profile_name or "Candidat"
     subject_line = _subject_with_offer_company(
