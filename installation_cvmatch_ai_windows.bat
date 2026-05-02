@@ -104,13 +104,21 @@ if /I "%REQ_AI_FILE%"=="%PROJECT_ROOT%requirements_windows.txt" set "REQ_AI_LOCK
 
 set "LLM_MODEL_ID=Qwen/Qwen2.5-7B-Instruct"
 set "LLM_PROFILE_ID=qwen2-7b"
+set "GGUF_PROFILE_IDS=recommended"
 if not "%CVMATCH_LLM_MODEL_ID%"=="" set "LLM_MODEL_ID=%CVMATCH_LLM_MODEL_ID%"
 if not "%CVMATCH_LLM_PROFILE_ID%"=="" set "LLM_PROFILE_ID=%CVMATCH_LLM_PROFILE_ID%"
+if not "%CVMATCH_GGUF_PROFILE_IDS%"=="" set "GGUF_PROFILE_IDS=%CVMATCH_GGUF_PROFILE_IDS%"
+if not "%CVMATCH_GGUF_PROFILE_ID%"=="" set "GGUF_PROFILE_IDS=%CVMATCH_GGUF_PROFILE_ID%"
 
 set "INSTALL_LLM=1"
+set "INSTALL_GGUF=1"
 if defined SKIP_LLM set "INSTALL_LLM="
+if defined SKIP_LLM set "INSTALL_GGUF="
 if /I "%CVMATCH_SKIP_LLM%"=="1" set "INSTALL_LLM="
+if /I "%CVMATCH_SKIP_LLM%"=="1" set "INSTALL_GGUF="
+if /I "%CVMATCH_INSTALL_GGUF%"=="0" set "INSTALL_GGUF="
 if /I "%AI_MODE%"=="base-only" set "INSTALL_LLM="
+if /I "%AI_MODE%"=="base-only" set "INSTALL_GGUF="
 if /I "%AI_MODE%"=="llm-only" set "INSTALL_LLM=1"
 
 if exist "%CACHE_DIR%" goto :cache_ready
@@ -124,6 +132,7 @@ echo === CVMatch AI Model Installer === >> "%INSTALL_LOG%"
 echo Mode: %AI_MODE% >> "%INSTALL_LOG%"
 echo Cache: %CACHE_DIR% >> "%INSTALL_LOG%"
 echo Python: %PYTHON_CMD% %PYTHON_ARGS% >> "%INSTALL_LOG%"
+if defined INSTALL_GGUF echo GGUF profiles: %GGUF_PROFILE_IDS% >> "%INSTALL_LOG%"
 echo [POLICY] LLM download allowlist: Qwen/*, mistralai/*
 echo [POLICY] LLM download allowlist: Qwen/*, mistralai/* >> "%INSTALL_LOG%"
 echo [POLICY] Non-approved LLM ids are skipped (or blocked if forced at runtime).
@@ -232,11 +241,19 @@ goto :download_base
 :download_llm
 echo LLM model: %LLM_MODEL_ID%
 echo LLM model: %LLM_MODEL_ID% >> "%INSTALL_LOG%"
-call :RUN_WITH_SPINNER "Download AI models (LLM)" "30" "%PYTHON_CMD%" %PYTHON_ARGS% "%PROJECT_ROOT%scripts\download_ai_models.py" --cache-dir "%CACHE_DIR%" --mode "%AI_MODE%" --include-llm --llm-model "%LLM_MODEL_ID%"
+if defined INSTALL_GGUF (
+    call :RUN_WITH_SPINNER "Download AI models (LLM+GGUF)" "30" "%PYTHON_CMD%" %PYTHON_ARGS% "%PROJECT_ROOT%scripts\download_ai_models.py" --cache-dir "%CACHE_DIR%" --mode "%AI_MODE%" --include-llm --llm-model "%LLM_MODEL_ID%" --include-gguf --gguf-profile "%GGUF_PROFILE_IDS%"
+) else (
+    call :RUN_WITH_SPINNER "Download AI models (LLM)" "30" "%PYTHON_CMD%" %PYTHON_ARGS% "%PROJECT_ROOT%scripts\download_ai_models.py" --cache-dir "%CACHE_DIR%" --mode "%AI_MODE%" --include-llm --llm-model "%LLM_MODEL_ID%"
+)
 goto :download_done
 
 :download_base
-call :RUN_WITH_SPINNER "Download AI models (base)" "30" "%PYTHON_CMD%" %PYTHON_ARGS% "%PROJECT_ROOT%scripts\download_ai_models.py" --cache-dir "%CACHE_DIR%" --mode "%AI_MODE%"
+if defined INSTALL_GGUF (
+    call :RUN_WITH_SPINNER "Download AI models (base+GGUF)" "30" "%PYTHON_CMD%" %PYTHON_ARGS% "%PROJECT_ROOT%scripts\download_ai_models.py" --cache-dir "%CACHE_DIR%" --mode "%AI_MODE%" --include-gguf --gguf-profile "%GGUF_PROFILE_IDS%"
+) else (
+    call :RUN_WITH_SPINNER "Download AI models (base)" "30" "%PYTHON_CMD%" %PYTHON_ARGS% "%PROJECT_ROOT%scripts\download_ai_models.py" --cache-dir "%CACHE_DIR%" --mode "%AI_MODE%"
+)
 
 :download_done
 if errorlevel 401 goto :unauthorized

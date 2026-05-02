@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import sys
 import time
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 if os.name == "nt":
     # Avoid symlink privilege errors on Windows by forcing file copies.
@@ -29,6 +30,42 @@ DEFAULT_LLM_MODELS = [
     "Qwen/Qwen2.5-7B-Instruct",
 ]
 ALLOWED_LLM_PREFIXES = ("qwen/", "mistralai/")
+DEFAULT_GGUF_PROFILES = [
+    "qwen3.5-9b-gguf-q4",
+    "qwen3-8b-gguf-q5",
+]
+GGUF_PROFILES: Dict[str, Dict[str, str]] = {
+    "mistral-7b-gguf-q4": {
+        "repo_id": "second-state/Mistral-7B-Instruct-v0.3-GGUF",
+        "filename": "Mistral-7B-Instruct-v0.3-Q4_K_M.gguf",
+        "target_filename": "Mistral-7B-Instruct-v0.3.Q4_K_M.gguf",
+    },
+    "qwen3-14b-gguf-q4": {
+        "repo_id": "Qwen/Qwen3-14B-GGUF",
+        "filename": "Qwen3-14B-Q4_K_M.gguf",
+        "target_filename": "Qwen3-14B-Q4_K_M.gguf",
+    },
+    "qwen3-14b-gguf-q5": {
+        "repo_id": "Qwen/Qwen3-14B-GGUF",
+        "filename": "Qwen3-14B-Q5_K_M.gguf",
+        "target_filename": "Qwen3-14B-Q5_K_M.gguf",
+    },
+    "mistral-small-3.2-24b-gguf-q4": {
+        "repo_id": "bartowski/mistralai_Mistral-Small-3.2-24B-Instruct-2506-GGUF",
+        "filename": "mistralai_Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf",
+        "target_filename": "Mistral-Small-3.2-24B-Instruct-2506.Q4_K_M.gguf",
+    },
+    "qwen3.5-9b-gguf-q4": {
+        "repo_id": "jc-builds/Qwen3.5-9B-Q4_K_M-GGUF",
+        "filename": "Qwen3.5-9B-Q4_K_M.gguf",
+        "target_filename": "Qwen3.5-9B-Q4_K_M.gguf",
+    },
+    "qwen3-8b-gguf-q5": {
+        "repo_id": "Qwen/Qwen3-8B-GGUF",
+        "filename": "Qwen3-8B-Q5_K_M.gguf",
+        "target_filename": "Qwen3-8B-Q5_K_M.gguf",
+    },
+}
 
 MODE_CHOICES = ("full", "lite", "llm-only", "base-only")
 
@@ -42,6 +79,17 @@ def _resolve_default_cache() -> str:
     if env_cache:
         return os.path.abspath(env_cache)
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".hf_cache"))
+
+
+def _resolve_default_gguf_dir() -> str:
+    env_dir = os.environ.get("CVMATCH_GGUF_DIR") or os.environ.get(
+        "CVMATCH_LLAMA_CPP_MODEL_DIR"
+    )
+    if env_dir:
+        return os.path.abspath(env_dir)
+    return os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "cache", "gguf_models")
+    )
 
 
 def _env_int(name: str, default: int) -> int:
@@ -76,6 +124,39 @@ def _dedupe_models(models: List[str]) -> List[str]:
     return result
 
 
+def _split_profile_tokens(raw_values: List[str]) -> List[str]:
+    tokens: List[str] = []
+    for raw in raw_values:
+        for token in str(raw or "").replace(";", ",").split(","):
+            token = token.strip()
+            if token:
+                tokens.append(token)
+    return tokens
+
+
+def _resolve_gguf_profiles(raw_values: List[str]) -> Tuple[List[str], List[str]]:
+    requested = _split_profile_tokens(raw_values)
+    if not requested:
+        env_profiles = os.environ.get("CVMATCH_GGUF_PROFILE_IDS") or os.environ.get(
+            "CVMATCH_GGUF_PROFILE_ID"
+        )
+        requested = _split_profile_tokens([env_profiles or "recommended"])
+
+    resolved: List[str] = []
+    unknown: List[str] = []
+    for token in requested:
+        lowered = token.lower()
+        if lowered in {"recommended", "default", "practical"}:
+            resolved.extend(DEFAULT_GGUF_PROFILES)
+        elif lowered == "all":
+            resolved.extend(GGUF_PROFILES)
+        elif token in GGUF_PROFILES:
+            resolved.append(token)
+        else:
+            unknown.append(token)
+    return _dedupe_models(resolved), unknown
+
+
 def _is_allowed_llm_model(model_id: str) -> bool:
     lowered = str(model_id or "").strip().lower()
     return any(lowered.startswith(prefix) for prefix in ALLOWED_LLM_PREFIXES)
@@ -90,6 +171,72 @@ def _filter_llm_models(models: List[str]) -> Tuple[List[str], List[str]]:
         else:
             blocked.append(model)
     return allowed, blocked
+
+
+def _download_gguf_profiles(
+    *,
+    profile_ids: List[str],
+    gguf_dir: str,
+    cache_dir: str,
+    max_workers: int,
+    retries: int,
+    retry_wait: float,
+) -> int:
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError:
+        print(
+            "ERROR: huggingface_hub package is not installed. Run `pip install huggingface_hub` and retry.",
+            file=sys.stderr,
+        )
+        return 1
+
+    os.makedirs(gguf_dir, exist_ok=True)
+    attempts = max(0, retries) + 1
+    for profile_id in profile_ids:
+        spec = GGUF_PROFILES[profile_id]
+        repo_id = spec["repo_id"]
+        filename = spec["filename"]
+        target_filename = spec["target_filename"]
+        target_path = os.path.abspath(os.path.join(gguf_dir, target_filename))
+        if os.path.exists(target_path) and os.path.getsize(target_path) > 0:
+            print(f"GGUF already present for {profile_id}: {target_path}")
+            continue
+
+        print(f"Downloading GGUF {profile_id}: {repo_id}/{filename} -> {target_path}")
+        for attempt in range(1, attempts + 1):
+            try:
+                kwargs = {
+                    "repo_id": repo_id,
+                    "filename": filename,
+                    "cache_dir": cache_dir,
+                    "local_dir": gguf_dir,
+                    "local_files_only": False,
+                }
+                downloaded_path = os.path.abspath(hf_hub_download(**kwargs))
+                if downloaded_path != target_path:
+                    temp_path = f"{target_path}.part"
+                    shutil.copyfile(downloaded_path, temp_path)
+                    os.replace(temp_path, target_path)
+                break
+            except Exception as exc:
+                if attempt >= attempts:
+                    print(
+                        f"ERROR: Could not download GGUF profile {profile_id}. {exc}",
+                        file=sys.stderr,
+                    )
+                    print(
+                        "If the error mentions '401', run `huggingface-cli login` and retry.",
+                        file=sys.stderr,
+                    )
+                    return 2
+                wait = max(0.0, retry_wait) * attempt
+                print(
+                    f"WARN: GGUF download failed for {profile_id} (attempt {attempt}/{attempts}). Retrying in {wait:.1f}s...",
+                    file=sys.stderr,
+                )
+                time.sleep(wait)
+    return 0
 
 
 def main() -> int:
@@ -122,6 +269,31 @@ def main() -> int:
         "--skip-llm",
         action="store_true",
         help="Skip LLM downloads even if include-llm is set.",
+    )
+    parser.add_argument(
+        "--include-gguf",
+        action="store_true",
+        help="Download local GGUF writer files used by llama.cpp profiles.",
+    )
+    parser.add_argument(
+        "--gguf-profile",
+        action="append",
+        dest="gguf_profiles",
+        default=[],
+        help=(
+            "GGUF profile id to download, comma-separated list, 'recommended', "
+            "or 'all' (repeatable)."
+        ),
+    )
+    parser.add_argument(
+        "--gguf-dir",
+        default=_resolve_default_gguf_dir(),
+        help="Destination directory for GGUF files (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--skip-gguf",
+        action="store_true",
+        help="Skip GGUF downloads even if include-gguf is set.",
     )
     parser.add_argument(
         "--max-workers",
@@ -165,6 +337,9 @@ def main() -> int:
 
     if args.skip_llm:
         include_llm = False
+    include_gguf = bool(args.include_gguf)
+    if args.skip_gguf:
+        include_gguf = False
 
     models = list(base_models)
     llm_models: List[str] = []
@@ -226,6 +401,30 @@ def main() -> int:
                     file=sys.stderr,
                 )
                 time.sleep(wait)
+
+    if include_gguf:
+        gguf_profiles, unknown_profiles = _resolve_gguf_profiles(args.gguf_profiles)
+        for profile_id in unknown_profiles:
+            print(
+                f"WARN: Unknown GGUF profile '{profile_id}' skipped.",
+                file=sys.stderr,
+            )
+        if not gguf_profiles:
+            print("WARN: No valid GGUF profiles requested; skipping GGUF downloads.")
+        else:
+            print("Including GGUF profiles:")
+            for profile_id in gguf_profiles:
+                print(f"- {profile_id}")
+            rc = _download_gguf_profiles(
+                profile_ids=gguf_profiles,
+                gguf_dir=os.path.abspath(args.gguf_dir),
+                cache_dir=cache_dir,
+                max_workers=args.max_workers,
+                retries=args.retries,
+                retry_wait=args.retry_wait,
+            )
+            if rc:
+                return rc
 
     print("All AI models downloaded successfully.")
     return 0
