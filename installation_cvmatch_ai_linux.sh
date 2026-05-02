@@ -55,15 +55,22 @@ fi
 
 AI_MODE="${CVMATCH_AI_MODE:-lite}"
 LLM_MODEL_ID="${CVMATCH_LLM_MODEL_ID:-Qwen/Qwen2.5-7B-Instruct}"
+GGUF_PROFILE_IDS="${CVMATCH_GGUF_PROFILE_IDS:-${CVMATCH_GGUF_PROFILE_ID:-recommended}}"
 INSTALL_LLM=1
+INSTALL_GGUF=1
 if [[ "${CVMATCH_SKIP_LLM:-}" == "1" ]]; then
     INSTALL_LLM=
+    INSTALL_GGUF=
 fi
 if [[ "${AI_MODE}" == "base-only" ]]; then
     INSTALL_LLM=
+    INSTALL_GGUF=
 fi
 if [[ "${AI_MODE}" == "llm-only" ]]; then
     INSTALL_LLM=1
+fi
+if [[ "${CVMATCH_INSTALL_GGUF:-}" == "0" ]]; then
+    INSTALL_GGUF=
 fi
 
 TORCH_CPU_INDEX="https://download.pytorch.org/whl/cpu"
@@ -261,6 +268,9 @@ ensure_ai_runtime() {
 echo "=== CVMatch AI Model Installer ==="
 echo "Mode: ${AI_MODE}"
 echo "Cache: ${CACHE_DIR}"
+if [[ -n "${INSTALL_GGUF}" ]]; then
+    echo "GGUF profiles: ${GGUF_PROFILE_IDS}"
+fi
 "${PYTHON_CMD}" -c "import google.protobuf, sentencepiece" >/dev/null 2>&1 || {
     echo "Installing missing Python dependencies (protobuf, sentencepiece)..."
     run_with_spinner "Install protobuf+sentencepiece" 120 \
@@ -279,8 +289,17 @@ run_with_spinner "Install llama.cpp" 240 \
     echo "       Tip: set CVMATCH_LLAMA_CPP_BINARY and CVMATCH_LLAMA_CPP_MODEL_PATH if needed."
 }
 if [[ -n "${INSTALL_LLM}" ]]; then
-    run_with_spinner "Download AI models (LLM)" 1800 \
-        "${PYTHON_CMD}" "${SCRIPT_DIR}/scripts/download_ai_models.py" --cache-dir "${CACHE_DIR}" --mode "${AI_MODE}" --include-llm --llm-model "${LLM_MODEL_ID}" || {
+    download_args=(
+        "${PYTHON_CMD}" "${SCRIPT_DIR}/scripts/download_ai_models.py"
+        --cache-dir "${CACHE_DIR}"
+        --mode "${AI_MODE}"
+        --include-llm
+        --llm-model "${LLM_MODEL_ID}"
+    )
+    if [[ -n "${INSTALL_GGUF}" ]]; then
+        download_args+=(--include-gguf --gguf-profile "${GGUF_PROFILE_IDS}")
+    fi
+    run_with_spinner "Download AI models (LLM)" 1800 "${download_args[@]}" || {
         exit_code=$?
         if [ "$exit_code" -eq 401 ]; then
             echo "[ERROR] Authentication required to download models."
@@ -292,8 +311,15 @@ if [[ -n "${INSTALL_LLM}" ]]; then
         exit $exit_code
         }
 else
-    run_with_spinner "Download AI models (base)" 1800 \
-        "${PYTHON_CMD}" "${SCRIPT_DIR}/scripts/download_ai_models.py" --cache-dir "${CACHE_DIR}" --mode "${AI_MODE}" || {
+    download_args=(
+        "${PYTHON_CMD}" "${SCRIPT_DIR}/scripts/download_ai_models.py"
+        --cache-dir "${CACHE_DIR}"
+        --mode "${AI_MODE}"
+    )
+    if [[ -n "${INSTALL_GGUF}" ]]; then
+        download_args+=(--include-gguf --gguf-profile "${GGUF_PROFILE_IDS}")
+    fi
+    run_with_spinner "Download AI models (base)" 1800 "${download_args[@]}" || {
         exit_code=$?
         if [ "$exit_code" -eq 401 ]; then
             echo "[ERROR] Authentication required to download models."
