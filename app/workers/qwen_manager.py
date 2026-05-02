@@ -3209,7 +3209,7 @@ class QwenManager:
 
         Returns:
 
-            (diagnostic_text, hint) â€” both are plain strings; hint may be empty.
+            (diagnostic_text, hint) - both are plain strings; hint may be empty.
 
         """
         diagnostic_lines: List[str] = []
@@ -3736,7 +3736,7 @@ class QwenManager:
         except Exception:
             pass
 
-        # Ã‰vite de garder des références partielles après un échec précédent.
+        # Évite de garder des références partielles après un échec précédent.
 
         if not self.model_loaded and (
             self._model is not None or self._tokenizer is not None
@@ -4453,7 +4453,7 @@ class QwenManager:
                 or "out of memory" in lowered
                 or "cuda out of memory" in lowered
             ):
-                # Ã‰vite de conserver des références partielles après un échec OOM.
+                # Évite de conserver des références partielles après un échec OOM.
 
                 self.model_loaded = False
 
@@ -4532,7 +4532,7 @@ class QwenManager:
 
         #
 
-        # MODÃˆLE                    | CPU tokens | GPU tokens | RAM requise
+        # MODÈLE                    | CPU tokens | GPU tokens | RAM requise
 
         # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -4573,7 +4573,7 @@ class QwenManager:
         if "32b" in model_name_lower:
             return 2048
 
-        # Unknown model â€” safe defaults
+        # Unknown model - safe defaults
 
         return 1024 if is_cpu else 2048
 
@@ -5522,12 +5522,12 @@ CV en Markdown:
                 "guidance": (
                     "3-4 lines, concise, aligned to the target role."
                     if en
-                    else "3-4 lignes, concises, alignees au poste cible."
+                    else "3-4 lignes, concises, alignées au poste cible."
                 ),
             },
             {
                 "key": "experience",
-                "title": "Work Experience" if en else "Experience professionnelle",
+                "title": "Work Experience" if en else "Expérience professionnelle",
                 "data_keys": ["experience", "volunteering"],
                 "max_tokens": 700,
                 "include_offer": True,
@@ -5561,12 +5561,12 @@ CV en Markdown:
                 "guidance": (
                     "Degree | School | Year, add details if relevant."
                     if en
-                    else "Diplome | Etablissement | Annee, details si pertinent."
+                    else "Diplôme | Établissement | Année, détails si pertinent."
                 ),
             },
             {
                 "key": "skills",
-                "title": "Skills" if en else "Competences",
+                "title": "Skills" if en else "Compétences",
                 "data_keys": ["skills", "soft_skills"],
                 "max_tokens": 260,
                 "include_offer": True,
@@ -5604,7 +5604,7 @@ CV en Markdown:
             {
                 "key": "interests",
                 "title": (
-                    "Interests (optional)" if en else "Centres d'interet (optionnel)"
+                    "Interests (optional)" if en else "Centres d'intérêt (optionnel)"
                 ),
                 "data_keys": ["interests"],
                 "max_tokens": 120,
@@ -5620,7 +5620,7 @@ CV en Markdown:
 
         language_code = _normalize_language(lang_match.group(1)) if lang_match else "fr"
 
-        placeholder = "[TO COMPLETE]" if language_code == "en" else "[A COMPLETER]"
+        placeholder = "[TO COMPLETE]" if language_code == "en" else "[À COMPLÉTER]"
 
         if progress_callback:
             progress_callback("[LOW VRAM] Generation en sections (mode fragmenté)...")
@@ -5672,14 +5672,14 @@ CV en Markdown:
             )
 
         else:
-            header = "# [Votre Prenom] [Votre Nom]\n## <Titre du poste cible>\n"
+            header = "# [Votre Prénom] [Votre Nom]\n## <Titre du poste cible>\n"
 
             contact_title = "Informations de contact"
 
             contact_block = (
                 f"## {contact_title}\n"
                 "- Email: [Votre Email]\n"
-                "- Telephone: [Votre Telephone]\n"
+                "- Téléphone: [Votre Téléphone]\n"
                 "- LinkedIn: [Votre LinkedIn]\n"
                 "- Localisation: [Votre Ville, Pays]\n"
             )

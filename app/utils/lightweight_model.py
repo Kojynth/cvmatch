@@ -28,24 +28,24 @@ class LightweightCVGenerator:
 - **LinkedIn:** {linkedin}
 
 ## Objectif professionnel
-Recherche d'un poste de **{job_title}** chez **{company}** pour mettre à profit mes compétences techniques et mon expérience.
+Poste cible : **{job_title}** chez **{company}**.
 
 {job_context}
 
-## Profil technique
+## Profil
 {profile_summary}
 
 ## Expérience professionnelle
 {experience_section}
 
-## Compétences techniques
+## Compétences
 {skills_section}
 
 ## Formation
 {education_section}
 
 ---
-*CV généré rapidement avec générateur léger - Optimisé pour {job_title}*""",
+*CV généré avec le générateur léger pour {job_title}*""",
 
             "modern": """# {name}
 > **{job_title}** chez **{company}**
@@ -70,7 +70,7 @@ Recherche d'un poste de **{job_title}** chez **{company}** pour mettre à profit
 {education_section}
 
 ---
-*Candidature optimisée pour {company} - {job_title}*"""
+*CV généré avec le générateur léger pour {company} - {job_title}*"""
         }
     
     def generate_cv(
@@ -86,7 +86,7 @@ Recherche d'un poste de **{job_title}** chez **{company}** pour mettre à profit
             progress_callback("[RAPID] Génération ultra-rapide en cours...")
         
         # Extraire informations
-        name = getattr(profile, 'name', 'Candidat Professionnel')
+        name = getattr(profile, 'name', 'Candidat')
         email = getattr(profile, 'email', 'email@exemple.com')
         phone = getattr(profile, 'phone', 'Téléphone à renseigner')
         linkedin = getattr(profile, 'linkedin_url', 'LinkedIn à renseigner')
@@ -149,7 +149,7 @@ Recherche d'un poste de **{job_title}** chez **{company}** pour mettre à profit
     def _generate_profile_summary(self, master_cv: str, offer_text: str) -> str:
         """Génère un résumé de profil adapté."""
         if not master_cv:
-            return "Professionnel expérimenté recherchant de nouveaux défis et opportunités de croissance."
+            return "Profil candidat à compléter depuis les informations source disponibles."
         
         # Extraire les premiers paragraphes pertinents
         lines = master_cv.split('\n')
@@ -165,7 +165,7 @@ Recherche d'un poste de **{job_title}** chez **{company}** pour mettre à profit
         if summary_lines:
             return ' '.join(summary_lines)[:300] + "..."
         
-        return "Professionnel expérimenté avec une solide expertise dans le domaine."
+        return "Profil candidat fondé sur les informations source disponibles."
     
     def _extract_experience(self, master_cv: str, offer_text: str) -> str:
         """Extrait l'expérience pertinente."""
@@ -186,10 +186,9 @@ Recherche d'un poste de **{job_title}** chez **{company}** pour mettre à profit
     def _extract_skills(self, master_cv: str, offer_text: str) -> str:
         """Extrait les compétences."""
         if not master_cv:
-            return """- Compétences techniques pertinentes
-- Maîtrise des outils professionnels
-- Capacités d'adaptation et d'apprentissage
-- Communication et travail en équipe"""
+            return """- Compétences à compléter depuis le profil source
+- Outils ou méthodes étayés par le profil source
+- Points forts à confirmer depuis le profil"""
         
         # Chercher section compétences
         skills_section = self._extract_section(master_cv, ['compétence', 'competence', 'skill', 'technique'])
@@ -197,7 +196,7 @@ Recherche d'un poste de **{job_title}** chez **{company}** pour mettre à profit
         if skills_section:
             return skills_section[:300] + "..." if len(skills_section) > 300 else skills_section
         
-        return "Compétences adaptées au poste et à l'environnement professionnel."
+        return "Compétences à compléter depuis les informations source disponibles."
     
     def _extract_education(self, master_cv: str) -> str:
         """Extrait la formation."""

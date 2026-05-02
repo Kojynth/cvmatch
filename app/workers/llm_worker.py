@@ -772,7 +772,7 @@ def _format_profile_detailed_data(
     lines.append(f"- Nom: {profile.name or ''}")
     lines.append(f"- Email: {profile.email or ''}")
     if getattr(profile, "phone", None):
-        lines.append(f"- Telephone: {profile.phone}")
+        lines.append(f"- Téléphone: {profile.phone}")
     if getattr(profile, "linkedin_url", None):
         lines.append(f"- LinkedIn: {profile.linkedin_url}")
 
@@ -891,7 +891,7 @@ def _format_profile_detailed_data(
             for entry in skills:
                 if isinstance(entry, dict):
                     category = (
-                        entry.get("category") or entry.get("name") or "Competences"
+                        entry.get("category") or entry.get("name") or "Compétences"
                     ).strip()
                     direct_name = str(entry.get("name") or "").strip()
                     direct_level = str(entry.get("level") or "").strip()
@@ -1057,42 +1057,42 @@ def _markdown_skeleton_for_template(
             "<3-4 lines, results-oriented and aligned with the role>\n\n"
         )
         skills_title = "## Skills\n"
-        tech_skills_title = "## Technical Skills\n"
+        tech_skills_title = "## Skills\n"
         certifications_title = "## Certifications (optional)\n"
         interests_title = "## Interests (optional)\n"
     else:
         common_experience = (
-            "## Experience professionnelle\n"
-            "### <Intitule du poste>\n"
-            "**<Entreprise> | <Periode>**\n"
-            "- <Impact / realisation 1>\n"
-            "- <Impact / realisation 2>\n"
-            "- <Impact / realisation 3>\n"
+            "## Expérience professionnelle\n"
+            "### <Intitulé du poste>\n"
+            "**<Entreprise> | <Période>**\n"
+            "- <Impact / réalisation 1>\n"
+            "- <Impact / réalisation 2>\n"
+            "- <Impact / réalisation 3>\n"
         )
         common_education = (
             "## Formation\n"
-            "**<Diplome> | <Etablissement> | <Annee>**\n"
-            "- <Option / details si pertinent>\n"
+            "**<Diplôme> | <Établissement> | <Année>**\n"
+            "- <Option / détails si pertinent>\n"
         )
         common_languages = "## Langues\n- <Langue>: <Niveau>\n"
         common_projects = (
             "## Projets\n### <Nom du projet>\n<Description en 1-2 phrases>\n"
         )
         base = (
-            "# [Votre Prenom] [Votre Nom]\n"
+            "# [Votre Prénom] [Votre Nom]\n"
             "## <Titre du poste cible>\n\n"
             "## Informations de contact\n"
             "- Email: [Votre Email]\n"
-            "- Telephone: [Votre Telephone]\n"
+            "- Téléphone: [Votre Téléphone]\n"
             "- LinkedIn: [Votre LinkedIn]\n"
             "- Localisation: [Votre Ville, Pays]\n\n"
             "## Profil professionnel\n"
-            "<3-4 lignes orientees resultats et alignement offre>\n\n"
+            "<3-4 lignes orientées résultats et alignement offre>\n\n"
         )
-        skills_title = "## Competences\n"
-        tech_skills_title = "## Competences techniques\n"
+        skills_title = "## Compétences\n"
+        tech_skills_title = "## Compétences\n"
         certifications_title = "## Certifications (optionnel)\n"
-        interests_title = "## Centres d'interet (optionnel)\n"
+        interests_title = "## Centres d'intérêt (optionnel)\n"
 
     if key == "tech":
         return (
@@ -2451,10 +2451,9 @@ OUTPUT RULES:
   mentions TARGET_COMPANY and offer vocabulary, including offer-only terms,
   but only as positioning/relevance, not as a claimed past responsibility.
 - When TARGET_COMPANY is provided, keep it visible in the summary, but do not
-  use a formulaic keyword dump such as "Profil pertinent pour COMPANY grace a
-  A, B, C" or "Atouts pertinents pour COMPANY : A, B, C". Prefer a short
-  relevance sentence that links PROFILE_JSON evidence to the target role's
-  concrete requirements.
+  use a formulaic keyword dump. Create a short relevance sentence from
+  PROFILE_JSON evidence, TARGET_COMPANY, TARGET_JOB_TITLE, and the offer's
+  concrete requirements instead of following a fixed template.
 - Use TARGET_JOB_TITLE and requirement-heavy offer terms to decide what makes
   the profile relevant. Keep the rule generic for any profession or sector; do
   not hardcode one employer, one user profile, or a tech/QA-only taxonomy.
@@ -2716,12 +2715,14 @@ OUTPUT RULES:
                 return _trim_text(summary, 420)
 
         fallback_role = str(target_job_title or "").strip() or (
-            "technical profile" if lang == "en" else "profil technique"
+            "candidate profile" if lang == "en" else "profil candidat"
         )
         if lang == "en":
-            return _trim_text(f"{fallback_role} with software project experience.", 420)
+            return _trim_text(
+                f"{fallback_role} based on documented source information.", 420
+            )
         return _trim_text(
-            f"{fallback_role} avec une experience sur des projets logiciels.", 420
+            f"{fallback_role} fondé sur les informations source documentées.", 420
         )
 
     @staticmethod
@@ -4079,7 +4080,7 @@ OUTPUT RULES:
         if not isinstance(cv_json, dict):
             return
         fallback_category = (
-            "Skills" if self._resolve_language_code() == "en" else "Competences"
+            "Skills" if self._resolve_language_code() == "en" else "Compétences"
         )
 
         def clean_text(value: Any) -> str:
@@ -4519,7 +4520,7 @@ OUTPUT RULES:
                         critic_missing.append(text)
         profile_skill_terms = self._collect_profile_skill_terms()
         language_code = self._resolve_language_code()
-        fallback_category = "Skills" if language_code == "en" else "Competences"
+        fallback_category = "Skills" if language_code == "en" else "Compétences"
         offer_norm = {_normalize_keyword_for_match(item) for item in offer_keywords}
         critic_skill_candidates = _dedup_preserve(
             [

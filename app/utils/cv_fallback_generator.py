@@ -577,24 +577,22 @@ def _build_generic_profile_summary(
 
     if is_en:
         if lead_title and focus_phrase:
-            summary = f"{lead_title} focused on {focus_phrase}."
+            summary = f"{lead_title} with documented experience in {focus_phrase}."
         elif lead_title:
-            summary = f"{lead_title} active on technical and operational scopes."
+            summary = f"{lead_title} based on documented source experience."
         elif focus_phrase:
-            summary = f"Candidate focused on {focus_phrase}."
+            summary = f"Candidate profile with documented experience in {focus_phrase}."
         else:
-            summary = "Candidate active on technical and operational scopes."
+            summary = "Candidate profile based on documented source information."
     else:
         if lead_title and focus_phrase:
-            summary = f"{lead_title} orienté {focus_phrase}."
+            summary = f"{lead_title} avec une expérience documentée en {focus_phrase}."
         elif lead_title:
-            summary = (
-                f"{lead_title} actif sur des environnements techniques et opérationnels."
-            )
+            summary = f"{lead_title} fondé sur une expérience source documentée."
         elif focus_phrase:
-            summary = f"Candidat orienté {focus_phrase}."
+            summary = f"Profil candidat avec une expérience documentée en {focus_phrase}."
         else:
-            summary = "Candidat actif sur des environnements techniques et opérationnels."
+            summary = "Profil candidat fondé sur les informations source documentées."
 
     return _trim_text(summary, 260)
 
@@ -785,7 +783,7 @@ def generate_fallback_cv_json(
         personal = {}
 
     is_en = language_code == "en"
-    skills_label = "Skills" if is_en else "Competences"
+    skills_label = "Skills" if is_en else "Compétences"
 
     # Extract offer metadata
     job_title = ""
@@ -851,38 +849,22 @@ def generate_fallback_cv_json(
         if isinstance(item, dict)
     ]
 
-    # Build summary text
-    terms_preview = ", ".join(matched_terms[:4]) if matched_terms else ""
+    # Build minimal neutral fallback summary. Target-specific prose belongs to
+    # the LLM stage; target fields remain structured elsewhere in the payload.
     if job_title or company:
-        role_label = job_title or ("the role" if is_en else "le poste")
-        company_label = company or ("the company" if is_en else "l'entreprise")
-        if is_en:
-            if terms_preview:
-                summary = (
-                    f"Application for {role_label} at {company_label}, with hands-on "
-                    f"experience in {terms_preview}."
-                )
-            else:
-                summary = (
-                    f"Application for {role_label} at {company_label}, with practical "
-                    "experience aligned to the job requirements."
-                )
-        else:
-            if terms_preview:
-                summary = (
-                    f"Candidature au poste {role_label} chez {company_label}, avec une "
-                    f"experience concrete en {terms_preview}."
-                )
-            else:
-                summary = (
-                    f"Candidature au poste {role_label} chez {company_label}, avec un "
-                    "parcours aligne sur les besoins du poste."
-                )
         if profile_summary and not _is_cross_language_narrative(
             profile_summary,
             language_code=language_code,
         ):
-            summary = f"{summary} {_trim_text(profile_summary, 180)}".strip()
+            summary = _trim_text(profile_summary, 260)
+        else:
+            summary = _build_generic_profile_summary(
+                is_en=is_en,
+                language_code=language_code,
+                profile_summary=profile_summary,
+                experience_titles=experience_titles,
+                skill_items=skill_items,
+            )
     else:
         summary = _build_generic_profile_summary(
             is_en=is_en,
@@ -899,12 +881,6 @@ def generate_fallback_cv_json(
         for item in (profile_json.get("experiences", []) or [])
         if isinstance(item, dict)
     ]
-
-    # Rank experiences by relevance if we have offer keywords
-    if source_experiences and offer_keywords:
-        source_experiences = rank_experiences_by_offer_relevance(
-            source_experiences, offer_keywords, job_title
-        )
 
     for item in source_experiences:
         if not isinstance(item, dict):
@@ -1138,7 +1114,7 @@ def generate_fallback_cv_json(
                 "skills",
                 "education",
             ],
-            "emphasis": ["reliability"],
+            "emphasis": [],
             "tone": "professional",
         },
     }

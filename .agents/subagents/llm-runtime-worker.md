@@ -50,6 +50,13 @@ risk.
   explicit durations when reliable, 2-4 concise bullets per role when the
   profile supports bullets, and grounded keyword usage rather than lexical
   stuffing
+- keep deterministic generation helpers profession-agnostic,
+  company-agnostic, profile-agnostic, and language-agnostic: runtime code,
+  fallback builders, validators, renderers, and postprocessors may enforce
+  neutral structure, filters, source collection, and retry/critic rules, but
+  must not hardcode reader-facing role/company/profile-specific prose or fixed
+  profession/sector contribution formulas. Specific CV or cover-letter wording
+  belongs in source-backed LLM prompting/generation for the selected language.
 - when runtime changes can affect final CV rendering, preserve the one-page
   **fit-to-page** contract end to end: prioritized content allocation,
   measured rendered height, controlled compression tiers, then PDF export

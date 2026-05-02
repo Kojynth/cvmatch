@@ -44,6 +44,13 @@ Current render/export contracts to preserve across agent runs:
   instead of flattening content into a blob
 - final rendered sentences must stay whole: no `...` / `…` truncation in the
   one-page HTML/PDF path; select better sentences instead of clipping them
+- deterministic code must stay generic: fallback builders, validators,
+  renderers, postprocessors, and coding-agent helper logic can enforce neutral
+  structure, filters, guards, source collection, and retry/critic rules, but
+  must not hardcode role/company/profile-specific reader-facing prose or fixed
+  profession/sector contribution formulas. Specific CV and cover-letter
+  wording must be induced by the LLM from profile evidence plus offer
+  responsibilities in the selected language.
 - when a grounding-safe positioning sentence exists, keep it visible in the
   rendered summary with `{company}` visible in a natural `{job_title}`
   relevance statement; do not preserve a stale/noisy stored sentence or a

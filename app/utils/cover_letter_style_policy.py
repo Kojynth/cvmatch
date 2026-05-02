@@ -66,6 +66,7 @@ _TERM_STOPWORDS = {
     "for",
     "from",
     "hiring",
+    "highly",
     "job",
     "les",
     "location",
@@ -243,9 +244,9 @@ COVER LETTER QUALITY RULES:
 - Company spelling: write `{company_text}` exactly as provided; never recase acronyms, product names, tool names, or official company casing.
 - Evidence-first structure: every body paragraph must connect a strong requirement of `{job_text}` to a concrete profile-backed proof.
 - Role vocabulary: when grounded by profile evidence, surface high-signal offer terms such as {offer_signal_text}; do not replace them with vague wording.
-- Project usage: if a profile project overlaps the offer, explain what it technically does (inputs analyzed, selection logic, generated outputs, checks, tooling, or reliability work); do not reduce it to "project with tool A and tool B".
-- Coding agents: mention coding agents only when the candidate data names them; if relevant, frame them as controlled workflows with human review, tests, and factual validation.
-- Rubric or annotation roles: when the offer contains rubric, annotation, evaluation, or review work and the profile has QA/review evidence, explicitly connect requirements/acceptance-criteria discipline to rubric-based review.
+- Motivation wording: never use a raw keyword list as the object of motivation. Let the contribution wording be induced from the candidate evidence and the offer's responsibilities; do not rely on fixed role-category formulas.
+- Project usage: if a profile project overlaps the offer, explain what it does and which source-backed practice, result, or workflow it proves; do not reduce it to "project with tool A and tool B".
+- Shared specialized requirements: when both the offer and candidate data support a concrete method, tool, workflow, review practice, or domain requirement, integrate it naturally in the target language without forcing fixed profession-specific examples.
 - Offer-only terms may appear as target contribution or projection, never as past achievements unless the profile supports them.
 - Certifications and soft skills are secondary; use them only after stronger technical, operational, business, or domain proof.
 - Avoid generic filler, especially: {generic_phrases}.
@@ -259,9 +260,9 @@ REGLES QUALITE LETTRE:
 - Orthographe entreprise: ecrire `{company_text}` exactement comme dans l'offre; ne jamais recaser les acronymes, noms de produit, noms d'outils ou la casse officielle d'une entreprise.
 - Structure par preuves: chaque paragraphe de corps doit relier une exigence forte de `{job_text}` a une preuve concrete issue du profil.
 - Vocabulaire du role: quand le profil le justifie, faire apparaitre les termes forts de l'offre comme {offer_signal_text}; ne pas les remplacer par des formulations vagues.
-- Usage des projets: si un projet du profil chevauche l'offre, expliquer ce qu'il fait techniquement (entrees analysees, logique de selection, livrables generes, controles, outillage ou fiabilisation); ne pas le reduire a "projet avec outil A et outil B".
-- Agents de code: mentionner les agents de code seulement quand les donnees candidat les nomment; si c'est pertinent, les presenter comme des workflows controles avec revue humaine, tests et validation factuelle.
-- Roles avec grille ou annotation: quand l'offre contient rubric, annotation, evaluation ou review et que le profil contient des preuves QA/revue, relier explicitement la discipline exigences/criteres d'acceptation a une revue fondee sur grille.
+- Formulation de la motivation: ne jamais utiliser une liste brute de mots-clés comme objet de motivation. Laisser la formulation de contribution être induite par les preuves candidat et les responsabilités de l'offre; ne pas s'appuyer sur des catégories métier fixes.
+- Usage des projets: si un projet du profil chevauche l'offre, expliquer ce qu'il fait et quelle pratique, resultat ou maniere de travailler sourcee il prouve; ne pas le reduire a "projet avec outil A et outil B".
+- Exigences specialisees partagees: quand l'offre et les donnees candidat soutiennent toutes les deux une methode, un outil, un workflow, une pratique de revue ou une exigence metier concrete, l'integrer naturellement dans la langue cible sans forcer d'exemples propres a un metier.
 - Les termes presents uniquement dans l'offre peuvent servir a la projection vers le poste, jamais a decrire une realisation passee sans preuve profil.
 - Certifications et soft skills sont secondaires; les utiliser seulement apres les preuves techniques, operationnelles, business ou metier plus fortes.
 - Eviter le remplissage generique, notamment: {generic_phrases}.
@@ -826,9 +827,9 @@ MANDATORY OUTPUT RULES (plain text only, no Markdown):
 - Translate every generated sentence into {target_language_name}. Only proper nouns, official company/product names, established acronyms, and tool names may remain untranslated when necessary.
 - Make the letter motivation-driven: one paragraph must show why the candidate wants this specific company, and another sentence must show why this specific role fits the candidate's next step.
 - Use active phrasing such as "I want to contribute", "I have learned to", "I see this role as", "I can bring"; avoid weak filler such as "my profile is aligned".
-- If a candidate project is relevant, explain what it does technically and what quality/reliability practice it proves; never write only "I developed X with Y".
-- If the candidate data mentions coding agents and the offer makes them relevant, include one sentence about controlled use of those agents with human review, tests, and factual validation.
-- If the offer involves rubric, annotation, evaluation, or review and the profile has QA/review evidence, explicitly connect that evidence to rubric-based review.
+- In motivation sentences, do not write "work involving A, B, C" or any raw keyword list. Derive the contribution wording from the candidate evidence and offer responsibilities instead of using fixed role-category formulas.
+- If a candidate project is relevant, explain what it does and which source-backed practice, result, or workflow it proves; never write only "I developed X with Y".
+- If both the offer and candidate data support a concrete specialized requirement, integrate it naturally in the selected language; do not force fixed profession-specific examples.
 - Do not use weak filler phrases such as "documented background", "practical approach to execution", "highly in that concrete context", or "I would approach those expectations".
 - Do not dump raw keywords or analysis labels. Integrate tools, methods, role priorities, and company context into grammatical sentences.
 - Use only facts present in the candidate data (otherwise {placeholder}).
@@ -909,9 +910,9 @@ SORTIE OBLIGATOIRE (texte uniquement, pas de Markdown):
 - Traduis chaque phrase generee en {target_language_name}. Seuls les noms propres, noms officiels d'entreprise/produit, acronymes etablis et noms d'outils peuvent rester non traduits si necessaire.
 - La lettre doit porter une motivation explicite: un paragraphe doit montrer pourquoi le candidat veut rejoindre cette entreprise precise, et une phrase doit montrer pourquoi ce poste precis correspond a sa prochaine etape.
 - Utilise des formulations actives comme "je souhaite contribuer", "j'ai appris a", "je vois ce poste comme", "je peux apporter"; evite les formules faibles du type "mon profil est aligne".
-- Si un projet candidat est pertinent, explique ce qu'il fait techniquement et quelle pratique qualite/fiabilite il prouve; ne te limite jamais a "j'ai developpe X avec Y".
-- Si les donnees candidat mentionnent des agents de code et que l'offre les rend pertinents, ajoute une phrase sur leur usage controle avec revue humaine, tests et validation factuelle.
-- Si l'offre implique rubric, annotation, evaluation ou review et que le profil contient des preuves QA/revue, relie explicitement ces preuves a une revue fondee sur grille.
+- Dans les phrases de motivation, n'écris pas "travaux impliquant A, B, C" ni aucune liste brute de mots-clés. Dérive la formulation de contribution depuis les preuves candidat et les responsabilités de l'offre, sans utiliser de catégories métier fixes.
+- Si un projet candidat est pertinent, explique ce qu'il fait et quelle pratique, resultat ou maniere de travailler sourcee il prouve; ne te limite jamais a "j'ai developpe X avec Y".
+- Si l'offre et les donnees candidat soutiennent toutes les deux une exigence specialisee concrete, integre-la naturellement dans la langue selectionnee; ne force pas d'exemples propres a un metier.
 - N'utilise pas les formulations faibles "documented background", "practical approach to execution", "highly in that concrete context" ou "I would approach those expectations".
 - Ne deverse pas de mots-cles bruts ni de labels d'analyse. Integre les outils, methodes, priorites du poste et contexte entreprise dans des phrases grammaticales.
 - Utilise uniquement les faits presents dans les donnees candidat (sinon {placeholder}).
@@ -993,9 +994,9 @@ MANDATORY OUTPUT RULES (plain text only, no Markdown):
 - Translate every generated sentence into {target_language_name}. Only proper nouns, official company/product names, established acronyms, and tool names may remain untranslated when necessary.
 - Make the letter motivation-driven: one paragraph must show why the candidate wants this specific company, and one sentence must show why this specific role fits the candidate's next step.
 - Use active phrasing in {target_language_name}; avoid weak filler equivalent to "my profile is aligned".
-- If a candidate project is relevant, explain in {target_language_name} what it does technically and what quality/reliability practice it proves; never write only "I developed X with Y".
-- If the candidate data mentions coding agents and the offer makes them relevant, include one sentence in {target_language_name} about controlled use of those agents with human review, tests, and factual validation.
-- If the offer involves rubric, annotation, evaluation, or review and the profile has QA/review evidence, explicitly connect that evidence to rubric-based review in {target_language_name}.
+- In motivation sentences, do not write a raw keyword list such as "work involving A, B, C". Derive the contribution wording from candidate evidence and offer responsibilities in {target_language_name}, without fixed role-category formulas.
+- If a candidate project is relevant, explain in {target_language_name} what it does and which source-backed practice, result, or workflow it proves; never write only "I developed X with Y".
+- If both the offer and candidate data support a concrete specialized requirement, integrate it naturally in {target_language_name}; do not force fixed profession-specific examples.
 - Do not use weak filler equivalent to "documented background", "practical approach to execution", "highly in that concrete context", or "I would approach those expectations".
 - Do not dump raw keywords or analysis labels. Integrate tools, methods, role priorities, and company context into grammatical sentences.
 - Use only facts present in the candidate data (otherwise {placeholder}).

@@ -518,7 +518,7 @@ def sanitize_cv_json_output(
     if not isinstance(cv_json, dict):
         return
 
-    fallback_category = "Skills" if language_code == "en" else "Competences"
+    fallback_category = "Skills" if language_code == "en" else "Compétences"
 
     try:
         from .cv_skill_evidence import looks_like_noise_skill_term, should_keep_skill_term
@@ -3395,15 +3395,6 @@ def _seed_experience_from_profile(
         return 0
 
     profile_experiences = _extract_profile_experiences(profile_json)
-    if offer_keywords and profile_experiences:
-        try:
-            from app.utils.cv_fallback_generator import rank_experiences_by_offer_relevance
-
-            profile_experiences = rank_experiences_by_offer_relevance(
-                profile_experiences, list(offer_keywords), job_title=job_title or ""
-            )
-        except Exception as exc:
-            logger.debug("Seed offer-ranking skipped: %s", exc)
 
     seeded: List[Dict[str, Any]] = []
     for item in profile_experiences[:4]:
@@ -5289,14 +5280,12 @@ def enforce_cv_offer_adaptation(
                     return target
                 if bucket == "soft":
                     target = {
-                        "category": "Soft Skills" if is_en else "Qualites",
+                        "category": "Soft Skills" if is_en else "Qualités",
                         "items": [],
                     }
                 else:
                     target = {
-                        "category": (
-                            "Technical Skills" if is_en else "Competences techniques"
-                        ),
+                        "category": "Skills" if is_en else "Compétences",
                         "items": [],
                     }
                 skills_section.append(target)
@@ -5415,26 +5404,6 @@ def enforce_cv_offer_adaptation(
                 if not normalized_term_present(tech_probe, term_norm):
                     tech_items = _dedup_preserve([*tech_items, term])[:10]
                     target["technologies"] = ", ".join(tech_items)
-                    injected = True
-
-                description = clean_narrative_text(str(target.get("description") or ""))
-                description_norm = normalize_keyword_for_match(description)
-                if not normalized_term_present(description_norm, term_norm):
-                    sentence = (
-                        f"Contribution focused on {term}."
-                        if is_en
-                        else f"Contribution orientee sur {term}."
-                    )
-                    target["description"] = clean_narrative_text(
-                        _trim_text(
-                            (
-                                f"{description} {sentence}".strip()
-                                if description
-                                else sentence
-                            ),
-                            320,
-                        )
-                    )
                     injected = True
 
                 if injected:

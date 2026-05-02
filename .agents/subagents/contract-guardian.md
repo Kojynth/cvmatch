@@ -52,6 +52,12 @@ history, and `mass_apply`.
   the CV quality contract: ATS readability, one-language output, reverse
   chronology, consistent dates, explicit durations when reliable, 2-4 concise
   bullets when supported, and grounded keyword usage instead of stuffing
+- when generation, fallback, prompt preparation, or postprocessing is touched,
+  verify specific reader-facing wording is owned by source-backed LLM
+  generation, not deterministic code. Code may enforce neutral structure,
+  filters, guards, validation, source collection, and retry/critic rules, but
+  must not hardcode role/company/profile-specific prose or fixed
+  profession/sector contribution formulas across languages.
 - when preview/export/rendering is touched, also verify the one-page render
   contract: measured fit-to-page compression (no `overflow: hidden` crop,
   no forced `body` A4 height), a single canonical print block with A4 margins,

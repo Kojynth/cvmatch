@@ -262,7 +262,7 @@ def apply_keyword_alignment_to_cv(
     if not isinstance(cv_json, dict):
         return 0
 
-    fallback_category = "Skills" if language_code == "en" else "Competences"
+    fallback_category = "Skills" if language_code == "en" else "Compétences"
     offer_norm = {normalize_keyword_for_match(item) for item in offer_keywords}
     replacements = 0
 
@@ -504,12 +504,12 @@ def enforce_required_offer_keywords(
         cv_json["skills"] = skills
     if not skills:
         skills.append({
-            "category": "Skills" if is_en else "Competences",
+            "category": "Skills" if is_en else "Compétences",
             "items": [],
         })
 
     first_block = skills[0] if isinstance(skills[0], dict) else {
-        "category": "Skills" if is_en else "Competences",
+        "category": "Skills" if is_en else "Compétences",
         "items": []
     }
     items = first_block.get("items")
@@ -530,29 +530,3 @@ def enforce_required_offer_keywords(
         [item for item in items if isinstance(item, str) and item.strip()]
     )[:12]
     skills[0] = first_block
-
-    # Add overflow to experience highlights
-    experience_entries = [
-        entry for entry in (cv_json.get("experience") or []) if isinstance(entry, dict)
-    ]
-    if experience_entries and remaining:
-        cursor = 0
-        for entry in experience_entries:
-            if cursor >= len(remaining):
-                break
-            chunk = remaining[cursor : cursor + 2]
-            cursor += len(chunk)
-            if not chunk:
-                continue
-            line = (
-                f"Offer-focused contributions: {', '.join(chunk)}."
-                if is_en
-                else f"Contributions alignees offre: {', '.join(chunk)}."
-            )
-            highlights = entry.get("highlights")
-            if not isinstance(highlights, list):
-                highlights = []
-            highlights.append(line)
-            entry["highlights"] = _dedup_preserve_local(
-                [item for item in highlights if isinstance(item, str) and item.strip()]
-            )[:5]
