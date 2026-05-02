@@ -373,7 +373,7 @@ class AdaptiveQwenManager:
         # S'assurer qu'on a un CV minimum
         if len(text) < 100:
             logger.warning("Texte généré trop court - Ajout contenu minimal")
-            text += "\n\n## Profil\nProfessionnel expérimenté recherchant de nouveaux défis.\n\n## Compétences\n- Adaptabilité\n- Rigueur\n- Esprit d'équipe"
+            text += "\n\n## Profil\nProfil candidat à compléter depuis les informations source disponibles.\n\n## Compétences\n- Compétences à confirmer depuis le profil source"
         
         return text
     
@@ -424,7 +424,7 @@ class AdaptiveQwenManager:
             linkedin = profile.linkedin_url or "LinkedIn à renseigner"
             cv_content = profile.master_cv_content or ""
         else:
-            name = "Candidat Professionnel"
+            name = "Candidat"
             email = "candidat@email.com"
             phone = "Téléphone à renseigner"
             linkedin = "LinkedIn à renseigner"
@@ -471,12 +471,12 @@ class AdaptiveQwenManager:
 - **LinkedIn:** {linkedin}
 
 ## Objectif professionnel
-Candidature motivée pour le poste de **{job_title}** chez **{company}**.
+Poste cible : **{job_title}** chez **{company}**.
 
 {f"**Contexte de l'offre :** {offer_text[:200]}..." if offer_text else ""}
 
 ## Profil professionnel
-{cv_content[:400] + "..." if cv_content else "Professionnel expérimenté recherchant de nouveaux défis dans le domaine."}
+{cv_content[:400] + "..." if cv_content else "Profil candidat à compléter depuis les informations source disponibles."}
 
 ## Expérience professionnelle
 {experience_section if experience_section else '''
@@ -489,14 +489,14 @@ Candidature motivée pour le poste de **{job_title}** chez **{company}**.
 
 ## Compétences clés
 {skills_section if skills_section else '''
-- Compétences techniques à reprendre de votre profil
-- Maîtrise des outils professionnels
+- Compétences à reprendre du profil source
+- Outils ou méthodes à confirmer depuis le profil
 - Capacités d'adaptation et d'apprentissage
 - Communication et travail en équipe
 '''}
 
 ---
-*CV généré automatiquement en mode fallback - Merci de vérifier et compléter les informations.*"""
+*CV généré automatiquement en mode fallback - Merci de vérifier les informations source.*"""
 
         return fallback_cv
     
@@ -569,9 +569,9 @@ class AdaptiveCVGenerationWorker(QThread):
             # Formatage
             try:
                 cv_markdown = cv_markdown.format(
-                    name=self.profile.name or "[Votre Prenom] [Votre Nom]",
+                    name=self.profile.name or "[Votre Prénom] [Votre Nom]",
                     email=self.profile.email or "[Votre Email]",
-                    phone=self.profile.phone or "[Votre Telephone]",
+                    phone=self.profile.phone or "[Votre Téléphone]",
                     linkedin=self.profile.linkedin_url or "[Votre LinkedIn]"
                 )
             except KeyError:
@@ -615,14 +615,14 @@ Email: {self.profile.email}
 Poste: {self.offer_data['job_title']}
 Entreprise: {self.offer_data['company']}
 
-Profil: {self.profile.master_cv_content[:500] if self.profile.master_cv_content else 'Professionnel expérimenté'}
+Profil: {self.profile.master_cv_content[:500] if self.profile.master_cv_content else 'Profil candidat à compléter'}
 
 Offre: {self.offer_data['text'][:800]}
 
 Regles:
 - N'invente pas de faits, utilise uniquement les donnees du profil.
 - Adapte le CV a l'offre (mots-cles si presents dans le profil).
-- Utilise les placeholders d'identite: [Votre Prenom] [Votre Nom], [Votre Email], [Votre Telephone], [Votre LinkedIn].
+- Utilise les placeholders d'identité: [Votre Prénom] [Votre Nom], [Votre Email], [Votre Téléphone], [Votre LinkedIn].
 
 CV markdown professionnel et concis."""
         else:
@@ -652,7 +652,7 @@ OBJECTIFS:
 REGLES:
 - Ne jamais inventer de faits.
 - Utiliser les mots-cles de l'offre uniquement s'ils existent dans les donnees candidat.
-- Utiliser les placeholders d'identite: [Votre Prenom] [Votre Nom], [Votre Email], [Votre Telephone], [Votre LinkedIn].
+- Utiliser les placeholders d'identité: [Votre Prénom] [Votre Nom], [Votre Email], [Votre Téléphone], [Votre LinkedIn].
 
 Créer un CV professionnel en markdown."""
 
@@ -662,9 +662,9 @@ Créer un CV professionnel en markdown."""
             return cv_markdown
 
         lines = cv_markdown.splitlines()
-        name = (self.profile.name or "[Votre Prenom] [Votre Nom]").strip()
+        name = (self.profile.name or "[Votre Prénom] [Votre Nom]").strip()
         email = (self.profile.email or "[Votre Email]").strip()
-        phone = (self.profile.phone or "[Votre Telephone]").strip()
+        phone = (self.profile.phone or "[Votre Téléphone]").strip()
         linkedin = (self.profile.linkedin_url or "[Votre LinkedIn]").strip()
 
         if name:
@@ -691,7 +691,7 @@ Créer un CV professionnel en markdown."""
                 if any(token in lowered for token in ["tel", "telephone", "phone", "mobile"]):
                     updated = PHONE_RE.sub(phone, line)
                     if updated == line:
-                        updated = f"- Telephone: {phone}"
+                        updated = f"- Téléphone: {phone}"
                     lines[idx] = updated
 
         if linkedin:

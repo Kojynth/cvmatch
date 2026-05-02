@@ -72,7 +72,7 @@ def test_sparse_final_payload_recovers_profile_backed_experience_and_skills() ->
     assert result["experience"][0]["title"] == "Software Quality Engineer"
     assert result["skills"]
     categories = [block["category"] for block in result["skills"]]
-    assert "Automation" in categories
+    assert "Skills" in categories
     technical_items = [
         item
         for block in result["skills"]
@@ -168,7 +168,7 @@ def test_coerce_generated_cv_payload_dedups_duplicate_experience_entries() -> No
     assert "automated regression suites" in highlight_blob
 
 
-def test_summary_focus_sentence_prefers_profile_backed_aligned_skills() -> None:
+def test_summary_focus_sentence_remains_generation_led() -> None:
     profile_json = {
         "skills": [
             {"name": "SQL"},
@@ -200,10 +200,7 @@ def test_summary_focus_sentence_prefers_profile_backed_aligned_skills() -> None:
     )
 
     summary = str(result.get("summary") or "")
-    assert "Profil aligné avec Mistral AI" in summary
-    lowered = summary.lower()
-    assert "sql" in lowered
-    assert "python" in lowered
+    assert summary == ""
 
 
 def test_skill_residue_cleanup_preserves_non_skill_qualifier_heads() -> None:
@@ -910,33 +907,19 @@ def test_noisy_flat_skills_rebuild_as_source_backed_themed_rows() -> None:
     rows = prepared["featured_skills"]
     rendered = "\n".join(rows)
 
-    assert any(row.startswith("QA & tests :") for row in rows)
-    assert "Plans de test" in rendered
-    assert "Tests fonctionnels" in rendered
-    assert "Tests API" in rendered
-    assert "Analyse des risques" in rendered
-    assert "Cas limites" in rendered
-    assert "Qualification d'anomalies" in rendered
-    assert any(row.startswith("API & data :") for row in rows)
+    assert not any(row.startswith("QA & tests :") for row in rows)
+    assert not any(row.startswith("API & data :") for row in rows)
+    assert not any(row.startswith("Automatisation :") for row in rows)
+    assert not any(row.startswith("IA & qualité logicielle :") for row in rows)
     assert "Postman" in rendered
-    assert "PostgreSQL" in rendered
     assert "MongoDB" in rendered
     assert "Microsoft SQL Server" in rendered
-    assert any(row.startswith("Automatisation :") for row in rows)
     assert "Python" in rendered
-    automation_row = next(row for row in rows if row.startswith("Automatisation :"))
-    assert "Benchmark Playwright / Cypress / Selenium / Agilitest" in automation_row
-    assert "· Playwright ·" not in automation_row
-    assert "· Cypress ·" not in automation_row
-    assert "· Selenium ·" not in automation_row
+    assert "Benchmark Playwright / Cypress / Selenium" in rendered
     assert "Benchmark d'outils" not in rendered
-    assert any(row.startswith("IA & qualité logicielle :") for row in rows)
     assert "LLM" in rendered
-    assert "Prompt engineering" in rendered
-    assert "Validation de sorties" in rendered
     assert "pytest" in rendered
     assert "JSON" in rendered
-    assert " · " in rendered
     assert "AI-powered" not in rendered
     assert "including functional" not in rendered
     assert "recruteur" not in rendered
@@ -985,18 +968,18 @@ def test_benchmark_only_tools_are_not_kept_as_direct_skill_claims() -> None:
         language_code="fr",
     )
 
-    automation_block = next(
-        block
+    assert all(block.get("category") != "Automatisation" for block in result["skills"])
+    items = [
+        item
         for block in result["skills"]
-        if block.get("category") == "Automatisation"
-    )
-    automation_items = automation_block["items"]
-    assert "Python" in automation_items
-    assert "Benchmark Playwright / Cypress / Selenium / Agilitest" in automation_items
-    assert "Playwright" not in automation_items
-    assert "Cypress" not in automation_items
-    assert "Selenium" not in automation_items
-    assert "Agilitest" not in automation_items
+        for item in block.get("items", [])
+    ]
+    assert "Python" in items
+    assert "Benchmark Playwright / Cypress / Selenium / Agilitest" in items
+    assert "Playwright" not in items
+    assert "Cypress" not in items
+    assert "Selenium" not in items
+    assert "Agilitest" not in items
 
 
 def test_project_technologies_preserve_slash_delimited_tool_names() -> None:
@@ -1119,7 +1102,7 @@ def test_pdf_text_order_keeps_experience_bullets_before_education() -> None:
             pass
 
 
-def test_renderer_preserves_english_colon_positioning_sentence() -> None:
+def test_renderer_strips_formulaic_colon_positioning_sentence() -> None:
     cv_json = {
         "target_job_title": "QA Engineer",
         "target_company": "Mistral AI",
@@ -1135,10 +1118,7 @@ def test_renderer_preserves_english_colon_positioning_sentence() -> None:
     data = cv_json_to_cv_data(cv_json, language="en")
 
     assert data["profile_summary"] == "QA engineer focused on release quality."
-    assert (
-        data["profile_positioning_sentence"]
-        == "Profile aligned with Mistral AI: foundation in API testing."
-    )
+    assert data["profile_positioning_sentence"] == ""
 
 
 def test_non_french_locale_does_not_force_french_render_fallbacks() -> None:

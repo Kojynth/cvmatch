@@ -317,18 +317,8 @@ def _build_render_positioning_sentence(
     company: str = "",
     language_code: str = "fr",
 ) -> str:
-    cleaned_terms = re.sub(r"\s+", " ", str(terms or "").strip(" ,;:-"))
-    company_name = _restore_display_acronyms(str(company or "").strip(" ,;:-"))
-    if not cleaned_terms:
-        return ""
-    is_en = str(language_code or "").lower().startswith("en")
-    if is_en:
-        if company_name:
-            return f"Profile aligned with {company_name}: {cleaned_terms}."
-        return f"Profile aligned with the target role: {cleaned_terms}."
-    if company_name:
-        return f"Profil aligné avec {company_name} : {cleaned_terms}."
-    return f"Profil aligné avec le poste visé : {cleaned_terms}."
+    """Renderers preserve AI-written positioning; they do not author it."""
+    return ""
 
 
 def _extract_render_positioning_sentence(value: Any, *, language_code: str) -> str:
@@ -679,7 +669,7 @@ def _normalize_contact_label(label: Any, url: Any, *, idx: int, is_en: bool) -> 
     if href.startswith("mailto:"):
         return "Email"
     if href.startswith("tel:"):
-        return "Phone" if is_en else "Telephone"
+        return "Phone" if is_en else "Téléphone"
     if "linkedin.com" in host:
         return "LinkedIn"
     if "github.com" in host:
@@ -729,7 +719,7 @@ def _build_contact_methods(
         )
 
     _append("email", "Email", email)
-    _append("phone", "Phone" if is_en else "Telephone", phone)
+    _append("phone", "Phone" if is_en else "Téléphone", phone)
     _append("linkedin", "LinkedIn", linkedin_url)
 
     for idx, link in enumerate(links or [], start=1):
@@ -1093,7 +1083,7 @@ def cv_json_to_markdown(cv_json: Dict[str, Any], language: Optional[str] = None)
 
     contact_labels = {
         "email": "Email" if data.get("language") == "en" else "Email",
-        "phone": "Phone" if data.get("language") == "en" else "Telephone",
+        "phone": "Phone" if data.get("language") == "en" else "Téléphone",
         "linkedin": "LinkedIn",
         "location": "Location" if data.get("language") == "en" else "Localisation",
     }

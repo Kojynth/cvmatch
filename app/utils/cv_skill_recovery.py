@@ -164,14 +164,20 @@ def _extend_candidates(
     profile_json: Dict[str, Any] | None = None,
 ) -> None:
     if isinstance(value, str):
+        split_items = _split_list_like_skill_string(value)
+        if split_items:
+            added_split = False
+            for item in split_items:
+                cleaned_item = _clean_skill_candidate(item, profile_json)
+                if cleaned_item:
+                    output.append(cleaned_item)
+                    added_split = True
+            if added_split:
+                return
         cleaned = _clean_skill_candidate(value, profile_json)
         if cleaned:
             output.append(cleaned)
             return
-        for item in _split_list_like_skill_string(value):
-            cleaned_item = _clean_skill_candidate(item, profile_json)
-            if cleaned_item:
-                output.append(cleaned_item)
         return
     if isinstance(value, list):
         for item in value:
@@ -464,247 +470,58 @@ def _build_themed_skill_blocks(
     language_code: str,
     max_items_per_block: int,
 ) -> List[Dict[str, Any]]:
-    """Build compact source-backed skill themes when a flat dump needs recovery."""
+    """Specialized skill grouping is authored by the LLM, not fallback code."""
+    return []
 
-    profile_probe = _collect_source_probe(profile_json, technical_items)
-    source_fragments = _collect_source_fragments(profile_json)
-    explicit_skill_probe = _collect_source_probe(
-        {"skills": (profile_json or {}).get("skills") or []},
-        (),
-    )
-    offer_terms_list = list(offer_terms or [])
-    offer_probe = normalize_keyword_for_match(
-        " ".join(str(term) for term in offer_terms_list)
-    )
-    combined_probe = " ".join(part for part in (profile_probe, offer_probe) if part)
-    if not combined_probe:
-        return []
 
-    def profile_has(*aliases: str) -> bool:
-        return _probe_has_any(profile_probe, aliases)
-
-    def explicit_skill_has(*aliases: str) -> bool:
-        return _probe_has_any(explicit_skill_probe, aliases)
-
-    def offer_has(*aliases: str) -> bool:
-        return _probe_has_any(offer_probe, aliases)
-
-    qa_context = profile_has(
-        "qa",
-        "test",
-        "tests",
-        "recette",
-        "anomalie",
-        "plan de test",
-        "qualite logicielle",
+def _collapse_benchmark_only_tool_claims(
+    technical_items: List[str],
+    profile_json: Dict[str, Any],
+    *,
+    language_code: str,
+) -> List[str]:
+    benchmark_only = _benchmark_only_tool_labels(
+        profile_json,
+        language_code=language_code,
     )
-    data_context = profile_has(
-        "sql",
-        "base de donnees",
-        "database",
-        "postman",
-        "postgresql",
-        "mongodb",
-        "sql server",
-    )
-    automation_context = profile_has(
-        "automatisation",
-        "automation",
-        "python",
-        "playwright",
-        "cypress",
-        "selenium",
-        "agilitest",
-        "benchmark",
-    )
-    ai_context = profile_has(
-        "ia",
-        "ai",
-        "llm",
-        "machine learning",
-        "prompt engineering",
-        "pytest",
-        "validation des sorties",
-        "json",
-    )
+    if not benchmark_only:
+        return technical_items
 
-    automation_specs = [
-        (("Python", "Python"), ("python",), (), True),
-    ]
-    benchmark_only_tools: List[str] = []
-    for labels, aliases in _AUTOMATION_BENCHMARK_TOOL_SPECS:
-        if not profile_has(*aliases):
+    benchmark_norms = {
+        normalize_keyword_for_match(label)
+        for label in benchmark_only
+        if normalize_keyword_for_match(label)
+    }
+    benchmark_label = f"Benchmark {' / '.join(benchmark_only)}"
+    benchmark_label_norm = normalize_keyword_for_match(benchmark_label)
+    cleaned_items: List[str] = []
+    collapsed = False
+
+    for item in technical_items:
+        item_norm = normalize_keyword_for_match(item)
+        if not item_norm:
             continue
-        if explicit_skill_has(*aliases) or _tool_has_context(
-            source_fragments,
-            aliases,
-            _DIRECT_USE_MARKERS,
+        if item_norm == benchmark_label_norm:
+            cleaned_items.append(item)
+            collapsed = True
+            continue
+        if item_norm in benchmark_norms or any(
+            normalized_term_in_probe(item_norm, tool_norm)
+            for tool_norm in benchmark_norms
         ):
-            automation_specs.append((labels, aliases, (), True))
-        elif _tool_has_context(source_fragments, aliases, _BENCHMARK_CONTEXT_MARKERS):
-            benchmark_only_tools.append(_localized_skill_label(labels, language_code))
-    if benchmark_only_tools:
-        benchmark_label = (
-            f"Benchmark {' / '.join(benchmark_only_tools)}",
-            f"Benchmark {' / '.join(benchmark_only_tools)}",
-        )
-        automation_specs.append(
-            (
-                benchmark_label,
-                ("benchmark", "benchmarke", "benchmarker", *benchmark_only_tools),
-                ("tool benchmark", "benchmark"),
-                automation_context,
-            )
-        )
-    elif profile_has("benchmark", "benchmarke", "benchmarker", "benchmark d outils"):
-        automation_specs.append(
-            (
-                ("Benchmark d'outils", "Tool benchmarking"),
-                ("benchmark", "benchmarke", "benchmarker", "benchmark d outils"),
-                ("tool benchmark", "benchmark"),
-                automation_context,
-            )
-        )
-
-    group_specs = [
-        (
-            ("QA & tests", "QA & testing"),
-            qa_context,
-            [
-                (("Plans de test", "Test plans"), ("plan de test", "plans de test", "test plan"), (), True),
-                (("Tests fonctionnels", "Functional testing"), ("test fonctionnel", "tests fonctionnels"), ("functional testing",), qa_context),
-                (("Tests API", "API testing"), ("test api", "tests api", "postman", "api testing"), ("api testing", "apis"), qa_context or data_context),
-                (("Non-régression", "Regression testing"), ("non regression", "non-régression", "regression testing", "xray"), ("regression",), qa_context),
-                (("Analyse des risques", "Risk analysis"), ("analyse des risques", "risque", "risques"), ("risk analysis", "risk"), qa_context),
-                (("Cas limites", "Edge cases"), ("cas limite", "cas limites", "edge case"), ("edge case", "edge cases"), qa_context),
-                (("Qualification d'anomalies", "Defect qualification"), ("qualification d anomalie", "anomalie", "anomalies", "defect"), (), qa_context),
-            ],
-        ),
-        (
-            ("API & data", "API & data"),
-            data_context,
-            [
-                (("Postman", "Postman"), ("postman",), (), True),
-                (("SQL", "SQL"), ("sql",), (), True),
-                (("PostgreSQL", "PostgreSQL"), ("postgresql", "postgres"), (), True),
-                (("MongoDB", "MongoDB"), ("mongodb",), (), True),
-                (("Microsoft SQL Server", "Microsoft SQL Server"), ("microsoft sql server", "sql server"), (), True),
-            ],
-        ),
-        (
-            ("Automatisation", "Automation"),
-            automation_context,
-            automation_specs,
-        ),
-        (
-            ("IA & qualité logicielle", "AI & software quality"),
-            ai_context,
-            [
-                (("LLM", "LLM"), ("llm", "llms", "large language model"), (), True),
-                (("Prompt engineering", "Prompt engineering"), ("prompt engineering",), ("prompt engineering",), ai_context),
-                (("Validation de sorties", "Output validation"), ("validation des sorties", "valider les sorties", "sorties produites", "output validation"), ("output validation",), ai_context),
-                (("pytest", "pytest"), ("pytest",), (), True),
-                (("JSON", "JSON"), ("json",), (), True),
-            ],
-        ),
-        (
-            ("Data & BI", "Data & BI"),
-            profile_has("tableau", "power bi", "looker", "dashboard", "kpi", "data analytics"),
-            [
-                (("Tableau", "Tableau"), ("tableau",), (), True),
-                (("Power BI", "Power BI"), ("power bi", "powerbi"), (), True),
-                (("Looker", "Looker"), ("looker",), (), True),
-                (("Dashboards", "Dashboards"), ("dashboard", "dashboards", "tableau de bord"), ("dashboard",), True),
-                (("KPI", "KPI"), ("kpi",), (), True),
-            ],
-        ),
-        (
-            ("Delivery & collaboration", "Delivery & collaboration"),
-            profile_has("jira", "xray", "gherkin", "agile", "scrum", "documentation"),
-            [
-                (("Jira", "Jira"), ("jira",), (), True),
-                (("Xray", "Xray"), ("xray",), (), True),
-                (("Gherkin", "Gherkin"), ("gherkin",), (), True),
-                (("Documentation QA", "QA documentation"), ("documentation qa", "documentation"), ("documentation",), qa_context),
-                (("Agile/Scrum", "Agile/Scrum"), ("agile", "scrum"), (), True),
-                (("Suivi d'anomalies", "Defect tracking"), ("suivi d anomalie", "suivi des anomalies", "anomalie"), (), qa_context),
-            ],
-        ),
-    ]
-
-    blocks: List[Dict[str, Any]] = []
-    globally_seen: set[str] = set()
-    for category_labels, group_context, specs in group_specs:
-        if not group_context:
+            collapsed = True
             continue
-        items: List[str] = []
-        for labels, profile_aliases, offer_aliases, allow_offer_reframe in specs:
-            direct = profile_has(*profile_aliases)
-            reframed = (
-                bool(allow_offer_reframe)
-                and bool(offer_aliases)
-                and offer_has(*offer_aliases)
-            )
-            if not direct and not reframed:
-                continue
-            label = _localized_skill_label(labels, language_code)
-            key = normalize_keyword_for_match(label)
-            if not key or key in globally_seen:
-                continue
-            globally_seen.add(key)
-            items.append(label)
-            if len(items) >= max(1, int(max_items_per_block or 1)):
-                break
-        if len(items) < 2:
+        if "benchmark" in item_norm and not any(
+            normalized_term_in_probe(tool_norm, item_norm)
+            for tool_norm in benchmark_norms
+        ):
+            collapsed = True
             continue
-        blocks.append(
-            {
-                "category": _localized_skill_label(category_labels, language_code),
-                "items": items,
-            }
-        )
+        cleaned_items.append(item)
 
-    if offer_terms_list:
-        remainder_items: List[str] = []
-        scored_remainders: List[Tuple[float, int, str]] = []
-        for idx, raw_item in enumerate(technical_items or []):
-            item = _clean_skill_candidate(raw_item, profile_json)
-            if not item:
-                continue
-            item_key = normalize_keyword_for_match(item)
-            if not item_key or item_key in globally_seen:
-                continue
-            score = score_skill_text_for_offer(item, offer_terms_list)
-            if score <= 0:
-                continue
-            scored_remainders.append((score, idx, item))
-
-        scored_remainders.sort(key=lambda payload: (-payload[0], payload[1]))
-        for _score, _idx, item in scored_remainders:
-            item_key = normalize_keyword_for_match(item)
-            if not item_key or item_key in globally_seen:
-                continue
-            globally_seen.add(item_key)
-            remainder_items.append(item)
-            if len(remainder_items) >= max(1, int(max_items_per_block or 1)):
-                break
-
-        if len(remainder_items) >= 2:
-            blocks.append(
-                {
-                    "category": (
-                        "Role-aligned skills"
-                        if str(language_code or "").startswith("en")
-                        else "Competences ciblees"
-                    ),
-                    "items": remainder_items,
-                }
-            )
-
-    if not blocks:
-        return []
-
-    return blocks
+    if collapsed and benchmark_label_norm:
+        cleaned_items.append(benchmark_label)
+    return _dedup_preserve(cleaned_items)
 
 
 def build_skill_blocks_from_profile(
@@ -769,6 +586,11 @@ def build_skill_blocks_from_profile(
     soft_candidates.extend(supported_extra_terms.get("soft") or [])
 
     technical_items = _dedup_preserve(technical_candidates)
+    technical_items = _collapse_benchmark_only_tool_claims(
+        technical_items,
+        profile,
+        language_code=language_code,
+    )
     soft_items = _dedup_preserve(soft_candidates)
 
     blocks: List[Dict[str, Any]] = []
@@ -784,18 +606,14 @@ def build_skill_blocks_from_profile(
     elif technical_items:
         blocks.append(
             {
-                "category": (
-                    "Technical Skills"
-                    if language_code == "en"
-                    else "Competences techniques"
-                ),
+                "category": "Skills" if language_code == "en" else "Compétences",
                 "items": technical_items,
             }
         )
     if soft_items:
         blocks.append(
             {
-                "category": "Soft Skills" if language_code == "en" else "Qualites",
+                "category": "Soft Skills" if language_code == "en" else "Qualités",
                 "items": soft_items,
             }
         )

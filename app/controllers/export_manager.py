@@ -823,7 +823,7 @@ class ExportManager:
                 lowered = text.casefold()
                 replacements = {
                     "competences": "Compétences",
-                    "competences techniques": "Compétences techniques",
+                    "competences techniques": "Compétences",
                     "qualites": "Qualités",
                     "soft skills": "Soft Skills",
                 }
@@ -3198,7 +3198,7 @@ class ExportManager:
         phone = str((formatted_data or {}).get("phone") or "").strip()
         if phone:
             tel = re.sub(r"[^\d+]+", "", phone)
-            _append("phone", "Phone" if is_en else "Telephone", phone, f"tel:{tel}")
+            _append("phone", "Phone" if is_en else "Téléphone", phone, f"tel:{tel}")
 
         linkedin = str((formatted_data or {}).get("linkedin_url") or "").strip()
         if linkedin:
@@ -3220,7 +3220,7 @@ class ExportManager:
                 if scheme == "mailto":
                     label = "Email"
                 elif scheme == "tel":
-                    label = "Phone" if is_en else "Telephone"
+                    label = "Phone" if is_en else "Téléphone"
                 else:
                     parsed = re.sub(r"^https?://", "", href, flags=re.IGNORECASE)
                     label = (
@@ -5531,30 +5531,7 @@ class ExportManager:
             company_name: str = "",
             role_name: str = "",
         ) -> str:
-            terms_text = join_positioning_terms(values)
-            if not terms_text:
-                return ""
-            if is_en:
-                if company_name and role_name:
-                    return (
-                        f"Profile aligned with the {role_name} role at "
-                        f"{company_name}: foundation in {terms_text}."
-                    )
-                if company_name:
-                    return f"Profile aligned with {company_name}: foundation in {terms_text}."
-                return (
-                    f"Profile aligned with the target role: foundation in {terms_text}."
-                )
-            if company_name and role_name:
-                return (
-                    f"Profil aligné avec le poste {role_name} chez {company_name} : "
-                    f"socle orienté {terms_text}."
-                )
-            if company_name:
-                return (
-                    f"Profil aligné avec {company_name} : socle orienté {terms_text}."
-                )
-            return f"Profil aligné avec le poste visé : socle orienté {terms_text}."
+            return ""
 
         candidate_terms = common_terms + profile_extra_terms + offer_only_terms
 
@@ -5607,12 +5584,6 @@ class ExportManager:
                     sentence = normalized_existing
         if not sentence and candidate_sentence:
             sentence = candidate_sentence
-        elif not sentence and company and job_title:
-            sentence = (
-                f"For {company}, this profile targets the {job_title} role."
-                if is_en
-                else f"Pour {company}, ce profil cible le poste de {job_title}."
-            )
 
         key = self._normalize_text_key(sentence)
         if sentence and key and key not in used_keys:

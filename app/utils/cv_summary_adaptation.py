@@ -775,14 +775,8 @@ def build_summary_focus_sentence(
     language_code: str = "fr",
     max_terms: int = 3,
 ) -> str:
-    """Build a short summary emphasis sentence from representative terms."""
-    focus_terms = select_summary_focus_terms(terms, max_terms=max_terms)
-    if not focus_terms:
-        return ""
-    joined = ", ".join(_format_term_for_inline_summary(item) for item in focus_terms)
-    if language_code == "en":
-        return f"Relevant strengths include {joined}."
-    return f"Atouts pertinents : {joined}."
+    """Do not synthesize reader-facing positioning prose outside the LLM."""
+    return ""
 
 
 def collect_targeted_offer_terms(
@@ -890,21 +884,8 @@ def build_targeted_summary_focus_sentence(
     language_code: str = "fr",
     max_terms: int = 3,
 ) -> str:
-    focus_terms = select_summary_focus_terms(terms, max_terms=max_terms)
-    if not focus_terms:
-        return ""
-    joined = ", ".join(_format_term_for_inline_summary(item) for item in focus_terms)
-    company_name = str(company or "").strip()
-    is_en = str(language_code or "").lower().startswith("en")
-    if company_name:
-        if is_en:
-            return f"Profile aligned with {company_name}: {joined}."
-        return f"Profil aligné avec {company_name} : {joined}."
-    return build_summary_focus_sentence(
-        focus_terms,
-        language_code=language_code,
-        max_terms=max_terms,
-    )
+    """Do not synthesize reader-facing company/profile positioning in code."""
+    return ""
 
 
 _POSITIONING_SENTENCE_PATTERNS = {
@@ -1133,7 +1114,7 @@ def build_minimum_profile_summary(
     )
 
     if language_code == "en":
-        subject = role_hint or "Technical profile"
+        subject = role_hint or "Candidate profile"
         if skill_terms:
             formatted_terms = [
                 _format_term_for_inline_summary(item) for item in skill_terms if item
@@ -1141,23 +1122,23 @@ def build_minimum_profile_summary(
             return f"{subject} with experience in {_join_summary_terms(formatted_terms, language_code='en')}."
         if len(experience_titles) > 1:
             return f"{subject} with experience spanning {experience_titles[0]} and {experience_titles[1]}."
-        return f"{subject} with software delivery experience."
+        return f"{subject} based on documented source information."
 
     if skill_terms:
         formatted_terms = [
             _format_term_for_inline_summary(item) for item in skill_terms if item
         ]
-        return f"{role_hint or 'Profil technique'} avec une experience en {_join_summary_terms(formatted_terms, language_code='fr')}."
+        return f"{role_hint or 'Profil candidat'} avec une expérience en {_join_summary_terms(formatted_terms, language_code='fr')}."
 
-    subject = role_hint or "Profil technique"
+    subject = role_hint or "Profil candidat"
     if skill_terms:
         formatted_terms = [
             _format_term_for_inline_summary(item) for item in skill_terms if item
         ]
         return f"{subject} orienté {_join_summary_terms(formatted_terms, language_code='fr')}."
     if len(experience_titles) > 1:
-        return f"{subject} avec une experience couvrant {experience_titles[0]} et {experience_titles[1]}."
-    return f"{subject} avec une experience sur des projets logiciels."
+        return f"{subject} avec une expérience couvrant {experience_titles[0]} et {experience_titles[1]}."
+    return f"{subject} fondé sur les informations source documentées."
 
 
 def _join_summary_terms(terms: Iterable[Any], *, language_code: str = "fr") -> str:
