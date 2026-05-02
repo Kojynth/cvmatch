@@ -470,10 +470,9 @@ Rules:
 - structure_ok=false if the letter contains duplicate subject/objet lines, duplicate signatures, or recases the target company name incorrectly.
 - keywords_to_add: only terms relevant to offer and candidate profile.
 - Flag generic filler when it replaces concrete offer/profile evidence.
-- Prefer role-specific proof: tools, methods, systems, validation practices, projects, and outcomes grounded in the candidate data.
-- If a candidate project is relevant, require the letter to explain what the project technically does instead of listing tools after the project name.
-- If candidate data includes coding agents and the offer asks for them, flag their absence unless a stronger source-backed proof already covers the requirement.
-- If the offer involves rubric, annotation, evaluation, or review and the profile includes QA/review evidence, flag the absence of an explicit rubric/review connection.
+- Prefer role-specific proof: tools, methods, systems, practices, projects, and outcomes grounded in the candidate data.
+- If a candidate project is relevant, require the letter to explain what the project does and which source-backed practice, result, or workflow it proves instead of listing tools after the project name.
+- If both the offer and candidate data support a concrete specialized requirement, flag its absence unless stronger source-backed proof already covers that requirement.
 - Flag malformed motivation phrasing that injects raw keyword lists or weak adverbs, such as "work involving A, B, and highly".
 - Certifications and soft skills should not outrank stronger technical or domain proof.
 - relevance_score in [0..100].
@@ -569,10 +568,9 @@ TASK:
 - Improve relevance to the offer by integrating review keywords/instructions.
 - Ensure at least 4 offer keywords appear in body paragraphs (exact term preferred, professional synonym/acronym allowed).
 - Replace generic filler with concrete source-backed proof from the profile and offer.
-- If a relevant candidate project appears, explain what it technically does and what quality/reliability practice it proves; do not write only "I developed X with Y".
-- In motivation sentences, replace raw keyword-list phrasing with the useful contribution purpose of the role.
-- If candidate data mentions coding agents and the offer makes them relevant, include controlled use of those agents with human review, tests, and factual validation.
-- If the offer involves rubric, annotation, evaluation, or review and the profile has QA/review evidence, explicitly connect that evidence to rubric-based review.
+- If a relevant candidate project appears, explain what it does and which source-backed practice, result, or workflow it proves; do not write only "I developed X with Y".
+- In motivation sentences, replace raw keyword-list phrasing with contribution wording induced from candidate evidence and offer responsibilities.
+- If both the offer and candidate data support a concrete specialized requirement, integrate it naturally in the selected language without forcing fixed profession-specific examples.
 - Do not use weak filler such as "documented background", "practical approach to execution", "highly in that concrete context", "I would approach those expectations", or "my profile is aligned".
 - Keep the target company spelling exactly as provided in the prompt.
 - Mention secondary certifications only after stronger role-specific technical/domain evidence.
@@ -614,10 +612,9 @@ TASK:
 - Use offer keywords and lexical field when facts allow it.
 - Include at least 4 offer keywords in the body (exact terms preferred, professional synonym/acronym allowed).
 - Replace generic filler with concrete source-backed proof from the profile and offer.
-- If a relevant candidate project appears, explain what it technically does and what quality/reliability practice it proves; do not write only "I developed X with Y".
-- In motivation sentences, replace raw keyword-list phrasing with the useful contribution purpose of the role.
-- If candidate data mentions coding agents and the offer makes them relevant, include controlled use of those agents with human review, tests, and factual validation.
-- If the offer involves rubric, annotation, evaluation, or review and the profile has QA/review evidence, explicitly connect that evidence to rubric-based review.
+- If a relevant candidate project appears, explain what it does and which source-backed practice, result, or workflow it proves; do not write only "I developed X with Y".
+- In motivation sentences, replace raw keyword-list phrasing with contribution wording induced from candidate evidence and offer responsibilities.
+- If both the offer and candidate data support a concrete specialized requirement, integrate it naturally in the selected language without forcing fixed profession-specific examples.
 - Do not use weak filler such as "documented background", "practical approach to execution", "highly in that concrete context", "I would approach those expectations", or "my profile is aligned".
 - Keep the target company spelling exactly as provided in the prompt.
 - Mention secondary certifications only after stronger role-specific technical/domain evidence.

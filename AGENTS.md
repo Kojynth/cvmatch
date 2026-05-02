@@ -57,6 +57,18 @@ and must stay usable on heterogeneous Windows/Linux machines.
   highlight already-evidenced tools/contexts, but it must not introduce new
   employers, roles, projects, technologies, degrees, certifications, or exact
   unsupported metrics.
+- **Specific-formulation ownership (MANDATORY)**: deterministic code,
+  renderers, postprocessors, validators, fallback builders, and coding-agent
+  helper logic must stay profession-agnostic, company-agnostic,
+  profile-agnostic, and language-agnostic. They may provide neutral structure,
+  filters, guards, validation, source collection, and prompt instructions, but
+  must not hardcode reader-facing role/company/profile-specific prose or fixed
+  profession/sector contribution formulas. Specific formulations for CVs and
+  cover letters must be induced by the LLM from the profile JSON plus the job
+  offer in the selected output language. If a specific phrase seems needed,
+  move that requirement into prompt guidance and source-backed generation
+  rules, or let the LLM produce it; deterministic fallback should use only
+  neutral cross-role wording.
 - When designing or tightening a filter/guard (grounding gate, low-signal
   detector, supported-skill predicate), ask: *would this reject a legitimate
   offer-sourced reformulation of profile content?* If yes, the filter is too

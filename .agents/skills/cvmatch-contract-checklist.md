@@ -86,6 +86,12 @@ Checklist:
    and verify pure offer-only vocabulary stays confined to the natural
    positioning sentence unless profile evidence supports a coherent implicit
    inference elsewhere.
+   Also verify deterministic code stays generic: it may enforce neutral
+   structure, filters, guards, source collection, validation, and retry/critic
+   rules, but must not hardcode role/company/profile-specific reader-facing
+   prose or fixed profession/sector contribution formulas. Specific CV and
+   cover-letter wording must be induced by the LLM from profile evidence plus
+   offer responsibilities in the selected language.
 12. If company-description suppression is touched, verify true employer-intro
    lines are filtered while action/impact bullets with early colon or dash
    remain eligible for rendering.

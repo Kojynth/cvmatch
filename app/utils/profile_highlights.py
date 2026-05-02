@@ -164,124 +164,32 @@ def build_cover_letter_from_highlights(
     language: Optional[str] = None,
 ) -> str:
     """Compose a cover letter string from collected highlights."""
+    from .cover_letter_fallback import generate_fallback_cover_letter
+
     offer = offer_data if isinstance(offer_data, dict) else {}
-    resolved_language = language or resolve_cover_letter_language(profile, offer_data)
-    lang_key = (resolved_language or "fr").strip().lower()
-    language_key = "en" if lang_key.startswith("en") else "fr"
+    resolved_language = language or resolve_cover_letter_language(profile, offer)
 
-    default_job_title = "this role" if language_key == "en" else "ce poste"
-    default_company = "your company" if language_key == "en" else "votre entreprise"
-    name = getattr(profile, "name", None) or ("Candidate" if language_key == "en" else "Candidat")
-    job_title = offer.get("job_title") or default_job_title
-    company = offer.get("company") or default_company
+    def keyword_collector() -> List[str]:
+        if isinstance(keywords, list):
+            return [str(item) for item in keywords if str(item or "").strip()]
+        analysis_value = offer.get("analysis") if isinstance(offer, dict) else None
+        if not isinstance(analysis_value, dict):
+            return []
+        collected: List[str] = []
+        for key in ("keywords", "skills", "tech_keywords", "soft_keywords", "tools"):
+            value = analysis_value.get(key)
+            if isinstance(value, list):
+                collected.extend(str(item) for item in value if str(item or "").strip())
+            elif isinstance(value, str):
+                collected.extend(part.strip() for part in value.split(",") if part.strip())
+        return collected
 
-    summary_default = (
-        "Motivated professional ready to create impact quickly."
-        if language_key == "en"
-        else "Professionnel motive pret a contribuer rapidement."
+    return generate_fallback_cover_letter(
+        profile_data=profile,
+        offer_data=offer,
+        language_code=resolved_language,
+        offer_keywords_collector=keyword_collector,
+        include_experience_paragraph=True,
+        reason="profile_highlights_fallback",
     )
-    summary_value = highlights.get("summary") if isinstance(highlights, dict) else None
-    summary_text = summary_default
-    if isinstance(summary_value, str) and summary_value.strip():
-        summary_text = summary_value.strip()
-
-    subject_line = (
-        f"Subject: Application for the {job_title} position"
-        if language_key == "en"
-        else f"Objet: Candidature pour le poste de {job_title}"
-    )
-    greeting = "Dear Hiring Manager," if language_key == "en" else "Madame, Monsieur,"
-    intro_line = (
-        f"{summary_text} I am eager to bring this expertise to {company}."
-        if language_key == "en"
-        else f"{summary_text} Je souhaite mettre cette expertise au service de {company}."
-    )
-    experience_heading = "Relevant experience:" if language_key == "en" else "Experiences pertinentes :"
-    default_experience_line = (
-        "- Highlight a key experience that matches the role."
-        if language_key == "en"
-        else "- Selectionnez une experience cle adaptee au poste."
-    )
-
-    skills_template = "Key skills: {}." if language_key == "en" else "Competences majeures : {}."
-    soft_skills_template = "Strengths: {}." if language_key == "en" else "Qualites personnelles : {}."
-    languages_template = "Languages: {}." if language_key == "en" else "Langues : {}."
-    keywords_template = (
-        "I am comfortable with {}." if language_key == "en" else "Je maitrise notamment {}."
-    )
-    default_fragment = (
-        "My skills and mindset align well with the expectations outlined in the job description."
-        if language_key == "en"
-        else "Mes competences et mon sens du travail en equipe correspondent aux attentes de votre annonce."
-    )
-
-    parts: List[str] = [subject_line, "", greeting, "", intro_line, "", experience_heading]
-
-    experiences = highlights.get("experiences") if isinstance(highlights, dict) else []
-    if isinstance(experiences, list) and experiences:
-        parts.extend(f"- {line}" for line in experiences if isinstance(line, str))
-    else:
-        parts.append(default_experience_line)
-
-    fragments: List[str] = []
-    skills = highlights.get("skills") if isinstance(highlights, dict) else []
-    if isinstance(skills, list) and skills:
-        skill_items = [str(item) for item in skills[:8] if isinstance(item, str)]
-        if skill_items:
-            fragments.append(skills_template.format(", ".join(skill_items)))
-    soft_skills = highlights.get("soft_skills") if isinstance(highlights, dict) else []
-    if isinstance(soft_skills, list) and soft_skills:
-        soft_items = [str(item) for item in soft_skills[:8] if isinstance(item, str)]
-        if soft_items:
-            fragments.append(soft_skills_template.format(", ".join(soft_items)))
-    languages_list = highlights.get("languages") if isinstance(highlights, dict) else []
-    if isinstance(languages_list, list) and languages_list:
-        lang_items = [str(item) for item in languages_list[:6] if isinstance(item, str)]
-        if lang_items:
-            fragments.append(languages_template.format(", ".join(lang_items)))
-
-    extracted_keywords = keywords
-    if extracted_keywords is None and isinstance(offer, dict):
-        analysis_value = offer.get("analysis")
-        if isinstance(analysis_value, dict):
-            collected: List[str] = []
-            for key in ("keywords", "skills", "tech_keywords", "soft_keywords", "tools"):
-                value = analysis_value.get(key)
-                if isinstance(value, list):
-                    collected.extend(str(item) for item in value if item)
-                elif isinstance(value, str):
-                    collected.extend(part.strip() for part in value.split(",") if part.strip())
-            if collected:
-                extracted_keywords = collected
-    if isinstance(extracted_keywords, list) and extracted_keywords:
-        keyword_items = [str(item) for item in extracted_keywords if isinstance(item, str)]
-        if keyword_items:
-            fragments.append(keywords_template.format(", ".join(keyword_items[:8])))
-
-    if fragments:
-        parts.extend(["", " ".join(fragments)])
-    else:
-        parts.extend(["", default_fragment])
-
-    if language_key == "en":
-        closing_section = [
-            "",
-            "I would welcome the opportunity to discuss how I can support your goals in more detail.",
-            "Thank you for your consideration. I am available for an interview at your convenience.",
-            "",
-            "Sincerely,",
-            name,
-        ]
-    else:
-        closing_section = [
-            "",
-            "Je serais heureux de vous exposer de vive voix la valeur que je peux apporter a vos projets.",
-            "Je reste a votre disposition pour un entretien et vous remercie pour votre consideration.",
-            "",
-            "Cordialement,",
-            name,
-        ]
-
-    parts.extend(closing_section)
-    return "\n".join(section for section in parts if section is not None)
 

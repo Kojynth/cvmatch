@@ -304,48 +304,23 @@ def _entry_details(
 def _english_role_label(title: str) -> str:
     label = str(title or "").strip()
     norm = normalize_keyword_for_match(label)
-    if "alternant" in norm and "qa" in norm:
-        return "QA Engineer Apprentice"
-    if "ingenieur qa" in norm and "alternance" in norm:
-        return "QA Engineer Apprentice"
-    replacements = (
-        ("Alternant Ingénieur QA", "QA Engineer Apprentice"),
-        ("Alternant Ingenieur QA", "QA Engineer Apprentice"),
-        ("Alternant Ing?nieur QA", "QA Engineer Apprentice"),
-        ("Ingénieur QA en alternance", "QA Engineer Apprentice"),
-        ("Ingenieur QA en alternance", "QA Engineer Apprentice"),
-        ("Ing?nieur QA en alternance", "QA Engineer Apprentice"),
-        ("Stage Business Developer", "Business Development Intern"),
-        ("Stage Sales Support Manager", "Sales Support Intern"),
-    )
-    for src, dst in replacements:
-        if src.lower() in label.lower():
-            return dst
-    if label.lower().startswith("stage "):
+    if not label:
+        return ""
+    if norm.startswith("stage "):
         return f"{label[6:].strip()} Intern"
+    if norm.startswith("alternant "):
+        return f"{label[10:].strip()} Apprentice"
+    if norm.endswith(" en alternance"):
+        cleaned = re.sub(r"\s+en\s+alternance\s*$", "", label, flags=re.IGNORECASE)
+        return f"{cleaned.strip()} Apprentice" if cleaned.strip() else label
     return label
 
 
 def _clean_company_label(company: str) -> str:
     label = str(company or "").strip()
-    replacements = (
-        ("LaPoste Santé et Autonomie", "La Poste Santé & Autonomie"),
-        ("La Poste Santé et Autonomie", "La Poste Santé & Autonomie"),
-        ("LaPoste Sant? et Autonomie", "La Poste Santé & Autonomie"),
-        ("La Poste Sant? et Autonomie", "La Poste Santé & Autonomie"),
-        ("LaPoste Sante et Autonomie", "La Poste Santé & Autonomie"),
-        ("La Poste Sante et Autonomie", "La Poste Santé & Autonomie"),
-        ("LaPoste", "La Poste"),
-        ("La Poste Sante", "La Poste Santé"),
-        ("LaPoste Santé", "La Poste Santé"),
-        ("Careside Filiale", "Careside"),
-        ("(Careside)", "- Careside"),
-        ("(Careside Filiale)", "- Careside"),
-    )
-    for src, dst in replacements:
-        label = label.replace(src, dst)
-    label = " ".join(label.split())
-    label = label.replace(" - - ", " - ")
+    label = re.sub(r"\s+", " ", label)
+    label = re.sub(r"\s*-\s*", " - ", label)
+    label = re.sub(r"(?:\s+-){2,}", " -", label)
     return label.strip(" -")
 
 
@@ -544,185 +519,9 @@ def _collect_text_fragments(value: Any, output: List[str], *, max_chars: int = 5
                 break
 
 
-def _normalized_source_text(*values: Any, max_chars: int = 9000) -> str:
-    fragments: List[str] = []
-    for value in values:
-        _collect_text_fragments(value, fragments, max_chars=max_chars)
-    return normalize_keyword_for_match(" ".join(fragments))
-
-
-def _source_has_any(source: str, needles: Tuple[str, ...]) -> bool:
-    return any(needle in source for needle in needles)
-
-
-def _collect_offer_context_terms(offer_data: Optional[Dict[str, Any]]) -> List[str]:
-    if not isinstance(offer_data, dict):
-        return []
-    fragments: List[str] = []
-    for key in ("text", "description", "job_title", "company"):
-        _collect_text_fragments(offer_data.get(key), fragments)
-    analysis = offer_data.get("analysis")
-    if isinstance(analysis, dict):
-        for key in (
-            "summary",
-            "keywords",
-            "skills",
-            "tech_keywords",
-            "responsibilities",
-            "lexical_field",
-            "tools",
-        ):
-            _collect_text_fragments(analysis.get(key), fragments)
-    source = normalize_keyword_for_match(" ".join(fragments))
-    if not source:
-        return []
-
-    terms: List[str] = []
-    if _source_has_any(source, ("frontier model", "frontier ai", "frontier models")):
-        terms.append("frontier model development")
-    if _source_has_any(source, ("open model", "open source", "open-weight", "open weight")):
-        terms.append("an open model strategy")
-    if _source_has_any(source, ("european", "europe")) and _source_has_any(
-        source,
-        ("infrastructure", "ai infrastructure", "model infrastructure", "deployment"),
-    ):
-        terms.append("a European approach to AI infrastructure")
-    elif _source_has_any(source, ("european", "europe")):
-        terms.append("a European approach to AI")
-    phrase_map = (
-        ("research", "research"),
-        ("enterprise deployment", "enterprise deployment"),
-        ("human data", "human data workflows"),
-        ("training data", "training data quality"),
-        ("annotation", "annotation quality"),
-        ("rubric", "rubric-based evaluation"),
-        ("model evaluation", "model evaluation"),
-        ("code review", "code review"),
-        ("coding agent", "coding agents"),
-    )
-    for needle, label in phrase_map:
-        if needle in source:
-            terms.append(label)
-    return _dedup_preserve(terms)[:4]
-
-
-def _has_qa_signal(profile_data: Any) -> bool:
-    fragments: List[str] = []
-    for attr in (
-        "extracted_skills",
-        "extracted_experiences",
-        "extracted_projects",
-        "extracted_certifications",
-    ):
-        _collect_text_fragments(getattr(profile_data, attr, None), fragments, max_chars=3000)
-    source = normalize_keyword_for_match(" ".join(fragments))
-    return any(
-        token in source
-        for token in (
-            "qa",
-            "quality assurance",
-            "test",
-            "testing",
-            "validation",
-            "defect",
-            "regression",
-        )
-    )
-
-
-def _offer_has_annotation_review_signal(
-    offer_data: Optional[Dict[str, Any]],
-    offer_keywords: List[str],
-    job_title: str,
-) -> bool:
-    source = _normalized_source_text(offer_data, offer_keywords, job_title)
-    return _source_has_any(
-        source,
-        (
-            "annotation",
-            "annotated",
-            "rubric",
-            "rubric based",
-            "evaluation",
-            "evaluate",
-            "review",
-            "code data quality",
-            "data quality",
-            "code quality",
-        ),
-    )
-
-
-def _rubric_evaluation_sentence(
-    *,
-    profile_data: Any,
-    offer_data: Optional[Dict[str, Any]],
-    offer_keywords: List[str],
-    job_title: str,
-    is_en: bool,
-) -> str:
-    if not _has_qa_signal(profile_data):
-        return ""
-    if not _offer_has_annotation_review_signal(offer_data, offer_keywords, job_title):
-        return ""
-    if is_en:
-        return (
-            "My QA experience has trained me to apply consistent judgment against "
-            "requirements and acceptance criteria, which is directly relevant to "
-            "rubric-based annotation review."
-        )
-    return (
-        "Mon experience QA m'a appris a appliquer un jugement constant face aux "
-        "exigences et aux criteres d'acceptation, ce qui est directement pertinent "
-        "pour une revue d'annotations fondee sur des grilles d'evaluation."
-    )
-
-
-def _code_agents_sentence(profile_data: Any, *, is_en: bool) -> str:
-    source = _normalized_source_text(
-        getattr(profile_data, "extracted_skills", None),
-        getattr(profile_data, "extracted_experiences", None),
-        getattr(profile_data, "extracted_projects", None),
-        getattr(profile_data, "extracted_certifications", None),
-        getattr(profile_data, "default_cover_letter", None),
-    )
-    agents: List[str] = []
-    if "codex" in source:
-        agents.append("Codex")
-    if "claude code" in source:
-        agents.append("Claude Code")
-    elif "claude" in source and "Claude" not in agents:
-        agents.append("Claude")
-    agents = _dedup_preserve(agents)
-    if not agents:
-        return ""
-
-    workflow = (
-        "terminal workflows"
-        if _source_has_any(source, ("terminal", "cli", "command line", "unix", "linux"))
-        else "development workflows"
-    )
-    agents_text = _join_natural(agents, conjunction="and")
-    if is_en:
-        return (
-            f"I use coding agents such as {agents_text} in {workflow}, while keeping "
-            "human review, tests, and factual validation at the center of the process."
-        )
-    workflow_fr = (
-        "des workflows terminal"
-        if workflow == "terminal workflows"
-        else "des workflows de developpement"
-    )
-    return (
-        f"J'utilise des agents de code comme {agents_text} dans {workflow_fr}, tout en "
-        "gardant la revue humaine, les tests et la validation factuelle au centre du processus."
-    )
-
-
-def _project_evidence_sentence(
+def _project_reference_sentence(
     *,
     project_name: str,
-    featured_project: Any,
     project_terms: List[str],
     language_code: str,
     conjunction: str,
@@ -730,162 +529,27 @@ def _project_evidence_sentence(
 ) -> str:
     if not project_name:
         return ""
-
-    source = _normalized_source_text(featured_project, project_terms, project_name)
     terms_text = _join_terms_natural(
         project_terms,
-        max_items=5,
+        max_items=4,
         conjunction=conjunction,
         language_code=language_code,
     )
-    has_python = "python" in source
-    has_job_analysis = _source_has_any(
-        source,
-        (
-            "job description",
-            "job descriptions",
-            "job offer",
-            "job offers",
-            "offre d emploi",
-            "description de poste",
-            "annonce",
-        ),
-    )
-    has_profile_selection = _source_has_any(
-        source,
-        (
-            "profile information",
-            "candidate profile",
-            "profil candidat",
-            "selects relevant",
-            "selection",
-            "matching",
-            "match",
-            "adapt",
-            "targeted",
-            "cible",
-        ),
-    )
-    has_generation = _source_has_any(
-        source,
-        (
-            "generate",
-            "generation",
-            "generates",
-            "generated",
-            "genere",
-            "generer",
-        ),
-    ) and _source_has_any(source, ("cv", "resume", "cover letter", "lettre"))
-    has_validation = _source_has_any(
-        source,
-        (
-            "validate",
-            "validation",
-            "checks",
-            "consistency",
-            "coherence",
-            "factual",
-            "unsupported",
-            "hallucination",
-            "generic",
-            "inconsistent",
-        ),
-    )
-    has_unsupported_guard = _source_has_any(
-        source,
-        ("unsupported", "hallucination", "factual", "generic", "inconsistent"),
-    )
-    strength_terms_en: List[str] = []
-    strength_terms_fr: List[str] = []
-    if "prompt" in source:
-        strength_terms_en.append("prompt design")
-        strength_terms_fr.append("la conception de prompts")
-    if _source_has_any(source, ("factual", "consistency", "coherence", "coherent")):
-        strength_terms_en.append("factual consistency")
-        strength_terms_fr.append("la coherence factuelle")
-    if has_validation:
-        strength_terms_en.append("output validation")
-        strength_terms_fr.append("la validation des sorties")
-    if _source_has_any(source, ("human in the loop", "human-in-the-loop")) or (
-        "human" in source and "review" in source
-    ):
-        strength_terms_en.append("human-in-the-loop review")
-        strength_terms_fr.append("la revue humaine dans la boucle")
-    strength_terms_en = _dedup_preserve(strength_terms_en)
-    strength_terms_fr = _dedup_preserve(strength_terms_fr)
-
     if is_en:
-        descriptor = "a Python-based tool" if has_python else "a source-backed tool"
-        actions: List[str] = []
-        if has_job_analysis:
-            actions.append("analyzes job descriptions")
-        if has_profile_selection:
-            actions.append("selects relevant profile information")
-        if has_generation:
-            actions.append("generates targeted CV content")
-        if has_validation:
-            if has_unsupported_guard:
-                actions.append(
-                    "validates outputs to reduce generic, inconsistent, or unsupported claims"
-                )
-            else:
-                actions.append("validates generated outputs before delivery")
-        if len(actions) >= 2:
-            sentence = (
-                f"I also developed {project_name}, {descriptor} that "
-                f"{_join_natural(actions, conjunction='and')}.\n\n"
-            )
-            if len(strength_terms_en) >= 2:
-                sentence = sentence.rstrip() + " " + (
-                    "This project strengthened my approach to "
-                    f"{_join_natural(strength_terms_en[:4], conjunction='and')}.\n\n"
-                )
-            return sentence
         if terms_text:
             return (
-                f"Through {project_name}, I used {terms_text} while focusing on "
-                "clear inputs, controlled outputs, and verification before delivery.\n\n"
+                f"My project work also includes {project_name}, with documented evidence around {terms_text}.\n\n"
             )
         return (
-            f"I also developed {project_name}, which strengthened how I implement and "
-            "validate deliverables before release.\n\n"
+            f"My project work also includes {project_name}, which provides additional documented evidence for this application.\n\n"
         )
 
-    descriptor = "un outil base sur Python" if has_python else "un outil fonde sur les sources"
-    actions_fr: List[str] = []
-    if has_job_analysis:
-        actions_fr.append("analyse des descriptions de poste")
-    if has_profile_selection:
-        actions_fr.append("selectionne les informations de profil pertinentes")
-    if has_generation:
-        actions_fr.append("genere des contenus de CV cibles")
-    if has_validation:
-        if has_unsupported_guard:
-            actions_fr.append(
-                "valide les sorties pour reduire les affirmations generiques, incoherentes ou non soutenues"
-            )
-        else:
-            actions_fr.append("valide les livrables generes avant diffusion")
-    if len(actions_fr) >= 2:
-        sentence = (
-            f"J'ai aussi developpe {project_name}, {descriptor} qui "
-            f"{_join_natural(actions_fr, conjunction='et')}.\n\n"
-        )
-        if len(strength_terms_fr) >= 2:
-            sentence = sentence.rstrip() + " " + (
-                "Ce projet a renforce mon approche de "
-                f"{_join_natural(strength_terms_fr[:4], conjunction='et')}.\n\n"
-            )
-        return sentence
     if terms_text:
         return (
-            f"A travers {project_name}, j'ai utilise {terms_text} en portant attention "
-            "a la clarte des entrees, au controle des sorties et a la verification avant diffusion.\n\n"
+            f"Mes projets incluent également {project_name}, avec des éléments documentés autour de {terms_text}.\n\n"
         )
     return (
-        f"J'ai aussi developpe {project_name}, ce qui a renforce ma maniere "
-        "d'implementer et de valider les livrables avant diffusion.\n\n"
+        f"Mes projets incluent également {project_name}, qui apporte un élément documenté supplémentaire pour cette candidature.\n\n"
     )
 
 
@@ -938,167 +602,17 @@ def _format_experience_details(details: List[str], *, is_en: bool) -> str:
     return " ".join(output)
 
 
-def _role_motivation_sentence(
-    *,
-    role_label: str,
-    offer_focus: str,
-    has_qa_signal: bool,
-    is_en: bool,
-) -> str:
-    role_norm = normalize_keyword_for_match(role_label)
-    quality_role = any(
-        token in role_norm
-        for token in ("quality", "data", "annotation", "evaluation", "review", "code")
-    )
-    if is_en:
-        if "code" in role_norm and "data" in role_norm and "quality" in role_norm:
-            role_focus = "code and data quality work"
-        elif role_label and role_label != "the target role":
-            role_focus = f"{role_label} work"
-        else:
-            role_focus = "the responsibilities of this role"
-        if has_qa_signal and quality_role:
-            return (
-                f"I see this role as a natural move from software quality work toward {role_focus}: applying the same discipline of checking requirements, edge cases, inconsistencies, and outputs to a more AI-oriented review context."
-            )
-        return (
-            f"I see this role as a concrete next step because it lets me apply my experience to {role_focus} in a more focused and useful way."
-        )
-    if "code" in role_norm and "data" in role_norm and "quality" in role_norm:
-        role_focus = "la qualite des donnees et du code"
-    elif role_label and role_label != "le poste vise":
-        role_focus = f"des missions de {role_label}"
-    else:
-        role_focus = "les responsabilites du poste"
-    if has_qa_signal and quality_role:
-        return (
-            f"Je vois ce poste comme une evolution naturelle de la qualite logicielle vers {role_focus} : appliquer la meme rigueur sur les exigences, les cas limites, les incoherences et les livrables dans un contexte de revue plus oriente IA."
-        )
-    return (
-        f"Je vois ce poste comme une etape concrete parce qu'il me permet d'appliquer mon experience a {role_focus} de maniere plus ciblee et utile."
-    )
-
-
-def _role_contribution_object(
-    *,
-    role_label: str = "",
-    offer_data: Optional[Dict[str, Any]] = None,
-    offer_keywords: Optional[List[str]] = None,
-    is_en: bool,
-) -> str:
-    source = _normalized_source_text(offer_data, offer_keywords or [], role_label)
-    has_code = _source_has_any(source, ("code", "software", "developer", "programming"))
-    has_data = _source_has_any(source, ("data", "dataset", "training", "evaluation"))
-    has_review = _source_has_any(
-        source,
-        ("review", "annotation", "annotated", "rubric", "quality", "validation"),
-    )
-    has_tooling = _source_has_any(
-        source,
-        ("tooling", "automation", "script", "workflow", "internal tool"),
-    )
-    has_testing = _source_has_any(
-        source,
-        ("qa", "test", "testing", "regression", "acceptance criteria"),
-    )
-    if is_en:
-        if has_code and has_data and has_review:
-            return (
-                "the quality of code-related training and evaluation data through "
-                "careful review, structured feedback, and practical tooling improvements"
-            )
-        if has_data and has_review:
-            return (
-                "data and output quality through careful review, structured feedback, "
-                "and practical process improvements"
-            )
-        if has_testing:
-            return (
-                "software reliability through structured validation, clear feedback, "
-                "and practical quality improvements"
-            )
-        if has_tooling:
-            return (
-                "reliable delivery through practical tooling improvements, structured "
-                "feedback, and careful validation"
-            )
-        return (
-            "the role priorities through careful review, structured feedback, and "
-            "practical delivery"
-        )
-    if has_code and has_data and has_review:
-        return (
-            "la qualite des donnees de code liees a l'entrainement et a l'evaluation, "
-            "par une revue attentive, des retours structures et des ameliorations "
-            "pratiques de l'outillage"
-        )
-    if has_data and has_review:
-        return (
-            "la qualite des donnees et des sorties, par une revue attentive, des "
-            "retours structures et des ameliorations pratiques des processus"
-        )
-    if has_testing:
-        return (
-            "la fiabilite logicielle, par une validation structuree, des retours clairs "
-            "et des ameliorations qualite concretes"
-        )
-    if has_tooling:
-        return (
-            "la fiabilite de la livraison, par des ameliorations pratiques de "
-            "l'outillage, des retours structures et une validation attentive"
-        )
-    return (
-        "une contribution utile aux priorites du poste, par une revue attentive, "
-        "des retours structures et une livraison concrete"
-    )
-
-
 def _company_motivation_sentence(
     *,
     company_label: str,
-    offer_focus: str,
-    company_context: str = "",
     is_en: bool,
-    role_label: str = "",
-    offer_data: Optional[Dict[str, Any]] = None,
-    offer_keywords: Optional[List[str]] = None,
 ) -> str:
-    contribution_object = _role_contribution_object(
-        role_label=role_label,
-        offer_data=offer_data,
-        offer_keywords=offer_keywords,
-        is_en=is_en,
-    )
     if is_en:
-        if company_context and offer_focus:
-            return (
-                f"{company_label} stands out to me because it combines {company_context}. What attracts me to this role is the opportunity to contribute to {contribution_object}."
-            )
-        if company_context:
-            return (
-                f"{company_label} stands out to me because it combines {company_context}. I want to contribute in a role where careful review and practical delivery matter."
-            )
-        if offer_focus:
-            return (
-                f"What interests me about {company_label} is the opportunity to contribute to {contribution_object}."
-            )
         return (
-            f"What interests me about {company_label} is the opportunity to contribute in a concrete team context where careful review and useful documentation matter."
-        )
-    if company_context and offer_focus:
-        return (
-            f"{company_label} m'interesse parce que son travail combine {company_context}. Ce qui m'attire dans ce poste, c'est la possibilite de contribuer a {contribution_object}."
-        )
-    if company_context:
-        return (
-            f"{company_label} m'interesse parce que son travail combine {company_context}. Je souhaite contribuer dans un poste ou la revue attentive et la livraison concrete comptent."
-        )
-    if offer_focus:
-        return (
-            f"Ce qui m'interesse chez {company_label}, c'est la possibilite de contribuer a {contribution_object}."
+            f"What interests me about {company_label} is the opportunity to connect my documented experience with the priorities described in this role."
         )
     return (
-        f"Ce qui m'interesse chez {company_label}, c'est la possibilite de contribuer a une equipe concrete ou l'execution rigoureuse et la documentation utile comptent reellement."
+        f"Ce qui m'intéresse chez {company_label}, c'est la possibilité de relier mon expérience documentée aux priorités décrites dans ce poste."
     )
 
 
@@ -1146,7 +660,7 @@ def generate_fallback_cover_letter(
 
     name = str(getattr(profile_data, "name", "") or "").strip()
 
-    role_label = job_title or ("the target role" if is_en else "le poste vise")
+    role_label = job_title or ("the target role" if is_en else "le poste visé")
     company_label = company or ("your company" if is_en else "votre entreprise")
 
     # Collect offer keywords
@@ -1211,47 +725,10 @@ def generate_fallback_cover_letter(
     featured_project = _select_featured_project(projects)
     project_name = _first_text(featured_project, "name", "title") if featured_project else ""
     project_terms = _collect_entry_terms(featured_project, max_items=5) if featured_project else []
-    project_terms_text = _join_terms_natural(
-        project_terms,
-        max_items=5,
-        conjunction=conjunction,
-        language_code=language_code,
-    )
-    offer_focus = _join_terms_natural(
-        offer_keywords,
-        max_items=4,
-        conjunction=conjunction,
-        language_code=language_code,
-    )
-    company_context = _join_terms_natural(
-        _collect_offer_context_terms(offer_data),
-        max_items=3,
-        conjunction=conjunction,
-        language_code=language_code,
-    )
     motivation_sentence = _company_motivation_sentence(
         company_label=company_label,
-        offer_focus=offer_focus,
-        company_context=company_context,
-        is_en=is_en,
-        role_label=role_label,
-        offer_data=offer_data,
-        offer_keywords=offer_keywords,
-    )
-    role_motivation = _role_motivation_sentence(
-        role_label=role_label,
-        offer_focus=offer_focus,
-        has_qa_signal=_has_qa_signal(profile_data),
         is_en=is_en,
     )
-    rubric_sentence = _rubric_evaluation_sentence(
-        profile_data=profile_data,
-        offer_data=offer_data,
-        offer_keywords=offer_keywords,
-        job_title=job_title,
-        is_en=is_en,
-    )
-    code_agents = _code_agents_sentence(profile_data, is_en=is_en)
 
     # Build the letter
     if is_en:
@@ -1259,7 +736,7 @@ def generate_fallback_cover_letter(
         opening_signal = (
             f"My profile includes relevant evidence in {profile_signal}."
             if profile_signal
-            else "The role connects with my experience and project work."
+            else "The available profile data provides relevant evidence for this application."
         )
 
         experience_intro = exp_preview
@@ -1276,57 +753,32 @@ def generate_fallback_cover_letter(
         if include_experience_paragraph and exp_preview and experience_detail:
             details_sentence = _format_experience_details(experience_details, is_en=True)
             experience_sentence = (
-                f"{experience_intro}, I have worked on responsibilities directly tied to quality and delivery. "
+                f"{experience_intro}, I have worked on documented responsibilities relevant to this application. "
                 f"{details_sentence} "
-                "These responsibilities are relevant because they require working from stated requirements, handling concrete constraints, and communicating outcomes clearly.\n\n"
+                "These responsibilities show how I work from documented objectives, concrete constraints, and clear communication.\n\n"
             )
         elif include_experience_paragraph and exp_preview:
             experience_sentence = (
-                f"My background includes {exp_preview}. These experiences trained me to work from stated requirements, validate outputs, and communicate findings clearly.\n\n"
+                f"My background includes {exp_preview}. These experiences provide documented evidence that can be connected to the requirements of the role.\n\n"
             )
         else:
             experience_sentence = ""
 
-        proof_sentences = [
-            sentence
-            for sentence in (rubric_sentence, code_agents)
-            if sentence
-        ]
-        if proof_sentences:
-            if experience_sentence:
-                experience_sentence = (
-                    experience_sentence.rstrip()
-                    + " "
-                    + " ".join(proof_sentences)
-                    + "\n\n"
-                )
-            else:
-                experience_sentence = " ".join(proof_sentences) + "\n\n"
-
-        project_sentence = _project_evidence_sentence(
+        project_sentence = _project_reference_sentence(
             project_name=project_name,
-            featured_project=featured_project,
             project_terms=project_terms,
             language_code=language_code,
             conjunction=conjunction,
             is_en=True,
         )
 
-        if offer_focus and profile_signal:
+        if profile_signal:
             contribution_sentence = (
-                f"I can contribute with {profile_signal}, careful review, factual validation, and clear documentation."
-            )
-        elif offer_focus:
-            contribution_sentence = (
-                "I can contribute by approaching the role priorities with consistent review, factual validation, and clear documentation."
-            )
-        elif profile_signal:
-            contribution_sentence = (
-                f"I can contribute with {profile_signal}, careful review, factual validation, and clear documentation."
+                f"I can bring {profile_signal} together with a careful, evidence-based way of working."
             )
         else:
             contribution_sentence = (
-                "I would be interested in contributing with a careful, evidence-based approach focused on consistent review and useful documentation."
+                "I can bring a careful, evidence-based way of working and a willingness to contribute to the team's concrete needs."
             )
 
         closing_name = name or "Candidate"
@@ -1342,7 +794,7 @@ def generate_fallback_cover_letter(
             f"{opening_signal}\n\n"
             f"{experience_sentence}"
             f"{project_sentence}"
-            f"{motivation_sentence} {role_motivation}\n\n"
+            f"{motivation_sentence}\n\n"
             f"{contribution_sentence} I would welcome the opportunity to discuss how my background can support {company_label}.\n\n"
             "Sincerely,\n\n"
             f"{closing_name}"
@@ -1351,9 +803,9 @@ def generate_fallback_cover_letter(
     # French version
     profile_signal = matched_preview
     keywords_sentence = (
-        f"Mon profil presente des elements pertinents autour de {profile_signal}."
+        f"Mon profil présente des éléments pertinents autour de {profile_signal}."
         if profile_signal
-        else "Le poste fait echo a mon parcours documente et a mes projets."
+        else "Les données disponibles du profil apportent des éléments pertinents pour cette candidature."
     )
 
     experience_intro = exp_preview
@@ -1368,75 +820,38 @@ def generate_fallback_cover_letter(
     if include_experience_paragraph and exp_preview and experience_detail:
         details_sentence = _format_experience_details(experience_details, is_en=False)
         experience_sentence = (
-            f"{experience_intro}, j'ai travaille sur des responsabilites directement liees a la qualite et a la livraison. "
+            f"{experience_intro}, j'ai travaillé sur des responsabilités documentées et pertinentes pour cette candidature. "
             f"{details_sentence} "
-            "Ces responsabilites sont pertinentes car elles demandent de travailler a partir d'exigences formulees, de gerer des contraintes concretes et de communiquer clairement les resultats.\n\n"
+            "Ces responsabilités montrent ma capacité à travailler à partir d'objectifs documentés, de contraintes concrètes et d'une communication claire.\n\n"
         )
     elif include_experience_paragraph and exp_preview:
         experience_sentence = (
-            f"Mon parcours inclut {exp_preview}. Ces experiences m'ont appris a travailler depuis des exigences formulees, a valider les livrables et a communiquer les constats clairement.\n\n"
+            f"Mon parcours inclut {exp_preview}. Ces expériences apportent des preuves documentées que je peux relier aux attentes du poste.\n\n"
         )
     else:
         experience_sentence = ""
 
-    if project_name and project_terms_text:
-        project_sentence = _project_evidence_sentence(
-            project_name=project_name,
-            featured_project=featured_project,
-            project_terms=project_terms,
-            language_code=language_code,
-            conjunction=conjunction,
-            is_en=False,
-        )
-    elif project_name:
-        project_sentence = _project_evidence_sentence(
-            project_name=project_name,
-            featured_project=featured_project,
-            project_terms=project_terms,
-            language_code=language_code,
-            conjunction=conjunction,
-            is_en=False,
-        )
-    else:
-        project_sentence = ""
+    project_sentence = _project_reference_sentence(
+        project_name=project_name,
+        project_terms=project_terms,
+        language_code=language_code,
+        conjunction=conjunction,
+        is_en=False,
+    )
 
-    proof_sentences = [
-        sentence
-        for sentence in (rubric_sentence, code_agents)
-        if sentence
-    ]
-    if proof_sentences:
-        if experience_sentence:
-            experience_sentence = (
-                experience_sentence.rstrip()
-                + " "
-                + " ".join(proof_sentences)
-                + "\n\n"
-            )
-        else:
-            experience_sentence = " ".join(proof_sentences) + "\n\n"
-
-    if offer_focus and profile_signal:
+    if profile_signal:
         contribution_sentence = (
-            f"J'apporte des elements pertinents autour de {profile_signal}, avec une attention particuliere a la revue constante, a l'exactitude factuelle et a une documentation utile."
-        )
-    elif offer_focus:
-        contribution_sentence = (
-            "Je l'aborderais avec une attention particuliere a la revue constante, a l'exactitude factuelle et a une documentation utile."
-        )
-    elif profile_signal:
-        contribution_sentence = (
-            f"J'apporte des elements pertinents autour de {profile_signal}, avec une attention particuliere a la revue constante, a l'exactitude factuelle et a une documentation utile."
+            f"Je peux apporter {profile_signal}, avec une manière de travailler attentive et fondée sur les éléments disponibles."
         )
     else:
         contribution_sentence = (
-            "Je souhaite contribuer avec une approche rigoureuse et fondee sur les elements disponibles, attentive a la revue constante et a une documentation utile."
+            "Je souhaite contribuer avec une manière de travailler attentive, fondée sur les éléments disponibles et utile aux besoins concrets de l'équipe."
         )
 
     if not include_experience_paragraph and not project_sentence:
         experience_sentence = (
-            "J'ai developpe une experience concrete sur des sujets utiles pour ce poste. "
-            "Je peux contribuer par une revue attentive, une validation factuelle et une documentation claire.\n\n"
+            "Mon parcours présente des éléments documentés utiles pour cette candidature. "
+            "Je peux contribuer avec une approche attentive et fondée sur les faits disponibles.\n\n"
         )
 
     closing_name = name or "Candidat"
@@ -1452,8 +867,8 @@ def generate_fallback_cover_letter(
         f"{keywords_sentence}\n\n"
         f"{experience_sentence}"
         f"{project_sentence}"
-        f"{motivation_sentence} {role_motivation}\n\n"
-        f"{contribution_sentence} Je reste disponible pour echanger sur la maniere dont mon parcours peut soutenir {company_label}.\n\n"
+        f"{motivation_sentence}\n\n"
+        f"{contribution_sentence} Je reste disponible pour échanger sur la manière dont mon parcours peut soutenir {company_label}.\n\n"
         "Cordialement,\n\n"
         f"{closing_name}"
     ).strip()
@@ -1495,17 +910,11 @@ def generate_fallback_cover_letter_simple(
     is_en = language_code == "en"
     conjunction = "and" if is_en else "et"
 
-    role_label = job_title or ("the target role" if is_en else "le poste vise")
+    role_label = job_title or ("the target role" if is_en else "le poste visé")
     company_label = company or ("your company" if is_en else "votre entreprise")
 
     matched_preview = _join_terms_natural(
         matched_terms or [],
-        max_items=4,
-        conjunction=conjunction,
-        language_code=language_code,
-    )
-    offer_preview = _join_terms_natural(
-        offer_keywords or [],
         max_items=4,
         conjunction=conjunction,
         language_code=language_code,
@@ -1516,13 +925,9 @@ def generate_fallback_cover_letter_simple(
             keywords_sentence = (
                 f"My profile includes relevant evidence in {matched_preview}."
             )
-        elif offer_preview:
-            keywords_sentence = (
-                f"I understand that the role emphasizes {offer_preview}, and I can contribute with careful, evidence-based work."
-            )
         else:
             keywords_sentence = (
-                "I can contribute through consistent review, factual accuracy, and useful documentation."
+                "The available profile data provides relevant evidence for this application."
             )
         closing_name = profile_name or "Candidate"
         subject_line = _subject_with_offer_company(
@@ -1535,9 +940,9 @@ def generate_fallback_cover_letter_simple(
             "Dear Hiring Manager,\n\n"
             f"I am applying for the {role_label} position at {company_label}. "
             f"{keywords_sentence}\n\n"
-            f"{_company_motivation_sentence(company_label=company_label, offer_focus=offer_preview, is_en=True, role_label=role_label, offer_keywords=offer_keywords or [])}\n\n"
+            f"{_company_motivation_sentence(company_label=company_label, is_en=True)}\n\n"
             "I would welcome the opportunity to discuss how my background can support "
-            f"{company_label} with a reliable and evidence-based contribution.\n\n"
+            f"{company_label} with a careful, evidence-based contribution.\n\n"
             "Sincerely,\n\n"
             f"{closing_name}"
         ).strip()
@@ -1545,15 +950,11 @@ def generate_fallback_cover_letter_simple(
     # French version
     if matched_preview:
         keywords_sentence = (
-            f"Mon profil presente des elements pertinents autour de {matched_preview}."
-        )
-    elif offer_preview:
-        keywords_sentence = (
-            f"Je comprends que le poste met l'accent sur {offer_preview}, et je l'aborderais avec une execution rigoureuse fondee sur les elements disponibles."
+            f"Mon profil présente des éléments pertinents autour de {matched_preview}."
         )
     else:
         keywords_sentence = (
-            "J'aborderais le poste avec une revue constante, une exactitude factuelle et une documentation utile."
+            "Les données disponibles du profil apportent des éléments pertinents pour cette candidature."
         )
     closing_name = profile_name or "Candidat"
     subject_line = _subject_with_offer_company(
@@ -1566,8 +967,8 @@ def generate_fallback_cover_letter_simple(
         "Madame, Monsieur,\n\n"
         f"Je vous adresse ma candidature pour le poste {role_label} au sein de {company_label}. "
         f"{keywords_sentence}\n\n"
-        f"{_company_motivation_sentence(company_label=company_label, offer_focus=offer_preview, is_en=False, role_label=role_label, offer_keywords=offer_keywords or [])}\n\n"
-        f"Je reste disponible pour echanger sur la maniere dont mon parcours peut soutenir {company_label}.\n\n"
+        f"{_company_motivation_sentence(company_label=company_label, is_en=False)}\n\n"
+        f"Je reste disponible pour échanger sur la manière dont mon parcours peut soutenir {company_label}.\n\n"
         "Cordialement,\n\n"
         f"{closing_name}"
     ).strip()
