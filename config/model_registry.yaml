@@ -199,7 +199,7 @@ profiles:
     quality_stars: 4
     speed_rating: 2
     description: "Modele GGUF quantifie pour CPU via llama.cpp. Necessite llama-server + fichier GGUF local."
-    tags: ["cpu", "gguf", "llama_cpp"]
+    tags: ["cpu", "gguf", "llama_cpp", "default"]
   qwen3-14b-gguf-q4:
     display_name: "Qwen3-14B (GGUF Q4_K_M - premium local)"
     model_id: "cache/gguf_models/Qwen3-14B-Q4_K_M.gguf"
@@ -210,7 +210,7 @@ profiles:
     quality_stars: 5
     speed_rating: 1
     description: "Option premium locale pour CV/lettres exigeants. Requiert un fichier GGUF local et une configuration llama.cpp adaptee a la memoire disponible."
-    tags: ["gpu", "cpu", "gguf", "llama_cpp", "writer", "premium", "multilingual", "reasoning"]
+    tags: ["gpu", "cpu", "gguf", "llama_cpp", "default", "writer", "premium", "multilingual", "reasoning"]
     license_hint: "Apache-2.0"
     context_hint: "Contexte natif 32k; utiliser 8k-16k sur 12GB VRAM selon offload, YaRN/131k seulement sur machine tres confortable."
     recommended_usage: "premium_writer_local"
@@ -257,7 +257,7 @@ profiles:
     quality_stars: 5
     speed_rating: 1
     description: "Variante Q5_K_M pour une meilleure qualite de sortie quand la VRAM/RAM permet un offload confortable."
-    tags: ["gpu", "cpu", "gguf", "llama_cpp", "writer", "premium", "multilingual", "reasoning", "high_end"]
+    tags: ["gpu", "cpu", "gguf", "llama_cpp", "default", "writer", "premium", "multilingual", "reasoning", "high_end"]
     license_hint: "Apache-2.0"
     context_hint: "Contexte natif 32k; viser 8k-16k sur machines locales et augmenter seulement si la memoire reste stable."
     recommended_usage: "premium_writer_local_high_memory"
@@ -304,7 +304,7 @@ profiles:
     quality_stars: 5
     speed_rating: 1
     description: "Option qualite elevee pour machines locales tres confortables. A utiliser quand le poids 24B quantifie reste stable en VRAM/RAM."
-    tags: ["gpu", "cpu", "gguf", "llama_cpp", "writer", "premium", "multilingual", "high_end"]
+    tags: ["gpu", "cpu", "gguf", "llama_cpp", "default", "writer", "premium", "multilingual", "high_end"]
     license_hint: "Mistral"
     context_hint: "Modele lourd; commencer avec 8k de contexte et augmenter seulement apres validation memoire."
     recommended_usage: "premium_writer_high_memory"
@@ -350,7 +350,7 @@ profiles:
     quality_stars: 5
     speed_rating: 2
     description: "Meilleur choix local si le backend llama.cpp supporte Qwen3.5. Vise une generation premium avec marge VRAM sur GPU 12GB."
-    tags: ["gpu", "cpu", "gguf", "llama_cpp", "writer", "premium", "multilingual", "reasoning", "recommended"]
+    tags: ["gpu", "cpu", "gguf", "llama_cpp", "default", "writer", "premium", "multilingual", "reasoning", "recommended"]
     license_hint: "Apache-2.0"
     context_hint: "Contexte natif long; utiliser 8k par defaut, 12k-16k seulement apres validation de la memoire."
     recommended_usage: "best_local_writer"
@@ -398,7 +398,7 @@ profiles:
     quality_stars: 5
     speed_rating: 2
     description: "Option stable et realiste pour GPU 12GB: meilleur compromis qualite/marge memoire quand Qwen3.5-9B n'est pas supporte."
-    tags: ["gpu", "cpu", "gguf", "llama_cpp", "writer", "premium", "multilingual", "reasoning", "fallback"]
+    tags: ["gpu", "cpu", "gguf", "llama_cpp", "default", "writer", "premium", "multilingual", "reasoning", "fallback"]
     license_hint: "Apache-2.0"
     context_hint: "Contexte natif 32k; utiliser 8k ou 12k selon marge VRAM, eviter de pousser le contexte avant mesure."
     recommended_usage: "stable_local_writer"
